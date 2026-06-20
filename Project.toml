@@ -1,0 +1,21 @@
+name = "Dewdrop"
+uuid = "4456f7f7-597c-4333-80f0-10ee3d430c1b"
+version = "0.0.1-DEV"
+authors = ["brendanjohnharris <bhar9988@uni.sydney.edu.au> and contributors"]
+
+[deps]
+Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
+Atomix = "a9b6321e-bd34-4604-b9c9-b65b8de01458"
+CommonSolve = "38540f10-b2f7-11e9-35d8-d573e4eb0ff2"
+KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
+Random123 = "74087812-796a-5b5d-8853-05524746bad3"
+StructArrays = "09ab397b-f2b6-538f-b94a-2f83cf4a842a"
+
+[compat]
+Adapt = "4.6.1"
+Atomix = "1.1.3"
+CommonSolve = "0.2.7"
+KernelAbstractions = "0.9.41"
+Random123 = "1.7.1"
+StructArrays = "0.7.3"
+julia = "1.10"
