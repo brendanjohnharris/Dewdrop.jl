@@ -17,8 +17,3 @@ Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 
 [sources]
 Fathom = {url="https://www.github.com/brendanjohnharris/Fathom.jl", rev="main"}
-
-[compat]
-Aqua = "0.8"
-CUDA = "5"
-JET = "0.11"
