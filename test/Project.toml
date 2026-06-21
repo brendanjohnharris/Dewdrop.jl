@@ -15,6 +15,9 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 TimeseriesBase = "c2aba7f5-82a4-4c45-a741-402bb41ee238"
 Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 
+[sources]
+Fathom = {url="https://www.github.com/brendanjohnharris/Fathom.jl", rev="main"}
+
 [compat]
 Aqua = "0.8"
 CUDA = "5"
