@@ -7,6 +7,7 @@ using Test
     include("rng.jl")
     include("connectivity.jl")
     include("fixedprob.jl")
+    include("spatial.jl")
     include("delays.jl")
     include("scatter.jl")
     include("schedule.jl")
@@ -16,6 +17,13 @@ using Test
     include("fi_curve.jl")
     include("behavior.jl")
     include("connected.jl")
+    include("multiproj.jl")
+    include("builder.jl")
+    include("initial_conditions.jl")
+    include("edge_cases.jl")
+    include("macro.jl")
+    include("unitful.jl")
+    include("timeseriesbase.jl")
     include("recording.jl")
     include("drive.jl")
     include("gpu_readiness.jl")
@@ -25,4 +33,5 @@ using Test
     # scenario / classical-figure reproductions (heaviest load: CairoMakie) last
     include("plots.jl")
     include("brunel.jl")
+    include("vogels_abbott.jl")
 end

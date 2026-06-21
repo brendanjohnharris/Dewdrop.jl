@@ -102,18 +102,42 @@ yields a fixed, copyable connectome). `weight` and `delay` may be scalars or fun
 the presynaptic index `pre` --- the latter gives excitatory/inhibitory neurons signed
 weights. Returns a [`SparseCSR`](@ref).
 """
-function fixed_prob(arch::AbstractArchitecture, npre::Integer, npost::Integer, p::Real;
-        weight, delay, seed::Unsigned, allow_self::Bool = true)
-    wtype = weight isa Function ? typeof(weight(1)) : typeof(weight)
+function fixed_prob(
+        arch::AbstractArchitecture, npre::Integer, npost::Integer, p::Real;
+        weight, delay, seed::Unsigned, allow_self::Bool = true, sources = 1:npre
+    )
+    wtype = typeof(to_weight(weight isa Function ? weight(1) : weight))
     edges = Tuple{Int, Int, wtype, Int}[]
     pT = Float64(p)
-    for pre in 1:npre
-        w = wtype(weight isa Function ? weight(pre) : weight)
+    pT > 0 || return SparseCSR(arch, edges; npre = npre, npost = npost)
+    sizehint!(edges, ceil(Int, 1.1 * pT * length(sources) * npost))
+    # Geometric-gap sampling: instead of testing every (pre, post) pair (O(npre·npost)), draw
+    # the run of skipped targets before each edge from a geometric distribution, so cost scales
+    # with the number of EDGES (~p·npre·npost). The k-th gap draw for source `pre` is keyed
+    # (seed, k, pre), so a given seed still yields a fixed, copyable connectome (a different
+    # realisation from per-pair sampling, but the same Bernoulli(p) marginal per target).
+    invlog = inv(log1p(-pT))                              # 1/log(1-p) < 0
+    for pre in sources
+        w = wtype(to_weight(weight isa Function ? weight(pre) : weight))
         d = Int(delay isa Function ? delay(pre) : delay)
-        for post in 1:npost
+        # The clock-driven engine delivers in the :deliver phase, which precedes :propagate,
+        # so the smallest representable synaptic delay is one step; delay 0 would wrap a full
+        # ring (L steps) late. Reject it at construction rather than fail silently.
+        d ≥ 1 || throw(
+            ArgumentError(
+                "synaptic delay must be ≥ 1 step (got $d for pre=$pre); " *
+                    "the fixed-step engine cannot deliver within the same step"
+            )
+        )
+        post = 0
+        k = 0
+        while true
+            k += 1
+            u = draw_uniform(Float64, seed, k, pre)
+            post += (u > 0.0 ? floor(Int, log(u) * invlog) : npost) + 1   # skip a geometric gap
+            post > npost && break
             (!allow_self && pre == post) && continue
-            draw_uniform(Float64, seed, pre, post) < pT || continue
-            push!(edges, (pre, Int(post), w, d))
+            push!(edges, (Int(pre), post, w, d))
         end
     end
     return SparseCSR(arch, edges; npre = npre, npost = npost)

@@ -46,9 +46,9 @@ isdir(PLOTDIR) || mkpath(PLOTDIR)
         m = LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 100.0, tref = 2.0)
         Iext = collect(range(0.22, 0.5; length = N))   # all supra-rheobase (rheobase = 0.2)
         dt, tend = 0.1, 500.0
-        sol = solve(DewdropNetwork(m, N; input = Iext, tspan = (0.0, tend)), FixedStep(dt); record_spikes = true)
+        sol = solve(DewdropNetwork(m, N; input = Iext, tspan = (0.0, tend)), FixedStep(dt); record = (spikes = Spikes(),))
         times, ids = raster(sol)
-        counts = vec(sum(sol.spikes; dims = 2))
+        counts = vec(sum(sol.record.spikes.data; dims = 2))
         @test counts[end] > counts[1]                  # more drive → higher rate
 
         fig = TwoPanel()

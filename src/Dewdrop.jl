@@ -16,15 +16,20 @@ using Adapt: Adapt, adapt
 using StructArrays: StructArray
 using CommonSolve: CommonSolve
 
+include("Units.jl")
 include("Architecture.jl")
 include("Population.jl")
 include("RNG.jl")
 include("Connectivity.jl")
+include("Spatial.jl")
 include("Delays.jl")
 include("Scatter.jl")
 include("Schedule.jl")
 include("Neurons.jl")
 include("Synapses.jl")
+include("Monitors.jl")
 include("Engine.jl")
+include("Macro.jl")
+include("Builder.jl")
 
 end # module Dewdrop

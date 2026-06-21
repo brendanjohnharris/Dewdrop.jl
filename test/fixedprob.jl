@@ -43,4 +43,22 @@ using Test
     ei = Dewdrop.fixed_prob(arch, 150, 150, 0.1; weight = pre -> pre ≤ NE ? 1.0f0 : -4.0f0, delay = 1, seed = seed)
     @test any(>(0), ei.weight)
     @test any(<(0), ei.weight)
+
+    # `sources` restricts which presynaptic neurons emit edges (for E/I subpopulations)
+    sub = Dewdrop.fixed_prob(arch, 200, 150, 0.2; weight = 1.0f0, delay = 1, seed = seed, sources = 1:50)
+    @test Dewdrop.npre(sub) == 200                  # index space unchanged
+    out_of_range = Ref(0)
+    for pre in 51:200
+        Dewdrop.for_each_post(sub, pre) do post, w, d
+            out_of_range[] += 1
+        end
+    end
+    @test out_of_range[] == 0                       # non-source neurons have no out-edges
+    in_range = Ref(0)
+    for pre in 1:50
+        Dewdrop.for_each_post(sub, pre) do post, w, d
+            in_range[] += 1
+        end
+    end
+    @test in_range[] > 0                            # source neurons do
 end

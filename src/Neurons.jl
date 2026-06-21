@@ -50,7 +50,8 @@ struct LIF{T} <: AbstractNeuronModel
     R::T
     tref::T
 end
-LIF(; τ, EL, Vθ, Vr, R, tref) = LIF(promote(τ, EL, Vθ, Vr, R, tref)...)
+LIF(; τ, EL, Vθ, Vr, R, tref) = LIF(promote(
+    to_time(τ), to_voltage(EL), to_voltage(Vθ), to_voltage(Vr), to_resistance(R), to_time(tref))...)
 export LIF
 
 statevars(::Type{<:LIF}) = (:V, :refrac)
@@ -85,16 +86,15 @@ One exact linear-propagator update toward the fixed point `V∞`:
 @inline refractory(m::LIF) = m.tref
 
 # Type-stable state allocation: a SoA `Population` with one zero-initialised column per
-# `statevars(model)`, the column names resolved at COMPILE time from the model type (so
-# `init` and the hot loop see a concrete StructArray, not `Population{S} where S`).
-@generated function Population(arch::AbstractArchitecture, model::AbstractNeuronModel, N::Integer)
-    names = statevars(model)               # `model` is the TYPE inside the generator
-    # Build the column tuple explicitly (a @generated return AST may not contain a closure,
-    # comprehension or generator, which rules out `ntuple(_ -> ..., K)`).
-    colexpr = :(fill!(allocate(arch, T, N), zero(T)))
-    cols = Expr(:tuple, fill(colexpr, length(names))...)
-    return quote
-        T = float_type(model)
-        return Population(StructArray(NamedTuple{$names}($cols)))
-    end
+# `statevars(model)`. The names are carried in a `Val` so they reach the constructor as a TYPE
+# parameter (a concrete StructArray, not `Population{S} where S`); constant propagation folds
+# `statevars(M)` for a concrete `M` at the call site. Unlike a `@generated` body --- whose
+# generator runs in this module's world and so cannot see a `@neuron`-defined model's
+# `statevars` --- this resolves at the call world, so user models work too.
+function Population(arch::AbstractArchitecture, model::AbstractNeuronModel, N::Integer)
+    return _build_population(arch, float_type(model), Int(N), Val(statevars(typeof(model))))
+end
+@inline function _build_population(arch, ::Type{T}, N::Int, ::Val{names}) where {T, names}
+    cols = ntuple(_ -> fill!(allocate(arch, T, N), zero(T)), Val(length(names)))
+    return Population(StructArray(NamedTuple{names}(cols)))
 end

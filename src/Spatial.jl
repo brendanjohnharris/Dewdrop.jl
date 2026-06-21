@@ -1,0 +1,100 @@
+# * Spatial / structured connectivity (M3).
+# Neurons carry positions (D-dimensional coordinate tuples); `distance_prob` then connects each
+# ordered pair with a probability that is a function of their separation (a connection kernel),
+# optionally on a periodic box. This expresses distance-dependent, ring and grid topologies as a
+# single primitive: positions + a kernel. Sampling is per-pair (the probability varies with the
+# target, so the geometric skip used by `fixed_prob` does not apply) but stays seed-reproducible
+# via the counter-based RNG keyed by (pre, post).
+
+# --- Position layouts: a vector of `NTuple{D,Float64}` coordinates ---
+"""
+    line_positions(n; spacing=1.0)
+
+`n` neurons evenly spaced on a line.
+"""
+line_positions(n::Integer; spacing = 1.0) = [(spacing * (i - 1),) for i in 1:n]
+
+"""
+    grid_positions(nx, ny; spacing=1.0)
+
+`nx*ny` neurons on a rectangular grid (x varies fastest: neuron `(j-1)*nx + i` sits at
+`((i-1)·spacing, (j-1)·spacing)`).
+"""
+grid_positions(nx::Integer, ny::Integer; spacing = 1.0) =
+    [(spacing * (i - 1), spacing * (j - 1)) for j in 1:ny for i in 1:nx]
+
+"""
+    ring_positions(n; radius=1.0)
+
+`n` neurons evenly placed on a circle (a ring topology; the wraparound is built into the
+geometry, so no `period` is needed).
+"""
+ring_positions(n::Integer; radius = 1.0) =
+    [(radius * cos(2π * (i - 1) / n), radius * sin(2π * (i - 1) / n)) for i in 1:n]
+
+export line_positions, grid_positions, ring_positions
+
+# Euclidean distance, optionally on a periodic box of side lengths `period` (per dimension).
+@inline function distance(a::NTuple{D}, b::NTuple{D}, period) where {D}
+    s = zero(promote_type(eltype(a), eltype(b)))
+    @inbounds for k in 1:D
+        δ = abs(a[k] - b[k])
+        period !== nothing && (δ = min(δ, period[k] - δ))   # minimum-image wraparound
+        s += δ * δ
+    end
+    return sqrt(s)
+end
+
+# --- Connection kernels: distance → probability in [0, 1] ---
+"""
+    gaussian_kernel(σ; pmax=1.0)
+
+A Gaussian connection kernel `d -> pmax·exp(-d²/2σ²)`.
+"""
+gaussian_kernel(σ; pmax = 1.0) = d -> pmax * exp(-d^2 / (2 * σ^2))
+
+"""
+    exponential_kernel(λ; pmax=1.0)
+
+An exponential connection kernel `d -> pmax·exp(-d/λ)`.
+"""
+exponential_kernel(λ; pmax = 1.0) = d -> pmax * exp(-d / λ)
+
+"""
+    box_kernel(r; p=1.0)
+
+A top-hat kernel: probability `p` within radius `r`, else 0 (local/neighbourhood connectivity).
+"""
+box_kernel(r; p = 1.0) = d -> d ≤ r ? p : zero(p)
+
+export gaussian_kernel, exponential_kernel, box_kernel
+
+"""
+    distance_prob(arch, positions; kernel, weight, delay, seed, allow_self=false, period=nothing, sources=eachindex(positions))
+
+Distance-dependent random connectivity: each ordered `(pre, post)` pair (with `pre` in
+`sources`) is connected with probability `kernel(distance(positions[pre], positions[post]))`,
+sampled reproducibly from the counter-based RNG. `weight`/`delay` may be scalars or per-source
+functions; `period` (a tuple of box side lengths) enables periodic boundaries. Returns a
+[`SparseCSR`](@ref). Together with [`grid_positions`](@ref)/[`ring_positions`](@ref) and the
+kernel helpers this expresses distance-kernel, ring and grid topologies.
+"""
+function distance_prob(arch::AbstractArchitecture, positions; kernel, weight, delay,
+        seed::Unsigned, allow_self::Bool = false, period = nothing, sources = eachindex(positions))
+    npost = length(positions)
+    wtype = typeof(to_weight(weight isa Function ? weight(1) : weight))
+    edges = Tuple{Int, Int, wtype, Int}[]
+    for pre in sources
+        w = wtype(to_weight(weight isa Function ? weight(pre) : weight))
+        d = Int(delay isa Function ? delay(pre) : delay)
+        d ≥ 1 || throw(ArgumentError("synaptic delay must be ≥ 1 step (got $d for pre=$pre)"))
+        ppos = positions[pre]
+        for post in 1:npost
+            (!allow_self && pre == post) && continue
+            draw_uniform(Float64, seed, pre, post) < kernel(distance(ppos, positions[post], period)) || continue
+            push!(edges, (Int(pre), post, w, d))
+        end
+    end
+    return SparseCSR(arch, edges; npre = npost, npost = npost)
+end
+export distance_prob

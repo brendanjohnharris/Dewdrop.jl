@@ -2,6 +2,18 @@ using JET
 using Dewdrop
 using Test
 
+# a @neuron-defined model, to pin that the macro-generated hooks keep step! dispatch-free
+@neuron JetLIF begin
+    @parameters τ = 20.0 EL = -70.0 Vθ = -50.0 Vr = -60.0 R = 100.0 tref = 2.0
+    @state V refrac
+    @asymptote EL + R * I
+    @resistance R
+    @timeconstant τ
+    @threshold V ≥ Vθ
+    @reset Vr
+    @refractory tref
+end
+
 # Static analysis (JET), two layers:
 #   1. whole-package ERROR analysis (test_package) --- catches undefined methods etc.
 #   2. OptAnalyzer assertions that PIN hot-path type-stability / dispatch-freedom.
@@ -84,6 +96,25 @@ if VERSION >= v"1.10"
             step!(dinteg)
             JET.@test_opt target_modules = (Dewdrop,) step!(dinteg)
             JET.@test_opt target_modules = (Dewdrop,) Dewdrop.draw_poisson(2.0, UInt64(1), 1, 1)
+
+            # multiple heterogeneous projections (COBA E + COBA I): the tuple-recursion
+            # dispatch and conductance accumulation must stay dispatch-free.
+            mconn = SparseCSR(Dewdrop.CPU(), [(1, 2, 15.0, 1)]; npre = 2, npost = 2)
+            mprob = DewdropNetwork(m, 2; input = [0.5, 0.0], tspan = (0.0, 5.0),
+                projections = (Projection(ConductanceSynapse(τ = 5.0, Erev = 0.0), mconn),
+                    Projection(ConductanceSynapse(τ = 10.0, Erev = -80.0), mconn)))
+            minteg = init(mprob, FixedStep(0.1))
+            step!(minteg)
+            JET.@test_opt target_modules = (Dewdrop,) step!(minteg)
+            JET.@test_opt target_modules = (Dewdrop,) init(mprob, FixedStep(0.1))
+
+            # a @neuron-generated model: the macro's membrane_step/threshold dispatch + the
+            # Val-based Population (replacing the @generated one) must stay dispatch-free.
+            jprob = DewdropNetwork(JetLIF(), 8; input = 0.5, tspan = (0.0, 5.0))
+            jinteg = init(jprob, FixedStep(0.1))
+            step!(jinteg)
+            JET.@test_opt target_modules = (Dewdrop,) step!(jinteg)
+            JET.@test_opt target_modules = (Dewdrop,) init(jprob, FixedStep(0.1))
         end
     end
 end

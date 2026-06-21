@@ -24,7 +24,7 @@ synapses, which couple to `V` via a reversal potential, arrive in M2.
 struct CurrentSynapse{T} <: AbstractSynapseModel
     τ::T
 end
-CurrentSynapse(; τ) = CurrentSynapse(τ)
+CurrentSynapse(; τ) = CurrentSynapse(to_time(τ))
 export CurrentSynapse
 
 """
@@ -44,3 +44,23 @@ classic Brunel (2000) synapse, where the weight IS the PSP amplitude.
 """
 struct DeltaSynapse <: AbstractSynapseModel end
 export DeltaSynapse
+
+"""
+    ConductanceSynapse(; τ, Erev)
+
+Conductance-based (COBA) exponential synapse: a delivered spike of weight `w` increments a
+postsynaptic conductance that decays with time constant `τ`; the resulting synaptic current
+is voltage-dependent, `g·(Erev − V)`, with reversal potential `Erev` (e.g. 0 mV for
+excitation, −80 mV for inhibition).
+"""
+struct ConductanceSynapse{T} <: AbstractSynapseModel
+    τ::T
+    Erev::T
+end
+function ConductanceSynapse(; τ, Erev)
+    t, e = promote(to_time(τ), to_voltage(Erev))
+    return ConductanceSynapse(t, e)
+end
+export ConductanceSynapse
+
+@inline synapse_decay(s::ConductanceSynapse, dt) = exp(-dt / s.τ)

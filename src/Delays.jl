@@ -75,3 +75,16 @@ function deliver_due!(target, buf::DelayBuffer, now::Integer)
     col .= zero(eltype(buf.slots))
     return nothing
 end
+
+# CPU fast path: add-and-clear in a single pass over the due column (the generic form reads the
+# column twice). Dispatched on plain `Array` storage; the device path keeps the broadcasts.
+function deliver_due!(target::AbstractVector, buf::DelayBuffer{<:Array}, now::Integer)
+    s = _slotof(now, buf.L)
+    slots = buf.slots
+    z = zero(eltype(slots))
+    @inbounds for i in eachindex(target)
+        target[i] += slots[i, s]
+        slots[i, s] = z
+    end
+    return nothing
+end

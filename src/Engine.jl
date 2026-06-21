@@ -36,6 +36,17 @@ struct SynapseState{IS, B, C, T} <: AbstractSynapseState
 end
 Adapt.@adapt_structure SynapseState
 
+# Conductance-based (COBA): a per-neuron conductance accumulator + reversal potential; the
+# synaptic current is g·(Erev − V), contributing to BOTH the effective leak and the drive.
+struct COBAState{G, B, C, T} <: AbstractSynapseState
+    g::G
+    buf::B
+    conn::C
+    decay::T
+    Erev::T
+end
+Adapt.@adapt_structure COBAState
+
 # Delta (instantaneous voltage-jump): just the delay buffer + connectivity (no current, no decay).
 struct DeltaSynapseState{B, C} <: AbstractSynapseState
     buf::B
@@ -57,7 +68,7 @@ struct PoissonDrive{T}
     seed::UInt64
 end
 function PoissonDrive(; rate, weight, seed = 0)
-    r, w = promote(rate, weight)
+    r, w = promote(to_rate(rate), to_voltage(weight))   # weight is a voltage kick
     return PoissonDrive(r, w, UInt64(seed))
 end
 export PoissonDrive
@@ -69,22 +80,27 @@ A simulation problem: `N` units of neuron `model` driven by external `input` (a 
 constant current, or a per-unit array) over `tspan`. An optional recurrent [`Projection`](@ref)
 adds synaptic coupling.
 """
-struct DewdropNetwork{M <: AbstractNeuronModel, In, A <: AbstractArchitecture, S <: Schedule, T, P, DR}
+struct DewdropNetwork{M <: AbstractNeuronModel, In, A <: AbstractArchitecture, S <: Schedule, T, P <: Tuple, DR}
     model::M
     n::Int
     input::In
     tspan::Tuple{T, T}
     arch::A
     schedule::S
-    projection::P
+    projections::P              # a (possibly empty) tuple of Projections
     drive::DR
 end
+# normalise the `projection` (singular) / `projections` (plural) keywords to a tuple
+_normalize_projections(p::Projection, ::Nothing) = (p,)
+_normalize_projections(::Nothing, ::Nothing) = ()
+_normalize_projections(::Nothing, ps) = Tuple(ps)
 function DewdropNetwork(model::AbstractNeuronModel, N::Integer; input, tspan,
         arch::AbstractArchitecture = CPU(), schedule::Schedule = default_schedule(),
-        projection = nothing, drive = nothing)
+        projection = nothing, projections = nothing, drive = nothing)
     T = float_type(model)
-    in_ = on_architecture(arch, input)        # per-unit input arrays move to the architecture
-    return DewdropNetwork(model, Int(N), in_, (T(tspan[1]), T(tspan[2])), arch, schedule, projection, drive)
+    in_ = on_architecture(arch, to_current(input))     # per-unit input arrays move to the architecture
+    projs = _normalize_projections(projection, projections)
+    return DewdropNetwork(model, Int(N), in_, (T(to_time(tspan[1])), T(to_time(tspan[2]))), arch, schedule, projs, drive)
 end
 export DewdropNetwork
 
@@ -95,7 +111,9 @@ The fixed-step, clock-driven algorithm with time step `dt`.
 """
 struct FixedStep{T}
     dt::T
+    FixedStep{T}(dt) where {T} = new{T}(dt)   # explicit inner ctor suppresses the auto outer one
 end
+FixedStep(dt) = (d = to_time(dt); FixedStep{typeof(d)}(d))   # strips units; inner ctor → no recursion
 FixedStep(; dt) = FixedStep(dt)
 export FixedStep
 
@@ -105,12 +123,11 @@ export FixedStep
 Mutable, concretely-typed integrator cache (the CommonSolve `integrator`). Holds the SoA
 state and preallocated buffers; only the step counter `n` and time `t` mutate.
 """
-mutable struct DewdropIntegrator{M, ST, In, A, S, T, B, C, SY, SR, VR, DR}
+mutable struct DewdropIntegrator{M, ST, In, A, S, T, B, C, SY, GT, MO, DR}
     const model::M
     const state::ST
     const input::In
     const dt::T
-    const decay::T
     n::Int
     t::T
     const tend::T
@@ -118,65 +135,117 @@ mutable struct DewdropIntegrator{M, ST, In, A, S, T, B, C, SY, SR, VR, DR}
     const schedule::S
     const spiked::B
     const spike_count::C
-    const syn::SY                # SynapseState, or `nothing` for an unconnected population
-    const spike_rec::SR          # (N, nsteps) Bool raster, or `nothing`
-    const voltage_rec::VR        # (N, nsteps) V trace, or `nothing`
+    const syns::SY               # a tuple of synapse states (one per projection; possibly empty)
+    const gtot::GT               # per-neuron conductance accumulator (scratch, COBA)
+    const itot::GT               # per-neuron input-current accumulator (scratch)
+    const monitors::MO           # NamedTuple of monitors (possibly empty); see Monitors.jl
     const drive::DR              # PoissonDrive, or `nothing`
 end
 # Device-movable (GPU-readiness contract): adapt the SoA state + buffers, leave scalars.
 Adapt.@adapt_structure DewdropIntegrator
 
 function CommonSolve.init(prob::DewdropNetwork, alg::FixedStep;
-        record_spikes::Bool = false, record_voltage::Bool = false)
+        record = nothing, v0 = nothing, v0_seed::Unsigned = 0x5eed00d % UInt64)
     arch = prob.arch
     T = float_type(prob.model)
     N = prob.n
+    dt = T(alg.dt)
+    _check_drive(prob.drive, dt)
     state = Population(arch, prob.model, N)                 # type-stable (names from model type)
-    fill!(state.state.V, prob.model.EL)                     # initialise V = EL; refrac = 0
-    decay = propagator_decay(prob.model, T(alg.dt))
+    _init_voltage!(state.state.V, T(prob.model.EL), v0, T, v0_seed)   # refrac stays 0
     spiked = fill!(allocate(arch, Bool, N), false)
     spike_count = fill!(allocate(arch, Int, N), 0)
-    syn = _init_synapse(arch, prob.projection, T, N, T(alg.dt))
-    nsteps = round(Int, (prob.tspan[2] - prob.tspan[1]) / T(alg.dt))
-    spike_rec = record_spikes ? fill!(allocate(arch, Bool, N, nsteps), false) : nothing
-    voltage_rec = record_voltage ? fill!(allocate(arch, T, N, nsteps), zero(T)) : nothing
+    syns = map(p -> _make_synstate(arch, p.synapse, p.conn, T, N, dt), prob.projections)
+    gtot = fill!(allocate(arch, T, N), zero(T))
+    itot = fill!(allocate(arch, T, N), zero(T))
+    nsteps = round(Int, (prob.tspan[2] - prob.tspan[1]) / dt)
+    monitors = _make_monitors(record, arch, T, N, nsteps)
     return DewdropIntegrator(
-        prob.model, state, prob.input, T(alg.dt), decay,
-        0, prob.tspan[1], prob.tspan[2], arch, prob.schedule, spiked, spike_count, syn,
-        spike_rec, voltage_rec, prob.drive,
+        prob.model, state, prob.input, dt,
+        0, prob.tspan[1], prob.tspan[2], arch, prob.schedule, spiked, spike_count, syns,
+        gtot, itot, monitors, prob.drive,
     )
 end
 
-_init_synapse(arch, ::Nothing, ::Type{T}, N, dt) where {T} = nothing
-_init_synapse(arch, proj::Projection, ::Type{T}, N, dt) where {T} =
-    _make_synstate(arch, proj.synapse, proj.conn, T, N, dt)
+# Guard the Poisson drive against the sampler's underflow cliff: `poisson_count` inverts the
+# CDF from `exp(-λ)`, which underflows to 0 for λ ≳ 745 and then silently returns the iteration
+# cap every step. λ = rate·dt is the mean events per step, so `rate` must be in events per unit
+# time matching `dt` --- passing a per-second rate with a per-millisecond `dt` overshoots 1000×.
+_check_drive(::Nothing, dt) = nothing
+function _check_drive(d::PoissonDrive, dt)
+    λ = d.rate * dt
+    λ < 700 || throw(ArgumentError(
+        "PoissonDrive mean events/step λ = rate*dt = $λ is too large (≥ 700): the Poisson " *
+        "sampler underflows and saturates. `rate` is in events per unit time matching `dt` " *
+        "(here dt = $dt); did you pass a per-second rate with a per-millisecond dt (1000× too big)?"))
+    return nothing
+end
+
+# Initial membrane potential. `nothing` => the leak reversal `EL` (synchronous default); a
+# scalar => a uniform clamp; a `(lo, hi)` tuple => uniform-random per neuron via the
+# counter-based RNG (deterministic, GPU-safe, breaks initial synchrony --- essential for the
+# balanced asynchronous-irregular state); an explicit vector => copied verbatim.
+_init_voltage!(V, EL, ::Nothing, ::Type{T}, seed) where {T} = (fill!(V, EL); V)
+_init_voltage!(V, EL, v0::Real, ::Type{T}, seed) where {T} = (fill!(V, T(v0)); V)
+_init_voltage!(V, EL, v0::AbstractVector, ::Type{T}, seed) where {T} = (copyto!(V, v0); V)
+function _init_voltage!(V, EL, v0::Tuple{<:Real, <:Real}, ::Type{T}, seed) where {T}
+    lo, hi = T(v0[1]), T(v0[2])
+    idx = eachindex(V)
+    @. V = lo + (hi - lo) * draw_uniform(T, seed, 0, idx)
+    return V
+end
 
 function _make_synstate(arch, syn::CurrentSynapse, conn, ::Type{T}, N, dt) where {T}
     Isyn = fill!(allocate(arch, T, N), zero(T))
-    buf = DelayBuffer(arch, T, N, maximum(conn.delay))
+    buf = DelayBuffer(arch, T, N, maximum(conn.delay; init = 0))   # empty projection → L=1 no-op
     return SynapseState(Isyn, buf, conn, synapse_decay(syn, dt))
 end
+function _make_synstate(arch, syn::ConductanceSynapse, conn, ::Type{T}, N, dt) where {T}
+    g = fill!(allocate(arch, T, N), zero(T))
+    buf = DelayBuffer(arch, T, N, maximum(conn.delay; init = 0))   # empty projection → L=1 no-op
+    return COBAState(g, buf, conn, synapse_decay(syn, dt), T(syn.Erev))
+end
 function _make_synstate(arch, ::DeltaSynapse, conn, ::Type{T}, N, dt) where {T}
-    buf = DelayBuffer(arch, T, N, maximum(conn.delay))
+    buf = DelayBuffer(arch, T, N, maximum(conn.delay; init = 0))   # empty projection → L=1 no-op
     return DeltaSynapseState(buf, conn)
 end
 
-# --- Within-step phases (Val-dispatched; dense phases are fused SoA broadcasts). The
-# synapse-coupled phases dispatch on the synaptic-state type, so an unconnected population
-# (`syn === nothing`) compiles the synapse work away entirely. ---
+# --- Within-step phases. Synapse work iterates the projection tuple, dispatching each
+# operation on the per-projection synaptic-state type (compile-time unrolled), so a
+# population can carry any mix of CUBA / COBA / delta projections, and an unconnected
+# population (`syns === ()`) compiles the synapse work away entirely. ---
+
+# Per-projection: apply this step's delivered increments (from the ring buffer).
+@inline _deliver!(syn::SynapseState, integ) = (deliver_due!(syn.Isyn, syn.buf, integ.n); nothing)
+@inline _deliver!(syn::COBAState, integ) = (deliver_due!(syn.g, syn.buf, integ.n); nothing)
+@inline _deliver!(syn::DeltaSynapseState, integ) = (deliver_due!(integ.state.state.V, syn.buf, integ.n); nothing)
+
+# Per-projection: scatter this step's spikes into the delay buffer.
+@inline _propagate!(syn::AbstractSynapseState, integ) = (scatter!(syn.buf, syn.conn, integ.spiked, integ.n); nothing)
+
+# Per-projection: accumulate the input current (itot) and conductance (gtot) for this step.
+@inline _accumulate!(syn::SynapseState, gtot, itot, V) = (@. itot += syn.Isyn; nothing)
+@inline _accumulate!(syn::COBAState, gtot, itot, V) = (@. gtot += syn.g; @. itot += syn.g * syn.Erev; nothing)
+@inline _accumulate!(syn::DeltaSynapseState, gtot, itot, V) = nothing  # applied directly to V at deliver
+
+# Per-projection: decay the synaptic state by one step.
+@inline _decay!(syn::SynapseState) = (@. syn.Isyn *= syn.decay; nothing)
+@inline _decay!(syn::COBAState) = (@. syn.g *= syn.decay; nothing)
+@inline _decay!(syn::DeltaSynapseState) = nothing
+
+# Compile-time tuple unrolls (dispatch on each element's concrete type → no runtime dispatch).
+@inline _deliver_all!(::Tuple{}, integ) = nothing
+@inline _deliver_all!(s::Tuple, integ) = (_deliver!(first(s), integ); _deliver_all!(Base.tail(s), integ))
+@inline _propagate_all!(::Tuple{}, integ) = nothing
+@inline _propagate_all!(s::Tuple, integ) = (_propagate!(first(s), integ); _propagate_all!(Base.tail(s), integ))
+@inline _accum_all!(::Tuple{}, gtot, itot, V) = nothing
+@inline _accum_all!(s::Tuple, gtot, itot, V) = (_accumulate!(first(s), gtot, itot, V); _accum_all!(Base.tail(s), gtot, itot, V))
+@inline _decay_all!(::Tuple{}) = nothing
+@inline _decay_all!(s::Tuple) = (_decay!(first(s)); _decay_all!(Base.tail(s)))
 
 @inline function run_phase!(::Val{:deliver}, integ::DewdropIntegrator)
-    _deliver!(integ.syn, integ)                            # recurrent: ring-buffer due → Isyn
+    _deliver_all!(integ.syns, integ)                       # ring-buffer due → per-projection state (or V, for delta)
     _apply_drive!(integ.drive, integ)                      # external Poisson kicks → V
-    return nothing
-end
-@inline _deliver!(::Nothing, integ) = nothing
-@inline function _deliver!(syn::SynapseState, integ)
-    deliver_due!(syn.Isyn, syn.buf, integ.n)               # add due increments into Isyn, in place
-    return nothing
-end
-@inline function _deliver!(syn::DeltaSynapseState, integ)
-    deliver_due!(integ.state.state.V, syn.buf, integ.n)    # delta: voltage jumps applied directly to V
     return nothing
 end
 
@@ -192,55 +261,46 @@ end
     return nothing
 end
 
-@inline run_phase!(::Val{:propagate}, integ::DewdropIntegrator) = _propagate!(integ.syn, integ)
-@inline _propagate!(::Nothing, integ) = nothing
-@inline function _propagate!(syn::AbstractSynapseState, integ)
-    scatter!(syn.buf, syn.conn, integ.spiked, integ.n)     # scatter this step's spikes into the buffer
-    return nothing
+@inline run_phase!(::Val{:propagate}, integ::DewdropIntegrator) = _propagate_all!(integ.syns, integ)
+
+# COBA-capable subthreshold step: conductances set an effective leak (`denom`) and reversal
+# drive. With no conductance (gtot = 0) this reduces to the plain LIF exact propagator.
+@inline function _coba_step(V, EL, R, τ, gtot, itot, dt)
+    denom = 1 + R * gtot
+    V∞ = (EL + R * itot) / denom
+    return V∞ + (V - V∞) * exp(-dt * denom / τ)
 end
 
-@inline run_phase!(::Val{:integrate}, integ::DewdropIntegrator) = _integrate!(integ.syn, integ)
+# Per-neuron subthreshold membrane update, DISPATCHED ON THE MODEL: advance V over `dt` given
+# the accumulated conductance `gtot` and current `itot`. The engine calls this rather than
+# inlining any particular model's fields, so a model defined by hand or by `@neuron` plugs in
+# by providing its own method. LIF uses the COBA-capable exact propagator above.
+@inline membrane_step(m::LIF, V, gtot, itot, dt) = _coba_step(V, m.EL, m.R, m.τ, gtot, itot, dt)
 
-@inline function _integrate!(::Nothing, integ)
+@inline function run_phase!(::Val{:integrate}, integ::DewdropIntegrator)
     st = integ.state.state
     V, refrac = st.V, st.refrac
     m = integ.model
-    decay = integ.decay
     dt = integ.dt
-    Iext = integ.input
+    gtot, itot = integ.gtot, integ.itot
+    # per-neuron conductance + input current from external input and every projection
+    itot .= integ.input                                    # base: external input (scalar or per-unit)
+    fill!(gtot, zero(eltype(gtot)))
+    _accum_all!(integ.syns, gtot, itot, V)
     Vr = reset_value(m)
     z = zero(eltype(refrac))
-    # refractory units are clamped to Vr (cannot integrate); others take the exact
-    # linear-propagator step toward the input-dependent fixed point V∞ = EL + R·Iext.
-    @. V = ifelse(refrac > z, Vr, subthreshold_step(V, asymptote(m, Iext), decay))
+    # refractory units clamp to Vr; others take the model's subthreshold membrane step.
+    @. V = ifelse(refrac > z, Vr, membrane_step(m, V, gtot, itot, dt))
     @. refrac = max(refrac - dt, z)
-    return nothing
-end
-
-@inline _integrate!(syn::DeltaSynapseState, integ) = _integrate!(nothing, integ)  # delta: no synaptic current term
-
-@inline function _integrate!(syn::SynapseState, integ)
-    st = integ.state.state
-    V, refrac = st.V, st.refrac
-    m = integ.model
-    decay = integ.decay
-    dt = integ.dt
-    Iext = integ.input
-    Isyn = syn.Isyn
-    Vr = reset_value(m)
-    z = zero(eltype(refrac))
-    # input current is external + synaptic; the synaptic current then decays (its own propagator).
-    @. V = ifelse(refrac > z, Vr, subthreshold_step(V, asymptote(m, Iext + Isyn), decay))
-    @. refrac = max(refrac - dt, z)
-    @. Isyn *= syn.decay
+    _decay_all!(integ.syns)                                # advance each projection's synaptic state
     return nothing
 end
 
 @inline function run_phase!(::Val{:threshold}, integ::DewdropIntegrator)
     st = integ.state.state
-    Vθ = integ.model.Vθ
+    m = integ.model
     z = zero(eltype(st.refrac))
-    @. integ.spiked = (st.refrac ≤ z) & (st.V ≥ Vθ)
+    @. integ.spiked = (st.refrac ≤ z) & threshold(m, st.V)   # model's threshold predicate
     return nothing
 end
 
@@ -255,23 +315,8 @@ end
 end
 
 @inline function run_phase!(::Val{:record}, integ::DewdropIntegrator)
-    @. integ.spike_count += integ.spiked
-    _record_spikes!(integ.spike_rec, integ)
-    _record_voltage!(integ.voltage_rec, integ)
-    return nothing
-end
-@inline _record_spikes!(::Nothing, integ) = nothing
-@inline function _record_spikes!(rec, integ)
-    @inbounds if integ.n < size(rec, 2)
-        rec[:, integ.n + 1] .= integ.spiked          # column dotview write (GPU-safe)
-    end
-    return nothing
-end
-@inline _record_voltage!(::Nothing, integ) = nothing
-@inline function _record_voltage!(rec, integ)
-    @inbounds if integ.n < size(rec, 2)
-        rec[:, integ.n + 1] .= integ.state.state.V
-    end
+    @. integ.spike_count += integ.spiked       # always-on per-neuron count (drives firing_rate)
+    _record_all!(integ.monitors, integ)        # the requested monitors (Monitors.jl)
     return nothing
 end
 
@@ -293,28 +338,29 @@ function CommonSolve.solve!(integ::DewdropIntegrator)
     while integ.t < integ.tend - integ.dt / 2
         step!(integ)
     end
+    _finalize_all!(integ.monitors)             # flush each monitor's partial last window to host
     return DewdropSolution(integ)
 end
 
 """
     DewdropSolution
 
-The result of a run: final SoA `state`, per-unit `spike_count`, number of steps, `dt`,
-and `tspan`. See [`firing_rate`](@ref).
+The result of a run: final SoA `state`, per-unit `spike_count`, number of steps, `dt`, `tspan`,
+and `record` --- a NamedTuple of the requested monitors' results (see [`firing_rate`](@ref),
+[`raster`](@ref), and the `record` kwarg to `solve`).
 """
-struct DewdropSolution{ST, C, T, SP, VO}
+struct DewdropSolution{ST, C, T, R}
     state::ST
     spike_count::C
     nsteps::Int
     dt::T
     tspan::Tuple{T, T}
-    spikes::SP        # (N, nsteps) Bool raster if recorded, else `nothing`
-    voltages::VO      # (N, nsteps) V trace if recorded, else `nothing`
+    record::R         # NamedTuple{names}(::RecordResult...) keyed by monitor name
 end
 function DewdropSolution(integ::DewdropIntegrator)
     return DewdropSolution(
         integ.state, integ.spike_count, integ.n, integ.dt,
-        (integ.t - integ.n * integ.dt, integ.t), integ.spike_rec, integ.voltage_rec,
+        (integ.t - integ.n * integ.dt, integ.t), map(_result, integ.monitors),
     )
 end
 export DewdropSolution
@@ -335,16 +381,28 @@ firing_rate(sol::DewdropSolution) = sol.spike_count ./ duration(sol)
 export firing_rate
 
 """
-    raster(sol) -> (times, ids)
+    raster(sol; name=nothing) -> (times, ids)
 
-Extract spike events from a solution recorded with `record_spikes=true`: `times[k]` and
-`ids[k]` are the time and neuron index of the k-th spike (host-side analysis helper).
+Extract spike events from a solution recorded with a `Spikes()` monitor: `times[k]` and `ids[k]`
+are the time and neuron index of the k-th spike (host-side analysis helper). `name` picks a
+particular spike monitor; by default the first one is used.
 """
-function raster(sol::DewdropSolution)
-    sol.spikes === nothing && error("no spikes recorded --- pass `record_spikes = true` to `solve`")
-    idx = findall(sol.spikes)                       # CartesianIndex(neuron, step)
-    times = [I[2] * sol.dt for I in idx]
-    ids = [I[1] for I in idx]
+function raster(sol::DewdropSolution; name = nothing)
+    res = _find_spikes(sol.record, name)
+    res === nothing && error("no spikes recorded --- pass `record = (spikes = Spikes(),)` to `solve`")
+    idx = findall(res.data)                          # CartesianIndex(recorded-row, column)
+    times = [I[2] * res.every * sol.dt for I in idx]
+    ids = [_neuronid(res.idx, I[1]) for I in idx]
     return times, ids
 end
 export raster
+
+_find_spikes(record, name::Symbol) = record[name]
+function _find_spikes(record, ::Nothing)
+    for r in values(record)
+        r.kind === :spikes && return r
+    end
+    return nothing
+end
+@inline _neuronid(::Colon, row) = row
+@inline _neuronid(idx, row) = @inbounds idx[row]
