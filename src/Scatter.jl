@@ -9,12 +9,20 @@
 using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
 import Atomix
 
-@kernel function _scatter_kernel!(
-        slots, @Const(spiked), @Const(rowptr), @Const(post), @Const(weight), @Const(delay), now, L
+# EDGE-PARALLEL scatter (the GPU occupancy fix): ONE thread per synapse, not per presynaptic
+# neuron. The old per-neuron kernel exposed only (spiking-neuron) parallelism and walked each row
+# serially (a few hundred busy threads, the rest idle --- the profiled 97-99% bottleneck). Here
+# every synapse is an independent thread with uniform work (one conditional atomic), so the device
+# is saturated. The presynaptic source is read from the materialised `src` array (sorted, so the
+# idle-thread reads stay coalesced) --- measured 1.7-4x over per-neuron, and far better than a
+# per-edge binary search of rowptr (whose O(log npre) work dominates at large nedges).
+@kernel function _scatter_edge_kernel!(
+        slots, @Const(spiked), @Const(src), @Const(post), @Const(weight), @Const(delay), now, L
     )
-    pre = @index(Global)
-    @inbounds if spiked[pre]
-        for e in rowptr[pre]:(rowptr[pre + 1] - 1)
+    e = @index(Global)
+    @inbounds begin
+        pre = src[e]
+        if spiked[pre]
             slot = mod(now + delay[e], L) + 1
             Atomix.@atomic slots[post[e], slot] += weight[e]
         end
@@ -27,17 +35,23 @@ end
 Scatter the spikes in `spiked` (a per-presynaptic-neuron mask) through connectivity `conn`
 into the delay ring buffer `buf` at the current step `now`. Each spiking neuron's synapses
 deposit their weight into the postsynaptic target's slot `(now + delay) mod L`. Runs on
-whatever backend owns `buf.slots` (CPU or device) via `get_backend`.
+whatever backend owns `buf.slots` (CPU or device) via `get_backend`; the device path is
+edge-parallel (one thread per synapse), the CPU path a serial per-neuron walk.
 """
-function scatter!(buf::DelayBuffer, conn::SparseCSR, spiked, now::Integer)
+function scatter!(buf::DelayBuffer, conn::SparseCSR, spiked, now::Integer; sync::Bool = true)
     backend = get_backend(buf.slots)
-    _scatter_kernel!(backend)(
-        buf.slots, spiked, conn.rowptr, conn.post, conn.weight, conn.delay, Int(now), buf.L;
-        ndrange = length(spiked),
-    )
+    ne = nedges(conn)
+    if ne > 0
+        _scatter_edge_kernel!(backend)(
+            buf.slots, spiked, conn.src, conn.post, conn.weight, conn.delay, Int(now), buf.L;
+            ndrange = ne,
+        )
+    end
     # Some backends (e.g. the JLArrays reference backend) run kernels synchronously and
-    # define no `synchronize`; only wait where the backend actually needs it (CPU, GPU).
-    applicable(synchronize, backend) && synchronize(backend)
+    # define no `synchronize`; only wait where the backend actually needs it (CPU, GPU). The
+    # fused device step passes `sync = false` so steps pipeline on one stream (M6 Tier-1); the
+    # next deliver/read on the same stream still sees this scatter's writes.
+    sync && applicable(synchronize, backend) && synchronize(backend)
     return nothing
 end
 
@@ -50,7 +64,7 @@ end
 function scatter!(
         buf::DelayBuffer{<:Array},
         conn::SparseCSR{<:Array, <:Array, <:Array, <:Array},
-        spiked::AbstractArray, now::Integer,
+        spiked::AbstractArray, now::Integer; sync::Bool = true,   # `sync` ignored: a serial CPU walk
     )
     slots, L = buf.slots, buf.L
     rowptr, post, weight, delay = conn.rowptr, conn.post, conn.weight, conn.delay

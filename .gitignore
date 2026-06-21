@@ -7,7 +7,7 @@
 *.mat
 *.parquet
 .CondaPkg/
-.vscode
+.vscode/
 /docs/Manifest.toml
 /docs/build/
 Artifacts.toml
@@ -19,3 +19,6 @@ docs/site/
 lcov*.info
 assets/
 test/plots/
+.claude/
+INSTRUCTIONS.md
+

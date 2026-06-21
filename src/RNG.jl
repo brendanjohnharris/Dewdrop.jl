@@ -28,8 +28,24 @@ Identical for identical arguments regardless of thread or iteration order.
 @inline function draw_uniform(
         ::Type{T}, seed::Unsigned, step::Integer, entity::Integer
     ) where {T <: AbstractFloat}
+    return draw_uniform(T, seed, step, entity, 0)
+end
+
+"""
+    draw_uniform(T, seed, step, entity, batch) -> T
+
+The ensemble-batched draw: an independent, bit-reproducible stream per `batch`. The Philox
+counter is `(step, batch)` --- the high counter word is unused by the 4-arg form (it is a
+hard zero there), so folding `batch` into it yields B collision-free independent streams keyed
+by `(seed, step, entity, batch)` on CPU and GPU. `batch = 0` reproduces the 4-arg bits exactly
+(so the scalar B=1 path is bit-for-bit unchanged); `batch` must NOT be mixed into `entity`
+(the golden-ratio key mix aliases there).
+"""
+@inline function draw_uniform(
+        ::Type{T}, seed::Unsigned, step::Integer, entity::Integer, batch::Integer
+    ) where {T <: AbstractFloat}
     key = (seed % UInt64) ⊻ ((entity % UInt64) * _RNG_MIX)
-    x1, _ = philox((key,), (step % UInt64, UInt64(0)), Val(10))
+    x1, _ = philox((key,), (step % UInt64, batch % UInt64), Val(10))
     return _uniform(T, x1)
 end
 
@@ -68,4 +84,13 @@ A Poisson(λ) draw keyed by `(seed, step, entity)` --- a pure function (one coun
 uniform), identical across threads and iteration order. For per-neuron external drive.
 """
 @inline draw_poisson(λ::Real, seed::Unsigned, step::Integer, entity::Integer) =
-    poisson_count(λ, draw_uniform(Float64, seed, step, entity))
+    poisson_count(λ, draw_uniform(Float64, seed, step, entity, 0))
+
+"""
+    draw_poisson(λ, seed, step, entity, batch) -> Int
+
+The ensemble-batched Poisson draw: an independent reproducible stream per `batch` (see the
+5-arg [`draw_uniform`](@ref)). `batch = 0` reproduces the 4-arg bits.
+"""
+@inline draw_poisson(λ::Real, seed::Unsigned, step::Integer, entity::Integer, batch::Integer) =
+    poisson_count(λ, draw_uniform(Float64, seed, step, entity, batch))

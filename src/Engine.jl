@@ -123,7 +123,7 @@ export FixedStep
 Mutable, concretely-typed integrator cache (the CommonSolve `integrator`). Holds the SoA
 state and preallocated buffers; only the step counter `n` and time `t` mutate.
 """
-mutable struct DewdropIntegrator{M, ST, In, A, S, T, B, C, SY, GT, MO, DR}
+mutable struct DewdropIntegrator{M, ST, In, A, S, T, B, C, SY, GT, MO, DR, CO}
     const model::M
     const state::ST
     const input::In
@@ -140,12 +140,20 @@ mutable struct DewdropIntegrator{M, ST, In, A, S, T, B, C, SY, GT, MO, DR}
     const itot::GT               # per-neuron input-current accumulator (scratch)
     const monitors::MO           # NamedTuple of monitors (possibly empty); see Monitors.jl
     const drive::DR              # PoissonDrive, or `nothing`
+    const sync_every::Int        # periodic device-sync cadence for long runs (0 = never); see Fused.jl
+    const compaction::CO         # CompactionScratch (scatter = :compacted) or `nothing`; see Compaction.jl
 end
 # Device-movable (GPU-readiness contract): adapt the SoA state + buffers, leave scalars.
 Adapt.@adapt_structure DewdropIntegrator
 
 function CommonSolve.init(prob::DewdropNetwork, alg::FixedStep;
-        record = nothing, v0 = nothing, v0_seed::Unsigned = 0x5eed00d % UInt64)
+        record = nothing, v0 = nothing, v0_seed::Unsigned = 0x5eed00d % UInt64,
+        batch = nothing, input = nothing, streams = nothing, sync_every::Integer = _DEFAULT_WINDOW,
+        scatter::Symbol = :edge)
+    # `batch = B` routes to the ensemble (tensor) batched path (src/Batch.jl); the scalar B=1
+    # path below is unchanged (batch defaults to `nothing`), so existing runs are bit-identical.
+    batch === nothing || return _batched_init(prob, alg, Int(batch);
+        record, v0, v0_seed, input, streams, sync_every, scatter)
     arch = prob.arch
     T = float_type(prob.model)
     N = prob.n
@@ -160,12 +168,20 @@ function CommonSolve.init(prob::DewdropNetwork, alg::FixedStep;
     itot = fill!(allocate(arch, T, N), zero(T))
     nsteps = round(Int, (prob.tspan[2] - prob.tspan[1]) / dt)
     monitors = _make_monitors(record, arch, T, N, nsteps)
+    compaction = _make_compaction(scatter, arch, N)
     return DewdropIntegrator(
         prob.model, state, prob.input, dt,
         0, prob.tspan[1], prob.tspan[2], arch, prob.schedule, spiked, spike_count, syns,
-        gtot, itot, monitors, prob.drive,
+        gtot, itot, monitors, prob.drive, Int(sync_every), compaction,
     )
 end
+
+# `scatter = :edge` (default) → the edge-parallel scatter (no per-step sync); `:compacted` → the
+# compacted device fast path (src/Compaction.jl), allocating the per-step active-neuron scratch.
+_make_compaction(scatter::Symbol, arch, N) =
+    scatter === :compacted ? CompactionScratch(arch, N) :
+    scatter === :edge ? nothing :
+    throw(ArgumentError("scatter must be :edge or :compacted (got :$scatter)"))
 
 # Guard the Poisson drive against the sampler's underflow cliff: `poisson_count` inverts the
 # CDF from `exp(-λ)`, which underflows to 0 for λ ≳ 745 and then silently returns the iteration
@@ -220,9 +236,6 @@ end
 @inline _deliver!(syn::COBAState, integ) = (deliver_due!(syn.g, syn.buf, integ.n); nothing)
 @inline _deliver!(syn::DeltaSynapseState, integ) = (deliver_due!(integ.state.state.V, syn.buf, integ.n); nothing)
 
-# Per-projection: scatter this step's spikes into the delay buffer.
-@inline _propagate!(syn::AbstractSynapseState, integ) = (scatter!(syn.buf, syn.conn, integ.spiked, integ.n); nothing)
-
 # Per-projection: accumulate the input current (itot) and conductance (gtot) for this step.
 @inline _accumulate!(syn::SynapseState, gtot, itot, V) = (@. itot += syn.Isyn; nothing)
 @inline _accumulate!(syn::COBAState, gtot, itot, V) = (@. gtot += syn.g; @. itot += syn.g * syn.Erev; nothing)
@@ -236,8 +249,6 @@ end
 # Compile-time tuple unrolls (dispatch on each element's concrete type → no runtime dispatch).
 @inline _deliver_all!(::Tuple{}, integ) = nothing
 @inline _deliver_all!(s::Tuple, integ) = (_deliver!(first(s), integ); _deliver_all!(Base.tail(s), integ))
-@inline _propagate_all!(::Tuple{}, integ) = nothing
-@inline _propagate_all!(s::Tuple, integ) = (_propagate!(first(s), integ); _propagate_all!(Base.tail(s), integ))
 @inline _accum_all!(::Tuple{}, gtot, itot, V) = nothing
 @inline _accum_all!(s::Tuple, gtot, itot, V) = (_accumulate!(first(s), gtot, itot, V); _accum_all!(Base.tail(s), gtot, itot, V))
 @inline _decay_all!(::Tuple{}) = nothing
@@ -261,7 +272,10 @@ end
     return nothing
 end
 
-@inline run_phase!(::Val{:propagate}, integ::DewdropIntegrator) = _propagate_all!(integ.syns, integ)
+# Propagate through the compaction seam so `scatter = :compacted` is honoured on EVERY backend
+# (the CPU broadcast path included), matching the fused GPU path and the batched path --- not a
+# silent no-op. `nothing` → edge-parallel scatter; a CompactionScratch → the compacted scatter.
+@inline run_phase!(::Val{:propagate}, integ::DewdropIntegrator) = _propagate_step!(integ.compaction, integ)
 
 # COBA-capable subthreshold step: conductances set an effective leak (`denom`) and reversal
 # drive. With no conductance (gtot = 0) this reduces to the plain LIF exact propagator.
@@ -327,10 +341,16 @@ end
     return Expr(:block, calls..., :(return nothing))
 end
 
+# A step runs the schedule's phases. `_run_step!` is the seam the fused device path
+# (src/Fused.jl) specialises for the canonical schedule on a GPU backend; the generic method
+# is the broadcast-per-phase execution used on the CPU and for any non-canonical schedule.
+_run_step!(sched::Schedule, integ::DewdropIntegrator) = run_phases!(sched, integ)
+
 function CommonSolve.step!(integ::DewdropIntegrator)
-    run_phases!(integ.schedule, integ)
+    _run_step!(integ.schedule, integ)
     integ.n += 1
     integ.t += integ.dt
+    _maybe_sync!(integ)            # bound the device queue depth on long runs (no-op on CPU / B=0)
     return integ
 end
 

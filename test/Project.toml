@@ -1,6 +1,7 @@
 [deps]
 Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
 Dewdrop = "4456f7f7-597c-4333-80f0-10ee3d430c1b"
 Fathom = "05518021-a905-466c-bf96-cf0c89e1b0a0"
@@ -16,4 +17,5 @@ Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 
 [compat]
 Aqua = "0.8"
+CUDA = "5"
 JET = "0.11"

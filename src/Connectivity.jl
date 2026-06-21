@@ -33,13 +33,21 @@ struct SparseCSR{
     post::PV     # length nedges, postsynaptic target indices
     weight::WV   # length nedges, per-synapse weights
     delay::DV    # length nedges, per-synapse conduction delays (integer time steps)
+    src::PV      # length nedges, presynaptic source of each edge (the inverse of rowptr) ---
+    # materialised so the GPU scatter can be EDGE-parallel (one thread per synapse) without a
+    # per-edge binary search; sorted ascending (edges are grouped by source), so the idle-thread
+    # `spiked[src[e]]` reads stay coalesced at sparse firing.
+    maxdeg::Int  # the largest out-degree (longest row); sizes the compacted 2-level scatter launch
     npre::Int
     npost::Int
 end
 Adapt.@adapt_structure SparseCSR
 export SparseCSR
 
-function SparseCSR(arch::AbstractArchitecture, edges; npre::Integer, npost::Integer)
+function SparseCSR(
+        arch::AbstractArchitecture, edges; npre::Integer, npost::Integer,
+        index_type::Type{IT} = Int,
+    ) where {IT <: Integer}
     Tw = isempty(edges) ? Float32 : typeof(edges[1][3])
     nE = length(edges)
 
@@ -47,22 +55,29 @@ function SparseCSR(arch::AbstractArchitecture, edges; npre::Integer, npost::Inte
     for e in edges
         counts[e[1]] += 1
     end
-    rowptr = Vector{Int}(undef, npre + 1)
+    # `index_type = Int32` halves the rowptr/post/delay bandwidth on the scatter (the
+    # bandwidth-bound hot path) --- safe whenever nedges < 2^31. Counts/positions are computed in
+    # `Int` and stored narrowed.
+    rowptr = Vector{IT}(undef, npre + 1)
     rowptr[1] = 1
+    maxdeg = 0
     for i in 1:npre
         rowptr[i + 1] = rowptr[i] + counts[i]
+        maxdeg = max(maxdeg, counts[i])
     end
 
-    post = Vector{Int}(undef, nE)
+    post = Vector{IT}(undef, nE)
     weight = Vector{Tw}(undef, nE)
-    delay = Vector{Int}(undef, nE)
-    fillpos = copy(rowptr)
+    delay = Vector{IT}(undef, nE)
+    src = Vector{IT}(undef, nE)
+    fillpos = Vector{Int}(rowptr)
     for e in edges
         pre, p, w, d = e
         idx = fillpos[pre]
         post[idx] = p
         weight[idx] = w
         delay[idx] = d
+        src[idx] = pre
         fillpos[pre] += 1
     end
 
@@ -71,7 +86,8 @@ function SparseCSR(arch::AbstractArchitecture, edges; npre::Integer, npost::Inte
         on_architecture(arch, post),
         on_architecture(arch, weight),
         on_architecture(arch, delay),
-        Int(npre), Int(npost),
+        on_architecture(arch, src),
+        maxdeg, Int(npre), Int(npost),
     )
 end
 
@@ -104,12 +120,13 @@ weights. Returns a [`SparseCSR`](@ref).
 """
 function fixed_prob(
         arch::AbstractArchitecture, npre::Integer, npost::Integer, p::Real;
-        weight, delay, seed::Unsigned, allow_self::Bool = true, sources = 1:npre
+        weight, delay, seed::Unsigned, allow_self::Bool = true, sources = 1:npre,
+        index_type::Type = Int,
     )
     wtype = typeof(to_weight(weight isa Function ? weight(1) : weight))
     edges = Tuple{Int, Int, wtype, Int}[]
     pT = Float64(p)
-    pT > 0 || return SparseCSR(arch, edges; npre = npre, npost = npost)
+    pT > 0 || return SparseCSR(arch, edges; npre = npre, npost = npost, index_type = index_type)
     sizehint!(edges, ceil(Int, 1.1 * pT * length(sources) * npost))
     # Geometric-gap sampling: instead of testing every (pre, post) pair (O(npre·npost)), draw
     # the run of skipped targets before each edge from a geometric distribution, so cost scales
@@ -140,6 +157,6 @@ function fixed_prob(
             push!(edges, (Int(pre), post, w, d))
         end
     end
-    return SparseCSR(arch, edges; npre = npre, npost = npost)
+    return SparseCSR(arch, edges; npre = npre, npost = npost, index_type = index_type)
 end
 export fixed_prob

@@ -38,7 +38,11 @@ mutable struct WindowBuffer{W <: AbstractMatrix, H <: AbstractMatrix}
     filled::Int          # columns staged in the current window
     flushed::Int         # columns already copied to the store
 end
-Adapt.@adapt_structure WindowBuffer
+# Adapt ONLY the staging window onto the target architecture; the `store` is the host-resident
+# result and must stay a host `Array` (else the flush writes into a device store via scalar
+# `setindex!`). This is the device-window/host-store split of M0 contract 8.
+Adapt.adapt_structure(to, wb::WindowBuffer) =
+    WindowBuffer(adapt(to, wb.window), wb.store, wb.Wcols, wb.filled, wb.flushed)
 function WindowBuffer(arch, ::Type{E}, n_out::Integer, ncols::Integer) where {E}
     Wcols = min(ncols, _DEFAULT_WINDOW)
     window = fill!(allocate(arch, E, Int(n_out), Wcols), zero(E))
@@ -48,11 +52,21 @@ end
 
 @inline _wcol(wb::WindowBuffer) = wb.filled + 1     # next free column in the window
 
-# Flush the staged window columns to the host store (O(1) host transfers per window).
+# Flush the staged window columns to the host store (O(1) host transfers per window). The device
+# window is moved host-side in BULK: a `copyto!` between a host view and a device VIEW (or
+# `Array` of a view) falls back to element-wise scalar indexing (forbidden on CUDA; broken under
+# JLArrays' `allowscalar(false)`), so transfer the WHOLE contiguous window with a single
+# `copyto!(::Array, ::GPUArray)` and slice host-side.
+@inline _windowslice(window::Array, filled) = @inbounds view(window, :, 1:filled)
+function _windowslice(window, filled)                       # device → host
+    h = Array{eltype(window)}(undef, size(window))
+    copyto!(h, window)                                      # one bulk DtoH of the full window
+    return @inbounds view(h, :, 1:filled)
+end
 function flush!(wb::WindowBuffer)
     wb.filled == 0 && return wb
     @inbounds copyto!(view(wb.store, :, (wb.flushed + 1):(wb.flushed + wb.filled)),
-        view(wb.window, :, 1:wb.filled))
+        _windowslice(wb.window, wb.filled))
     wb.flushed += wb.filled
     wb.filled = 0
     return wb
@@ -128,7 +142,8 @@ end
 function _aggregate!(buf::WindowBuffer, vals, m::AggMonitor{S, I, B, R}, col) where {S, I, B, R}
     backend = get_backend(buf.window)
     _agg_kernel!(backend)(buf.window, col, vals, m.n, R === :mean; ndrange = 1)
-    applicable(synchronize, backend) && synchronize(backend)
+    # No per-step synchronisation: the window slot is read only at the windowed flush (a DtoH
+    # copy that synchronises the stream), so steps pipeline on the device (M6 Tier-1).
     return nothing
 end
 

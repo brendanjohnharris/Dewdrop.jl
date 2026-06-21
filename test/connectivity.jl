@@ -63,3 +63,25 @@ end
     end
     @test seen[] == 0
 end
+
+@testset "edge-source array + Int32 indices" begin
+    arch = Dewdrop.CPU()
+    edges = [(1, 2, 0.5f0, 1), (1, 3, 0.25f0, 2), (2, 3, 1.0f0, 1)]
+    conn = Dewdrop.SparseCSR(arch, edges; npre = 3, npost = 3)
+    # `src` is the inverse of rowptr: src[e] is the presynaptic neuron owning edge e (parallel to post)
+    @test conn.src == [1, 1, 2]
+    @test all(conn.rowptr[conn.src[e]] ≤ e < conn.rowptr[conn.src[e] + 1] for e in 1:Dewdrop.nedges(conn))
+
+    # Int32 indices: narrower rowptr/post/delay/src, same connectome + same src
+    c32 = Dewdrop.SparseCSR(arch, edges; npre = 3, npost = 3, index_type = Int32)
+    @test eltype(c32.rowptr) == Int32 && eltype(c32.post) == Int32
+    @test eltype(c32.delay) == Int32 && eltype(c32.src) == Int32
+    @test eltype(c32.weight) == Float32                      # weight type unchanged
+    @test c32.rowptr == conn.rowptr && c32.post == conn.post && c32.src == conn.src
+
+    # fixed_prob with index_type = Int32 yields the SAME connectome as Int64 (bit-identical sampling)
+    a = fixed_prob(arch, 200, 200, 0.1; weight = 0.5, delay = 3, seed = UInt64(9))
+    b = fixed_prob(arch, 200, 200, 0.1; weight = 0.5, delay = 3, seed = UInt64(9), index_type = Int32)
+    @test a.post == b.post && a.rowptr == b.rowptr && a.src == b.src
+    @test eltype(b.post) == Int32
+end

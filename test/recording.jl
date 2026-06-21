@@ -62,6 +62,14 @@ using GPUArrays
         @test st.record.V.data == sol.record.V.data[:, 1:5:nsteps]
     end
 
+    @testset "windowed flush across multiple windows" begin
+        long = DewdropNetwork(m, 2; input = 0.5, tspan = (0.0, 130.0))   # 1300 steps > 1024 window
+        ls = solve(long, FixedStep(dt); record = (V = Trace(:V),))
+        @test size(ls.record.V.data, 2) == 1300
+        @test ls.record.V.data[:, end] == ls.state.state.V             # final partial window flushed
+        @test all(v -> m.EL - 1e-6 ≤ v < m.Vθ, ls.record.V.data)       # every window flushed correctly
+    end
+
     @testset "other state vars, synaptic vars, and a probe" begin
         @test all(≥(-1e-9), solve(prob, FixedStep(dt); record = (r = Trace(:refrac),)).record.r.data)
         # a CUBA projection exposes a synaptic current column

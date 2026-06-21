@@ -21,6 +21,16 @@ struct CPU <: AbstractArchitecture end
 export CPU
 
 """
+    GPU()
+
+Device architecture; simulation state lives in GPU arrays and the same KernelAbstractions
+kernels run on the device. Requires a GPU package extension --- `using CUDA` enables it (the
+extension maps [`array_type`](@ref)`(GPU())` to `CuArray`).
+"""
+struct GPU <: AbstractArchitecture end
+export GPU
+
+"""
     array_type(arch)
 
 The backing array type used to allocate state on `arch` (`Array` for [`CPU`](@ref)).
