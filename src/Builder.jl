@@ -1,83 +1,226 @@
-# * Network builder (M2) --- a small, fluent, mutating helper for constructing E/I networks:
-# one population of NE+NI neurons with named `:E` (1:NE) and `:I` (NE+1:end) subpopulations,
-# projections added by `connect!`, an external drive by `drive!`, assembled into a
-# `DewdropNetwork` by `build`. This removes the manual `fixed_prob` / `sources` / `Projection`
-# boilerplate. The accumulated projections are heterogeneous (CUBA/COBA/delta), so `build`
-# materialises them into a concretely-typed tuple via a function barrier (the builder boundary
-# is the only dynamic point; the simulation hot loop remains fully type-stable).
+# * Network builder (M2 + Phase A) --- a small, fluent, mutating helper for constructing networks
+# with named subpopulations. The builder accumulates an ordered list of populations
+# (`population!`), projections (`project!`), and an external drive (`drive!`), then `build`
+# assembles them into a flat `DewdropNetwork`: the populations are concatenated into one SoA in
+# declaration order, their ranges recorded in a subpop registry (`:E`, `:I`, …), and the per-group
+# models merged. Same-type groups that differ only in parameter values collapse to one
+# `Heterogeneous` model (block per-neuron arrays); a single shared model stays a bare model (the
+# homogeneous fast path, byte-identical to a hand-built `DewdropNetwork`). Different model TYPES per
+# group need the MultiModel engine (Phase B) and currently error.
+#
+# The accumulated populations/projections are heterogeneous (any model, any CUBA/COBA/delta
+# synapse), so `build` is the single dynamic boundary --- it materialises everything into concretely
+# typed tuples via a function barrier, keeping the simulation hot loop fully type-stable.
+
+# a deferred projection: `src => dst` over a synapse, with the connectivity built at `build` time
+# (when the final registry + positions are known). Either `fixed_prob` (`p`), `distance_prob`
+# (`kernel` + positions), or a prebuilt `connectivity`.
+struct _ProjSpec
+    src::Symbol
+    dst::Symbol
+    synapse::Any
+    kw::Any            # NamedTuple of connectivity kwargs (p/weight/delay/seed/allow_self/kernel/period/connectivity)
+    plasticity::Any
+end
 
 """
     NetworkBuilder
 
-A mutable accumulator for an E/I network (see [`network`](@ref), [`project!`](@ref),
-[`drive!`](@ref), [`build`](@ref)).
+A mutable accumulator for a network with named subpopulations (see [`network`](@ref),
+[`population!`](@ref), [`project!`](@ref), [`drive!`](@ref), [`build`](@ref)).
 """
-mutable struct NetworkBuilder{M <: AbstractNeuronModel, A <: AbstractArchitecture, T}
-    const model::M
-    const NE::Int
-    const NI::Int
+mutable struct NetworkBuilder{A <: AbstractArchitecture, T}
     const arch::A
     const tspan::Tuple{T, T}
-    const projections::Vector{Any}
+    const names::Vector{Symbol}
+    const models::Vector{Any}
+    const sizes::Vector{Int}
+    const inputs::Vector{Any}
+    const positions::Vector{Any}      # per-population positions vector or `nothing`
+    const projspecs::Vector{_ProjSpec}
     drive::Any
 end
 
 """
+    network(; arch=CPU(), tspan) -> NetworkBuilder
     network(model, NE, NI; arch=CPU(), tspan) -> NetworkBuilder
 
-Begin building an E/I network of `NE` excitatory + `NI` inhibitory `model` neurons (a single
-population with named `:E` = `1:NE` and `:I` = `NE+1:NE+NI` subpopulations).
+Begin building a network. The keyword form starts empty --- add named populations with
+[`population!`](@ref). The 3-argument form is sugar for the common E/I case: it adds an `:E`
+population of `NE` and an `:I` population of `NI`, both of `model` (one shared model → the
+homogeneous fast path).
 """
+function network(; arch::AbstractArchitecture = CPU(), tspan)
+    T = float_type_of_tspan(tspan)
+    return NetworkBuilder(arch, (T(to_time(tspan[1])), T(to_time(tspan[2]))),
+        Symbol[], Any[], Int[], Any[], Any[], _ProjSpec[], nothing)
+end
 function network(model::AbstractNeuronModel, NE::Integer, NI::Integer;
         arch::AbstractArchitecture = CPU(), tspan)
-    T = float_type(model)
-    return NetworkBuilder(model, Int(NE), Int(NI), arch, (T(tspan[1]), T(tspan[2])), Any[], nothing)
+    nb = network(; arch = arch, tspan = tspan)
+    population!(nb, :E, model, NE)
+    population!(nb, :I, model, NI)
+    return nb
 end
 export network
 
-function _subpop(nb::NetworkBuilder, src::Symbol)
-    src === :E && return 1:nb.NE
-    src === :I && return (nb.NE + 1):(nb.NE + nb.NI)
-    src === :all && return 1:(nb.NE + nb.NI)
-    return error("unknown subpopulation $src --- use :E, :I, or :all")
-end
+# the builder's float type from `tspan` (units stripped); falls back to Float64 for plain numbers.
+float_type_of_tspan(tspan) = typeof(to_time(tspan[1]) + to_time(tspan[2]) + 0.0)
 
 """
-    project!(nb, src, synapse; p, weight, delay, seed, allow_self=false) -> nb
+    population!(nb, name, model, N; input=0.0, positions=nothing) -> nb
 
-Add a projection from subpopulation `src` (`:E`, `:I`, or `:all`) onto the whole population,
-with random connection probability `p`. `weight` and `delay` may be scalars or per-source
-functions of the presynaptic index. (Named `project!` rather than `connect!` to avoid clashing
-with `Observables.connect!`, which `Makie` re-exports.)
+Add a named population of `N` `model` neurons. Populations are concatenated in declaration order;
+`name` (e.g. `:E`) addresses the population in `project!` and on the solution (`sol[name]`).
+`input` is a per-population constant current (scalar or length-`N` vector); `positions` (optional)
+are consumed by distance-kernel projections.
 """
-function project!(nb::NetworkBuilder, src::Symbol, synapse::AbstractSynapseModel;
-        p, weight, delay, seed::Unsigned, allow_self::Bool = false)
-    N = nb.NE + nb.NI
-    conn = fixed_prob(nb.arch, N, N, p; weight = weight, delay = delay, seed = seed,
-        sources = _subpop(nb, src), allow_self = allow_self)
-    push!(nb.projections, Projection(synapse, conn))
+function population!(nb::NetworkBuilder, name::Symbol, model::AbstractNeuronModel, N::Integer;
+        input = 0.0, positions = nothing)
+    name === :all && error("population name :all is reserved (it always denotes the whole network)")
+    name in nb.names && error("population :$name already defined")
+    push!(nb.names, name)
+    push!(nb.models, model)
+    push!(nb.sizes, Int(N))
+    push!(nb.inputs, input)
+    push!(nb.positions, positions)
     return nb
 end
+export population!
+
+# the registry of subpop ranges from the populations added so far (declaration order).
+function _registry(nb::NetworkBuilder)
+    ranges = Pair{Symbol, UnitRange{Int}}[]
+    off = 0
+    for (nm, sz) in zip(nb.names, nb.sizes)
+        push!(ranges, nm => (off + 1):(off + sz))
+        off += sz
+    end
+    return NamedTuple(ranges)
+end
+
+"""
+    project!(nb, src => dst, synapse; p, weight, delay, seed, allow_self=false, plasticity=nothing) -> nb
+    project!(nb, src, synapse; …) -> nb
+
+Add a projection from subpopulation `src` onto `dst` (a `src => dst` pair of subpop names; the
+single-symbol form targets the whole network, `src => :all`). Connectivity is `fixed_prob` with
+probability `p` by default, `distance_prob` if a `kernel` is given (using the populations'
+`positions`), or a prebuilt `connectivity`. `weight`/`delay` may be scalars or per-source functions
+of the presynaptic index. (Named `project!` rather than `connect!` to avoid clashing with
+`Observables.connect!`, which `Makie` re-exports.)
+"""
+function project!(nb::NetworkBuilder, pair::Pair{Symbol, Symbol}, synapse::AbstractSynapseModel;
+        plasticity = nothing, kw...)
+    push!(nb.projspecs, _ProjSpec(pair.first, pair.second, synapse, NamedTuple(kw), plasticity))
+    return nb
+end
+project!(nb::NetworkBuilder, src::Symbol, synapse::AbstractSynapseModel; kw...) =
+    project!(nb, src => :all, synapse; kw...)
 export project!
 
 """
     drive!(nb, drive) -> nb
+    drive!(nb, target, drive) -> nb
 
-Set the external [`PoissonDrive`](@ref) for the network.
+Set the external [`PoissonDrive`](@ref) for the network. The 3-argument form names a `target`
+subpopulation (currently only `:all`, the whole network).
 """
 function drive!(nb::NetworkBuilder, drive)
     nb.drive = drive
     return nb
 end
+function drive!(nb::NetworkBuilder, target::Symbol, drive)
+    target === :all || error("targeted drive (:$target) is not yet supported; use :all (the whole network)")
+    nb.drive = drive
+    return nb
+end
 export drive!
 
-"""
-    build(nb; input=0.0, schedule=default_schedule()) -> DewdropNetwork
+# --- model merge ------------------------------------------------------------------------------
+# Merge the per-group models into one engine model. A single group, or several groups with the
+# identical model, stays a bare model (homogeneous fast path). Same-type groups that differ in some
+# field values collapse to a `Heterogeneous` whose overridden fields are block per-neuron arrays.
+# Different model TYPES become a `MultiModel` (per-group launches over the union SoA).
+function _combine_models(models::Vector, sizes::Vector{Int})
+    M = typeof(first(models))
+    all(m -> typeof(m) === M, models) || return MultiModel(models, sizes)   # different TYPES → MultiModel engine
+    length(models) == 1 && return first(models)
+    overrides = Pair{Symbol, Any}[]
+    for f in fieldnames(M)
+        vals = [getfield(m, f) for m in models]
+        all(==(first(vals)), vals) && continue                  # identical across groups → stays scalar
+        arr = reduce(vcat, [fill(getfield(models[g], f), sizes[g]) for g in eachindex(models)])
+        push!(overrides, f => arr)
+    end
+    isempty(overrides) && return first(models)                  # all fields identical → homogeneous
+    return Heterogeneous(first(models); NamedTuple(overrides)...)
+end
 
-Assemble the builder into a [`DewdropNetwork`](@ref) problem.
+# --- input merge ------------------------------------------------------------------------------
+# A single scalar if every group shares the same scalar input; otherwise a length-N block vector.
+function _combine_inputs(inputs::Vector, sizes::Vector{Int}, ::Type{T}) where {T}
+    if all(x -> x isa Number, inputs) && all(==(first(inputs)), inputs)
+        return first(inputs)
+    end
+    blocks = map(eachindex(inputs)) do g
+        x = inputs[g]
+        x isa Number && return fill(T(to_current(x)), sizes[g])
+        length(x) == sizes[g] || error("population $(g) input length $(length(x)) ≠ N = $(sizes[g])")
+        return T.(to_current.(x))
+    end
+    return reduce(vcat, blocks)
+end
+
+# concatenate per-group positions (all-or-nothing); `nothing` if no population gave positions.
+function _combine_positions(positions::Vector, sizes::Vector{Int})
+    all(isnothing, positions) && return nothing
+    any(isnothing, positions) && error("positions must be given for all populations or none")
+    return reduce(vcat, positions)
+end
+
+# build one projection's connectivity from its spec, resolving src/dst names against the registry.
+function _build_projection(spec::_ProjSpec, reg::NamedTuple, positions, arch, N::Int)
+    sources = _subrange(reg, spec.src)
+    targets = _subrange(reg, spec.dst)
+    kw = spec.kw
+    conn = if haskey(kw, :connectivity) && kw.connectivity !== nothing
+        kw.connectivity
+    elseif haskey(kw, :kernel) && kw.kernel !== nothing
+        positions === nothing && error("distance-kernel projection :$(spec.src)=>:$(spec.dst) needs population `positions`")
+        if haskey(kw, :count) && kw.count !== nothing
+            distance_fixed_count(arch, positions; kernel = kw.kernel, count = kw.count, weight = kw.weight,
+                delay = kw.delay, seed = kw.seed, allow_self = get(kw, :allow_self, false),
+                period = get(kw, :period, nothing), sources = sources, targets = targets)
+        else
+            distance_prob(arch, positions; kernel = kw.kernel, weight = kw.weight, delay = kw.delay,
+                seed = kw.seed, allow_self = get(kw, :allow_self, false),
+                period = get(kw, :period, nothing), sources = sources, targets = targets)
+        end
+    else
+        fixed_prob(arch, N, N, kw.p; weight = kw.weight, delay = kw.delay, seed = kw.seed,
+            allow_self = get(kw, :allow_self, false), sources = sources, targets = targets)
+    end
+    return Projection(spec.synapse, conn; plasticity = spec.plasticity)
+end
+
 """
-function build(nb::NetworkBuilder; input = 0.0, schedule::Schedule = default_schedule())
-    return DewdropNetwork(nb.model, nb.NE + nb.NI; input = input, tspan = nb.tspan,
-        arch = nb.arch, schedule = schedule, projections = Tuple(nb.projections), drive = nb.drive)
+    build(nb; input=nothing, schedule=default_schedule()) -> DewdropNetwork
+
+Assemble the builder into a [`DewdropNetwork`](@ref): concatenate the populations into one flat SoA
+(recording their ranges in the subpop registry), merge the per-group models and inputs, and
+materialise the projections. `input` overrides the per-population inputs with a single global value.
+"""
+function build(nb::NetworkBuilder; input = nothing, schedule::Schedule = default_schedule())
+    isempty(nb.names) && error("network has no populations --- add them with `population!`")
+    N = sum(nb.sizes)
+    reg = merge((all = 1:N,), _registry(nb))      # include the implicit :all so projections can target it
+    model = _combine_models(nb.models, nb.sizes)
+    T = float_type(model)
+    in_ = input === nothing ? _combine_inputs(nb.inputs, nb.sizes, T) : input
+    positions = _combine_positions(nb.positions, nb.sizes)
+    projs = Tuple(_build_projection(spec, reg, positions, nb.arch, N) for spec in nb.projspecs)
+    return DewdropNetwork(model, N; input = in_, tspan = nb.tspan, arch = nb.arch,
+        schedule = schedule, projections = projs, drive = nb.drive, subpops = reg, positions = positions)
 end
 export build

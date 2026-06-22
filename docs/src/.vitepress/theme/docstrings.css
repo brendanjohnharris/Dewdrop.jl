@@ -1,0 +1,28 @@
+/* Documenter docstring blocks (`@docs`/`@autodocs` output) */
+.jldocstring.custom-block {
+    border: 1px solid var(--vp-c-gray-1);
+    border-left: 3px solid var(--vp-c-brand-1);
+    color: var(--vp-c-text-1);
+    background-color: var(--vp-c-bg-soft);
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin: 18px 0;
+}
+
+.jldocstring.custom-block summary {
+    font-weight: 700;
+    cursor: pointer;
+    user-select: none;
+    margin: 0 0 8px;
+}
+
+.jldocstring.custom-block summary:hover {
+    color: var(--vp-c-brand-1);
+}
+
+.jldocstring.custom-block > header code,
+.jldocstring.custom-block summary code {
+    color: var(--vp-c-brand-1);
+    background: transparent;
+    padding: 0;
+}

@@ -74,6 +74,23 @@ using CUDA
             @test sg.record.V.data ≈ sc.record.V.data
         end
 
+        @testset "MultiModel (AdEx-E + LIF-I) runs on-device + matches CPU" begin
+            # multi-type populations: the fused launch loops the groups, launching the per-neuron
+            # kernel once per (model, range). On the GPU each group is its own monomorphic launch over
+            # the union SoA; with no synapses the run is deterministic, matching the CPU per-group path.
+            mE = AdEx(; C = 200.0, gL = 10.0, EL = -70.0, VT = -50.0, ΔT = 2.0, Vr = -58.0, Vpeak = 0.0,
+                a = 2.0, b = 60.0, τw = 120.0, tref = 2.0)
+            mI = LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 0.1, tref = 2.0)
+            net(arch) = DewdropNetwork(Dewdrop.MultiModel([mE, mI], [64, 64]), 128;
+                input = vcat(fill(700.0, 64), fill(400.0, 64)), tspan = (0.0, 150.0), arch = arch)
+            g = solve(net(Dewdrop.GPU()), FixedStep(0.05))
+            c = solve(net(Dewdrop.CPU()), FixedStep(0.05))
+            @test sum(Array(g.spike_count)[1:64]) > 0                  # AdEx group fired on-device
+            @test sum(Array(g.spike_count)[65:128]) > 0               # LIF group fired on-device
+            @test Array(g.spike_count) == c.spike_count               # per-group launches ≡ CPU (no scatter)
+            @test Array(g.state.state.w) ≈ c.state.state.w            # adaptation column matches (exp ULP)
+        end
+
         @testset "Int32 indices + Float32 path on the GPU (scatter perf knobs)" begin
             function ei(::Type{T}, N, IT; Tend = 150.0) where {T}
                 mm = LIF(; τ = T(20), EL = T(0), Vθ = T(20), Vr = T(10), R = T(1), tref = T(2))

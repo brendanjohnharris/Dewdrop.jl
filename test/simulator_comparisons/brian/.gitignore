@@ -1,0 +1,9 @@
+.venv/
+out/
+__pycache__/
+*.pyc
+# brian2 standalone build artifacts
+output/
+*_build/
+
+lvenv/

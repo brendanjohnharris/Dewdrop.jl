@@ -64,3 +64,28 @@ end
 export ConductanceSynapse
 
 @inline synapse_decay(s::ConductanceSynapse, dt) = exp(-dt / s.τ)
+
+"""
+    DualExpSynapse(; τr, τd, Erev)
+
+Conductance-based (COBA) dual-exponential synapse (the WRCircuit `DualExponV2` kinetic): a delivered
+spike of weight `w` kicks two accumulators `g_rise`/`g_decay`, which decay with rise time `τr` and
+decay time `τd`; the conductance is `g(t) = a·(g_decay − g_rise)` --- a difference of exponentials
+(rise then decay) --- normalised by `a` so the peak conductance equals the delivered weight `w`. The
+synaptic current is voltage-dependent, `g·(Erev − V)`. Requires `τr ≠ τd`.
+"""
+struct DualExpSynapse{T} <: AbstractSynapseModel
+    τr::T
+    τd::T
+    Erev::T
+end
+function DualExpSynapse(; τr, τd, Erev)
+    r, d, e = promote(to_time(τr), to_time(τd), to_voltage(Erev))
+    r == d && throw(ArgumentError("DualExpSynapse requires τr ≠ τd (got τr = τd = $r); use an alpha synapse for equal time constants"))
+    return DualExpSynapse(r, d, e)
+end
+export DualExpSynapse
+
+# peak-normalising coefficient: `a·(e^{-t/τd} − e^{-t/τr})` has continuous peak 1, so the delivered
+# weight is the peak conductance change (BrainPy's default `A`).
+@inline _dualexp_a(τr, τd) = (τd / (τd - τr)) * (τr / τd)^(τr / (τr - τd))

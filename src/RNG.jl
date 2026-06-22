@@ -94,3 +94,38 @@ The ensemble-batched Poisson draw: an independent reproducible stream per `batch
 """
 @inline draw_poisson(λ::Real, seed::Unsigned, step::Integer, entity::Integer, batch::Integer) =
     poisson_count(λ, draw_uniform(Float64, seed, step, entity, batch))
+
+"""
+    draw_normal(T, seed, step, entity) -> T
+
+A standard-normal `N(0, 1)` draw of float type `T`, a *pure* function of `(seed, step, entity)`
+via the Box--Muller transform. It consumes BOTH 64-bit words of a single Philox evaluation --- the
+same call whose second word [`draw_uniform`](@ref) discards --- so it costs one Philox eval per
+draw and is allocation-free and GPU-kernel-safe (no Sampler dispatch, same discipline as
+`_uniform`). Keyed identically to `draw_uniform`, so a distinct `seed` yields an independent
+stream; for the SDE noise term, use a `seed` distinct from any Poisson drive. The `cos` branch
+only (one normal per call), matching the one-draw-per-neuron-per-step shape of the drive.
+"""
+@inline function draw_normal(
+        ::Type{T}, seed::Unsigned, step::Integer, entity::Integer
+    ) where {T <: AbstractFloat}
+    return draw_normal(T, seed, step, entity, 0)
+end
+
+"""
+    draw_normal(T, seed, step, entity, batch) -> T
+
+The ensemble-batched Gaussian: an independent, bit-reproducible stream per `batch` (the high
+Philox counter word, as in the 5-arg [`draw_uniform`](@ref)). `batch = 0` reproduces the 4-arg
+bits exactly.
+"""
+@inline function draw_normal(
+        ::Type{T}, seed::Unsigned, step::Integer, entity::Integer, batch::Integer
+    ) where {T <: AbstractFloat}
+    key = (seed % UInt64) ⊻ ((entity % UInt64) * _RNG_MIX)
+    x1, x2 = philox((key,), (step % UInt64, batch % UInt64), Val(10))   # BOTH words (x2 unused by draw_uniform)
+    u1 = _uniform(T, x1)
+    u2 = _uniform(T, x2)
+    u1 = ifelse(iszero(u1), eps(T), u1)                # guard log(0): _uniform ∈ [0, 1) can be exactly 0
+    return sqrt(T(-2) * log(u1)) * cos(T(2π) * u2)
+end

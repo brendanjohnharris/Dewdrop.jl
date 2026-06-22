@@ -6,8 +6,10 @@ module TimeseriesBaseExt
 # this. Custom `Neuron`/`Synapse` dimensions follow the TimeseriesBase `Var`/`Obs` pattern (a
 # `ToolsDim` subtype, so the results are proper `ToolsArray`s, not bare `DimArray`s).
 
-using Dewdrop
-import TimeseriesBase: Timeseries, spiketrain, ToolsArray, ToolsDim, 𝑡
+# `import` (not `using`) Dewdrop so the local `Population` dimension below does not collide with
+# Dewdrop's exported SoA-state `Population` struct; the ext refers to Dewdrop names qualified.
+import Dewdrop
+import TimeseriesBase: Timeseries, spiketrain, ToolsArray, ToolsDim, 𝑡, Var
 import DimensionalData
 
 # --- Custom Dewdrop dimensions ---
@@ -15,10 +17,16 @@ abstract type NeuronDim{T} <: ToolsDim{T} end
 DimensionalData.@dim Neuron NeuronDim "Neuron"
 abstract type SynapseDim{T} <: ToolsDim{T} end
 DimensionalData.@dim Synapse SynapseDim "Synapse"
+# The `Population` LABELLED-OUTPUT dimension (matching the WRCircuit bpformat convention). Its name
+# clashes with Dewdrop's core SoA `Population` struct, so it is NOT injected into Dewdrop's namespace
+# --- reference it on a result by its name symbol, e.g. `dims(X, :Population)`.
+abstract type PopulationDim{T} <: ToolsDim{T} end
+DimensionalData.@dim Population PopulationDim "Population"
 
-# Expose the dims in Dewdrop's namespace (so `Dewdrop.Neuron(...)` / `import Dewdrop: Neuron`
+# Expose the per-unit dims in Dewdrop's namespace (so `Dewdrop.Neuron(...)` / `import Dewdrop: Neuron`
 # work once TimeseriesBase is loaded). Done at load time, not precompile, to avoid mutating the
-# parent module during its precompilation.
+# parent module during its precompilation. (`Var`/`Obs`/`𝑡` come from TimeseriesBase itself;
+# `Population` is referenced by symbol, see above.)
 function __init__()
     isdefined(Dewdrop, :Neuron) || Core.eval(Dewdrop, :(const Neuron = $Neuron))
     isdefined(Dewdrop, :Synapse) || Core.eval(Dewdrop, :(const Synapse = $Synapse))
@@ -29,34 +37,62 @@ end
 _times(res, sol) = (1:size(res.data, 2)) .* (res.every * sol.dt)
 _neurons(res) = res.idx isa Colon ? collect(1:size(res.data, 1)) : collect(res.idx)
 
+# rows of a per-unit monitor restricted to subpopulation `of` (and the global neuron indices they
+# carry). `of = :all` keeps everything; a named subpop needs a full recording (idx = :all) so its
+# range maps to rows directly.
+function _sub_rows(sol, res, of)
+    of === :all && return (Colon(), _neurons(res))
+    r = Dewdrop._subrange(sol.subpops, of)
+    res.idx isa Colon || error("subpop labelling (`of = :$of`) needs a full recording (idx = :all)")
+    return (r, collect(r))
+end
+
 """
-    Timeseries(sol::DewdropSolution, name=:V)
+    Timeseries(sol::DewdropSolution, name=:V; of=:all)
 
 The named recorded monitor as a labeled `Timeseries`: a per-unit `Trace`/`Probe` → `Time × Neuron`
 (the `Neuron` axis carries the actual recorded indices); an `Aggregate` → a univariate `Time`
-series. Use [`spiketrain`](@ref) for a `Spikes` monitor.
+series. `of` (a subpopulation symbol, e.g. `:E`) restricts the `Neuron` axis to that subpopulation.
+Use [`spiketrain`](@ref) for a `Spikes` monitor.
 """
-function Timeseries(sol::Dewdrop.DewdropSolution, name::Symbol = :V)
+function Timeseries(sol::Dewdrop.DewdropSolution, name::Symbol = :V; of = :all)
     res = sol.record[name]
     if res.kind === :aggregate
+        of === :all || error("aggregate monitors have no neuron axis to restrict with `of`")
         return ToolsArray(vec(res.data), 𝑡(_times(res, sol)); name = name)
     end
+    rows, neurons = _sub_rows(sol, res, of)
+    data = rows === Colon() ? res.data : res.data[rows, :]
     # per-unit: stored (unit, time); transpose to time-first so it is a proper Timeseries
-    return ToolsArray(permutedims(res.data), (𝑡(_times(res, sol)), Neuron(_neurons(res))); name = name)
+    return ToolsArray(permutedims(data), (𝑡(_times(res, sol)), Neuron(neurons)); name = name)
+end
+
+"""
+    Timeseries(sol::DewdropSolution, populations; vars=[:V])
+
+The recorded traces as a `Population × Var` nested `ToolsArray`, each cell the per-population
+`Time × Neuron` timeseries of one variable --- matching the WRCircuit `bpsolve`/`bpformat` output
+shape (the populations are named subpopulations, the variables recorded `Trace` monitor names).
+"""
+function Timeseries(sol::Dewdrop.DewdropSolution, populations::AbstractVector; vars = [:V])
+    X = [Timeseries(sol, Symbol(v); of = Symbol(p)) for p in populations, v in vars]
+    return ToolsArray(X, (Population(collect(Symbol.(populations))), Var(collect(Symbol.(vars)))))
 end
 
 # Extend TimeseriesBase's `spiketrain` (which builds a SpikeTrain from spike times) with a
 # DewdropSolution method: a `Spikes` monitor as a labeled, binary `Neuron × Time` timeseries.
 """
-    spiketrain(sol::DewdropSolution, name=nothing)
+    spiketrain(sol::DewdropSolution, name=nothing; of=:all)
 
 A recorded `Spikes` monitor as a labeled binary `Neuron × Time` timeseries (`name` picks one;
-default: the first spike monitor).
+default: the first spike monitor). `of` restricts the `Neuron` axis to a named subpopulation.
 """
-function spiketrain(sol::Dewdrop.DewdropSolution, name = nothing)
+function spiketrain(sol::Dewdrop.DewdropSolution, name = nothing; of = :all)
     res = Dewdrop._find_spikes(sol.record, name)
     res === nothing && error("no spikes recorded --- pass `record = (spikes = Spikes(),)` to `solve`")
-    return ToolsArray(res.data, (Neuron(_neurons(res)), 𝑡(_times(res, sol))); name = :spikes)
+    rows, neurons = _sub_rows(sol, res, of)
+    data = rows === Colon() ? res.data : res.data[rows, :]
+    return ToolsArray(data, (Neuron(neurons), 𝑡(_times(res, sol))); name = :spikes)
 end
 
 end # module TimeseriesBaseExt

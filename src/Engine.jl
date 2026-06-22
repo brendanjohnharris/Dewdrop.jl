@@ -17,10 +17,13 @@ A synaptic projection: a synapse model applied over connectivity `conn`, which c
 per-synapse weights and (heterogeneous) delays. For M1 this is a recurrent projection within
 one population.
 """
-struct Projection{SM <: AbstractSynapseModel, C <: AbstractConnectivity}
+struct Projection{SM <: AbstractSynapseModel, C <: AbstractConnectivity, PL}
     synapse::SM
     conn::C
+    plasticity::PL       # an AbstractPlasticityRule (STDP) or `nothing` (static synapse); see Plasticity.jl
 end
+Projection(synapse::AbstractSynapseModel, conn::AbstractConnectivity; plasticity = nothing) =
+    Projection(synapse, conn, plasticity)
 export Projection
 
 # Runtime synaptic state assembled at `init`, dispatched on the synapse model:
@@ -54,6 +57,21 @@ struct DeltaSynapseState{B, C} <: AbstractSynapseState
 end
 Adapt.@adapt_structure DeltaSynapseState
 
+# Dual-exponential COBA: two per-target conductance accumulators (`g_rise`, `g_decay`), each kicked
+# by the delivered weight and decaying with its own coefficient; the conductance is
+# `a·(g_decay − g_rise)`, contributing to the effective leak (`gtot`) and reversal drive (`itot`).
+struct DualExpCOBAState{G, B, C, T} <: AbstractSynapseState
+    g_rise::G
+    g_decay::G
+    buf::B
+    conn::C
+    decay_r::T
+    decay_d::T
+    a::T
+    Erev::T
+end
+Adapt.@adapt_structure DualExpCOBAState
+
 """
     PoissonDrive(; rate, weight, seed=0)
 
@@ -80,7 +98,7 @@ A simulation problem: `N` units of neuron `model` driven by external `input` (a 
 constant current, or a per-unit array) over `tspan`. An optional recurrent [`Projection`](@ref)
 adds synaptic coupling.
 """
-struct DewdropNetwork{M <: AbstractNeuronModel, In, A <: AbstractArchitecture, S <: Schedule, T, P <: Tuple, DR}
+struct DewdropNetwork{M <: AbstractNeuronModel, In, A <: AbstractArchitecture, S <: Schedule, T, P <: Tuple, DR, NO, SP <: NamedTuple, PO}
     model::M
     n::Int
     input::In
@@ -89,18 +107,26 @@ struct DewdropNetwork{M <: AbstractNeuronModel, In, A <: AbstractArchitecture, S
     schedule::S
     projections::P              # a (possibly empty) tuple of Projections
     drive::DR
+    noise::NO                   # WhiteNoise, or `nothing` (compiles away); see Noise.jl
+    subpops::SP                 # named-subpopulation registry: name → contiguous range into 1:N; see Builder.jl
+    positions::PO               # per-neuron positions (host metadata for spatial measures), or `nothing`
 end
 # normalise the `projection` (singular) / `projections` (plural) keywords to a tuple
 _normalize_projections(p::Projection, ::Nothing) = (p,)
 _normalize_projections(::Nothing, ::Nothing) = ()
 _normalize_projections(::Nothing, ps) = Tuple(ps)
+# normalise the subpop registry: always carry an implicit `:all` spanning the whole population, with
+# any user-named subpops layered on top (a user-supplied `:all` wins). Pure host-side metadata.
+_normalize_subpops(::Nothing, N::Int) = (all = 1:N,)
+_normalize_subpops(nt::NamedTuple, N::Int) = merge((all = 1:N,), nt)
 function DewdropNetwork(model::AbstractNeuronModel, N::Integer; input, tspan,
         arch::AbstractArchitecture = CPU(), schedule::Schedule = default_schedule(),
-        projection = nothing, projections = nothing, drive = nothing)
+        projection = nothing, projections = nothing, drive = nothing, noise = nothing,
+        subpops = nothing, positions = nothing)
     T = float_type(model)
     in_ = on_architecture(arch, to_current(input))     # per-unit input arrays move to the architecture
     projs = _normalize_projections(projection, projections)
-    return DewdropNetwork(model, Int(N), in_, (T(to_time(tspan[1])), T(to_time(tspan[2]))), arch, schedule, projs, drive)
+    return DewdropNetwork(model, Int(N), in_, (T(to_time(tspan[1])), T(to_time(tspan[2]))), arch, schedule, projs, drive, noise, _normalize_subpops(subpops, Int(N)), positions)
 end
 export DewdropNetwork
 
@@ -123,7 +149,7 @@ export FixedStep
 Mutable, concretely-typed integrator cache (the CommonSolve `integrator`). Holds the SoA
 state and preallocated buffers; only the step counter `n` and time `t` mutate.
 """
-mutable struct DewdropIntegrator{M, ST, In, A, S, T, B, C, SY, GT, MO, DR, CO}
+mutable struct DewdropIntegrator{M, ST, In, A, S, T, B, C, SY, GT, MO, DR, CO, NO, BK, SP, PO}
     const model::M
     const state::ST
     const input::In
@@ -142,37 +168,66 @@ mutable struct DewdropIntegrator{M, ST, In, A, S, T, B, C, SY, GT, MO, DR, CO}
     const drive::DR              # PoissonDrive, or `nothing`
     const sync_every::Int        # periodic device-sync cadence for long runs (0 = never); see Fused.jl
     const compaction::CO         # CompactionScratch (scatter = :compacted) or `nothing`; see Compaction.jl
+    const noise::NO              # WhiteNoise (SDE diffusion) or `nothing` (compiles away); see Noise.jl
+    const backend::BK            # resolved execution backend (Serial/Fused/Turbo); routes the step, see Fused.jl
+    const subpops::SP            # named-subpopulation registry (host-side metadata; travels onto the solution)
+    const positions::PO          # per-neuron positions (host-side metadata; travels onto the solution)
 end
-# Device-movable (GPU-readiness contract): adapt the SoA state + buffers, leave scalars.
-Adapt.@adapt_structure DewdropIntegrator
+# Device-movable (GPU-readiness contract): adapt the SoA state + buffers, leave the host-side
+# `subpops`/`positions` metadata (a custom rule keeps `positions` host-resident even on a GPU run).
+Adapt.adapt_structure(to, integ::DewdropIntegrator) = DewdropIntegrator(
+    adapt(to, integ.model), adapt(to, integ.state), adapt(to, integ.input), integ.dt,
+    integ.n, integ.t, integ.tend, integ.arch, integ.schedule, adapt(to, integ.spiked),
+    adapt(to, integ.spike_count), adapt(to, integ.syns), adapt(to, integ.gtot), adapt(to, integ.itot),
+    adapt(to, integ.monitors), adapt(to, integ.drive), integ.sync_every, adapt(to, integ.compaction),
+    adapt(to, integ.noise), integ.backend, integ.subpops, integ.positions,
+)
 
 function CommonSolve.init(prob::DewdropNetwork, alg::FixedStep;
         record = nothing, v0 = nothing, v0_seed::Unsigned = 0x5eed00d % UInt64,
         batch = nothing, input = nothing, streams = nothing, sync_every::Integer = _DEFAULT_WINDOW,
-        scatter::Symbol = :edge)
+        scatter::Symbol = :edge, backend::SimBackend = Auto(), step::Union{Nothing, Symbol} = nothing)
     # `batch = B` routes to the ensemble (tensor) batched path (src/Batch.jl); the scalar B=1
     # path below is unchanged (batch defaults to `nothing`), so existing runs are bit-identical.
+    # (the batched path is always the fused megakernel, so the backend does not apply there.)
     batch === nothing || return _batched_init(prob, alg, Int(batch);
         record, v0, v0_seed, input, streams, sync_every, scatter)
+    # the execution backend (Auto/Serial/Fused/Turbo; see Backends.jl). `Auto` resolves to the best
+    # available for this problem; the deprecated `step::Symbol` (:auto/:fused/…) maps onto a backend.
+    bk = _resolve_backend(step === nothing ? backend : _step_to_backend(step), prob)
+    _check_backend(bk, prob)
     arch = prob.arch
     T = float_type(prob.model)
     N = prob.n
     dt = T(alg.dt)
     _check_drive(prob.drive, dt)
+    # a Heterogeneous / MultiModel model (per-neuron / per-group resolution) runs the fused per-neuron
+    # path (`_resolve_backend` returned `Fused`) and needs the canonical schedule. Validate the
+    # override array lengths / group ranges against N.
+    hetero = _is_hetero(prob.model)
+    hetero && _check_hetero(prob.model, N)
+    hetero && prob.schedule != default_schedule() &&
+        throw(ArgumentError("Heterogeneous / MultiModel models require the canonical schedule (they run via the fused per-neuron step)"))
     state = Population(arch, prob.model, N)                 # type-stable (names from model type)
-    _init_voltage!(state.state.V, T(prob.model.EL), v0, T, v0_seed)   # refrac stays 0
+    _init_voltage_model!(state.state.V, prob.model, v0, T, v0_seed)   # refrac stays 0; per-group EL via _resting
     spiked = fill!(allocate(arch, Bool, N), false)
     spike_count = fill!(allocate(arch, Int, N), 0)
-    syns = map(p -> _make_synstate(arch, p.synapse, p.conn, T, N, dt), prob.projections)
+    # plastic projections (STDP) build a PlasticState (mutable weights + traces); static ones the
+    # base synapse state. The compacted scatter walks active SOURCES only, so it cannot drive STDP's
+    # postsynaptic-potentiation branch --- plastic projections require the edge scatter.
+    scatter === :compacted && any(p -> p.plasticity !== nothing, prob.projections) &&
+        throw(ArgumentError("STDP (plastic projections) require scatter = :edge; the compacted scatter cannot drive the postsynaptic potentiation branch"))
+    syns = map(p -> _make_synstate(arch, p.synapse, p.conn, p.plasticity, T, N, dt), prob.projections)
     gtot = fill!(allocate(arch, T, N), zero(T))
     itot = fill!(allocate(arch, T, N), zero(T))
     nsteps = round(Int, (prob.tspan[2] - prob.tspan[1]) / dt)
-    monitors = _make_monitors(record, arch, T, N, nsteps)
+    monitors = _make_monitors(record, arch, T, N, nsteps, prob.subpops)
     compaction = _make_compaction(scatter, arch, N)
     return DewdropIntegrator(
         prob.model, state, prob.input, dt,
         0, prob.tspan[1], prob.tspan[2], arch, prob.schedule, spiked, spike_count, syns,
-        gtot, itot, monitors, prob.drive, Int(sync_every), compaction,
+        gtot, itot, monitors, prob.drive, Int(sync_every), compaction, prob.noise, bk,
+        prob.subpops, prob.positions,
     )
 end
 
@@ -225,6 +280,13 @@ function _make_synstate(arch, ::DeltaSynapse, conn, ::Type{T}, N, dt) where {T}
     buf = DelayBuffer(arch, T, N, maximum(conn.delay; init = 0))   # empty projection → L=1 no-op
     return DeltaSynapseState(buf, conn)
 end
+function _make_synstate(arch, syn::DualExpSynapse, conn, ::Type{T}, N, dt) where {T}
+    g_rise = fill!(allocate(arch, T, N), zero(T))
+    g_decay = fill!(allocate(arch, T, N), zero(T))
+    buf = DelayBuffer(arch, T, N, maximum(conn.delay; init = 0))   # empty projection → L=1 no-op
+    return DualExpCOBAState(g_rise, g_decay, buf, conn,
+        T(exp(-dt / syn.τr)), T(exp(-dt / syn.τd)), T(_dualexp_a(syn.τr, syn.τd)), T(syn.Erev))
+end
 
 # --- Within-step phases. Synapse work iterates the projection tuple, dispatching each
 # operation on the per-projection synaptic-state type (compile-time unrolled), so a
@@ -235,16 +297,23 @@ end
 @inline _deliver!(syn::SynapseState, integ) = (deliver_due!(syn.Isyn, syn.buf, integ.n); nothing)
 @inline _deliver!(syn::COBAState, integ) = (deliver_due!(syn.g, syn.buf, integ.n); nothing)
 @inline _deliver!(syn::DeltaSynapseState, integ) = (deliver_due!(integ.state.state.V, syn.buf, integ.n); nothing)
+@inline _deliver!(syn::DualExpCOBAState, integ) = (deliver_due_dual!(syn.g_rise, syn.g_decay, syn.buf, integ.n); nothing)
 
 # Per-projection: accumulate the input current (itot) and conductance (gtot) for this step.
 @inline _accumulate!(syn::SynapseState, gtot, itot, V) = (@. itot += syn.Isyn; nothing)
 @inline _accumulate!(syn::COBAState, gtot, itot, V) = (@. gtot += syn.g; @. itot += syn.g * syn.Erev; nothing)
 @inline _accumulate!(syn::DeltaSynapseState, gtot, itot, V) = nothing  # applied directly to V at deliver
+@inline function _accumulate!(syn::DualExpCOBAState, gtot, itot, V)    # conductance g = a·(g_decay − g_rise)
+    @. gtot += syn.a * (syn.g_decay - syn.g_rise)
+    @. itot += syn.a * (syn.g_decay - syn.g_rise) * syn.Erev
+    return nothing
+end
 
 # Per-projection: decay the synaptic state by one step.
 @inline _decay!(syn::SynapseState) = (@. syn.Isyn *= syn.decay; nothing)
 @inline _decay!(syn::COBAState) = (@. syn.g *= syn.decay; nothing)
 @inline _decay!(syn::DeltaSynapseState) = nothing
+@inline _decay!(syn::DualExpCOBAState) = (@. syn.g_rise *= syn.decay_r; @. syn.g_decay *= syn.decay_d; nothing)
 
 # Compile-time tuple unrolls (dispatch on each element's concrete type → no runtime dispatch).
 @inline _deliver_all!(::Tuple{}, integ) = nothing
@@ -277,14 +346,6 @@ end
 # silent no-op. `nothing` → edge-parallel scatter; a CompactionScratch → the compacted scatter.
 @inline run_phase!(::Val{:propagate}, integ::DewdropIntegrator) = _propagate_step!(integ.compaction, integ)
 
-# COBA-capable subthreshold step: conductances set an effective leak (`denom`) and reversal
-# drive. With no conductance (gtot = 0) this reduces to the plain LIF exact propagator.
-@inline function _coba_step(V, EL, R, τ, gtot, itot, dt)
-    denom = 1 + R * gtot
-    V∞ = (EL + R * itot) / denom
-    return V∞ + (V - V∞) * exp(-dt * denom / τ)
-end
-
 # Per-neuron subthreshold membrane update, DISPATCHED ON THE MODEL: advance V over `dt` given
 # the accumulated conductance `gtot` and current `itot`. The engine calls this rather than
 # inlining any particular model's fields, so a model defined by hand or by `@neuron` plugs in
@@ -303,10 +364,26 @@ end
     _accum_all!(integ.syns, gtot, itot, V)
     Vr = reset_value(m)
     z = zero(eltype(refrac))
-    # refractory units clamp to Vr; others take the model's subthreshold membrane step.
-    @. V = ifelse(refrac > z, Vr, membrane_step(m, V, gtot, itot, dt))
+    # subthreshold membrane step, dispatched on the model's state shape: V-only models (LIF, every
+    # @neuron) take the exact prior broadcast unchanged; adaptation models co-advance (V, w).
+    _integrate_membrane!(m, st, gtot, itot, dt, refrac, Vr, z)
+    _apply_noise!(integ.noise, integ, refrac, z)           # SDE diffusion increment (no-op if no noise)
     @. refrac = max(refrac - dt, z)
     _decay_all!(integ.syns)                                # advance each projection's synaptic state
+    return nothing
+end
+
+# SDE noise injection (M5a): add the exact-OU Gaussian increment to non-refractory neurons. The
+# `nothing` method compiles the diffusion away entirely (bit-identical to a deterministic run); the
+# `WhiteNoise` method draws one counter-based normal per neuron keyed by (seed, step, neuron).
+@inline _apply_noise!(::Nothing, integ, refrac, z) = nothing
+@inline function _apply_noise!(noise::WhiteNoise, integ::DewdropIntegrator, refrac, z)
+    V = integ.state.state.V
+    s = _noise_scale(noise, integ.model, integ.dt)
+    seed = noise.seed
+    n = integ.n
+    idx = eachindex(V)
+    @. V = ifelse(refrac > z, V, V + s * draw_normal(eltype(V), seed, n, idx))
     return nothing
 end
 
@@ -325,6 +402,7 @@ end
     tref = refractory(integ.model)
     @. st.V = ifelse(spiked, Vr, st.V)
     @. st.refrac = ifelse(spiked, tref, st.refrac)
+    _reset_aux!(integ.model, st, spiked)        # spike-triggered adaptation increment (no-op if no w)
     return nothing
 end
 
@@ -369,18 +447,20 @@ The result of a run: final SoA `state`, per-unit `spike_count`, number of steps,
 and `record` --- a NamedTuple of the requested monitors' results (see [`firing_rate`](@ref),
 [`raster`](@ref), and the `record` kwarg to `solve`).
 """
-struct DewdropSolution{ST, C, T, R}
+struct DewdropSolution{ST, C, T, R, SP, PO}
     state::ST
     spike_count::C
     nsteps::Int
     dt::T
     tspan::Tuple{T, T}
     record::R         # NamedTuple{names}(::RecordResult...) keyed by monitor name
+    subpops::SP       # named-subpopulation registry (name → range into 1:N); see `sol[:E]`
+    positions::PO     # per-neuron positions (host metadata for spatial measures), or `nothing`
 end
 function DewdropSolution(integ::DewdropIntegrator)
     return DewdropSolution(
         integ.state, integ.spike_count, integ.n, integ.dt,
-        (integ.t - integ.n * integ.dt, integ.t), map(_result, integ.monitors),
+        (integ.t - integ.n * integ.dt, integ.t), map(_result, integ.monitors), integ.subpops, integ.positions,
     )
 end
 export DewdropSolution
@@ -400,20 +480,74 @@ Per-unit firing rate (`spike_count / duration`), in inverse units of `dt`.
 firing_rate(sol::DewdropSolution) = sol.spike_count ./ duration(sol)
 export firing_rate
 
+# --- Named-subpopulation reference API (Phase A) ---
+# A subpop is a contiguous range into the flat SoA, looked up in the solution's registry. `sol[:E]`
+# returns a lightweight view (no copy); `firing_rate(sol, :E)` / `raster(sol; of = :E)` restrict to it.
+
+# resolve a subpop name to its range, with a clear error listing the available names.
+function _subrange(subpops::NamedTuple, name::Symbol)
+    haskey(subpops, name) || throw(ArgumentError(
+        "unknown subpopulation :$name --- available: $(join(keys(subpops), ", "))"))
+    return subpops[name]
+end
+
 """
-    raster(sol; name=nothing) -> (times, ids)
+    SubSolution
+
+A view of a [`DewdropSolution`](@ref) restricted to one named subpopulation (see `sol[:E]`). Carries
+the subpopulation's `state` (SoA view) and `spike_count` (view) over its range; works with
+[`firing_rate`](@ref) and [`duration`](@ref).
+"""
+struct SubSolution{ST, C, S, R, PO}
+    state::ST          # sub-StructArray view over the subpop range
+    spike_count::C     # view over the subpop range
+    parent::S          # the parent DewdropSolution
+    name::Symbol
+    range::R
+    positions::PO      # per-neuron positions over the range (host metadata), or `nothing`
+end
+export SubSolution
+
+# positions restricted to a subpop range (or `nothing` if the network carried none)
+@inline _subpositions(::Nothing, r) = nothing
+@inline _subpositions(positions, r) = @view positions[r]
+
+function Base.getindex(sol::DewdropSolution, name::Symbol)
+    r = _subrange(sol.subpops, name)
+    # a StructArray view is a StructArray of column views (no copy); re-wrap as a Population so the
+    # sub-solution presents the same `state.state.<col>` shape as the parent.
+    return SubSolution(Population(view(sol.state.state, r)), view(sol.spike_count, r), sol, name, r,
+        _subpositions(sol.positions, r))
+end
+
+duration(ss::SubSolution) = duration(ss.parent)
+firing_rate(ss::SubSolution) = ss.spike_count ./ duration(ss.parent)
+
+"""
+    firing_rate(sol, name::Symbol)
+
+Per-unit firing rate of named subpopulation `name` (e.g. `firing_rate(sol, :E)`).
+"""
+firing_rate(sol::DewdropSolution, name::Symbol) = view(sol.spike_count, _subrange(sol.subpops, name)) ./ duration(sol)
+
+"""
+    raster(sol; name=nothing, of=nothing) -> (times, ids)
 
 Extract spike events from a solution recorded with a `Spikes()` monitor: `times[k]` and `ids[k]`
 are the time and neuron index of the k-th spike (host-side analysis helper). `name` picks a
-particular spike monitor; by default the first one is used.
+particular spike monitor; by default the first one is used. `of` (a subpopulation symbol, e.g.
+`:E`) restricts the events to that subpopulation and rebases `ids` into `1:|of|`.
 """
-function raster(sol::DewdropSolution; name = nothing)
+function raster(sol::DewdropSolution; name = nothing, of = nothing)
     res = _find_spikes(sol.record, name)
     res === nothing && error("no spikes recorded --- pass `record = (spikes = Spikes(),)` to `solve`")
     idx = findall(res.data)                          # CartesianIndex(recorded-row, column)
     times = [I[2] * res.every * sol.dt for I in idx]
     ids = [_neuronid(res.idx, I[1]) for I in idx]
-    return times, ids
+    of === nothing && return times, ids
+    r = _subrange(sol.subpops, of)                   # restrict to subpop `of`, rebasing ids into 1:|of|
+    keep = findall(in(r), ids)
+    return times[keep], [ids[k] - first(r) + 1 for k in keep]
 end
 export raster
 

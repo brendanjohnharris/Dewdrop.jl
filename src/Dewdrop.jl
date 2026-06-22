@@ -26,14 +26,22 @@ include("Delays.jl")
 include("Scatter.jl")
 include("Schedule.jl")
 include("Neurons.jl")
+include("Adaptation.jl")
+include("Heterogeneous.jl")
+include("MultiModel.jl")
 include("Synapses.jl")
 include("Monitors.jl")
+include("Noise.jl")
+include("Backends.jl")          # execution backends (Auto/Serial/Fused/Turbo) — types before the integrator
 include("Engine.jl")
 include("Fused.jl")
 include("Compaction.jl")
 include("Batch.jl")
+include("Plasticity.jl")
 include("Advisor.jl")
 include("Macro.jl")
 include("Builder.jl")
+include("FFT.jl")               # self-contained DFT/FFT for the spectral observables
+include("Stats.jl")             # statistical observables (WRCircuit stats.py ports; host-side analysis)
 
 end # module Dewdrop

@@ -80,6 +80,17 @@ One exact linear-propagator update toward the fixed point `V∞`:
 """
 @inline subthreshold_step(V, V∞, decay) = V∞ + (V - V∞) * decay
 
+# COBA-capable exact subthreshold step (shared by LIF and the adaptation models): conductances
+# set an effective leak (`denom`) and reversal drive, while `itot` carries every current term
+# (external input, synaptic current, and --- for the adaptation models --- the adaptation current
+# `-w` and AdEx's exponential term). With no conductance (gtot = 0) this is the plain exact
+# propagator. Lives here (not in Engine.jl) so the adaptation models in Adaptation.jl can reuse it.
+@inline function _coba_step(V, EL, R, τ, gtot, itot, dt)
+    denom = 1 + R * gtot
+    V∞ = (EL + R * itot) / denom
+    return V∞ + (V - V∞) * exp(-dt * denom / τ)
+end
+
 # --- Threshold / reset / refractory ---
 @inline threshold(m::LIF, V) = V ≥ m.Vθ
 @inline reset_value(m::LIF) = m.Vr

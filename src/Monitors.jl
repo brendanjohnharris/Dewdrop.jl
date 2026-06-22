@@ -219,38 +219,51 @@ Probe(f; n::Integer, every::Integer = 1) = Probe(f, Int(n), Int(every))
 _resolve_idx(arch, ::Colon) = Colon()
 _resolve_idx(arch, of::Symbol) = of === :all ? Colon() : error("unknown selector $of (use :all or an index vector)")
 _resolve_idx(arch, of::AbstractVector{<:Integer}) = on_architecture(arch, collect(Int, of))
+
+# Resolve a monitor's `of` selector, additionally honouring named-subpopulation symbols against the
+# registry (`of = :E`). `:all` and index vectors keep their meaning; a registered subpop resolves to
+# an index vector over its range; an unknown symbol errors with the available names.
+_resolve_of(arch, of::Colon, subpops) = Colon()
+_resolve_of(arch, of::AbstractVector{<:Integer}, subpops) = _resolve_idx(arch, of)
+function _resolve_of(arch, of::Symbol, subpops)
+    of === :all && return Colon()                                     # full-N fast path (no index vector)
+    (subpops !== nothing && haskey(subpops, of)) && return _resolve_idx(arch, subpops[of])
+    avail = subpops === nothing ? ":all" : join(keys(subpops), ", ")
+    error("unknown subpopulation/selector :$of (available: $avail, or an index vector)")
+end
 _nsel(N, ::Colon) = N
 _nsel(N, idx) = length(idx)
 _ncols(nsteps, every) = cld(nsteps, every)
 
 _srcof(t::Trace) = t.projection === nothing ? (t.var in (:gtot, :itot) ? AccumSrc{t.var}() : StateSrc{t.var}()) : SynSrc{t.projection, t.var}()
 
-# materialise a spec → a runtime monitor (called per entry of the `record` NamedTuple at init)
-function _materialize(spec::Trace, arch, ::Type{T}, N, nsteps) where {T}
-    idx = _resolve_idx(arch, spec.of)
+# materialise a spec → a runtime monitor (called per entry of the `record` NamedTuple at init).
+# `subpops` is the network's subpopulation registry, so `of = :E` resolves against it.
+function _materialize(spec::Trace, arch, ::Type{T}, N, nsteps, subpops) where {T}
+    idx = _resolve_of(arch, spec.of, subpops)
     buf = WindowBuffer(arch, T, _nsel(N, idx), _ncols(nsteps, spec.every))
     return PerUnitMonitor(_srcof(spec), idx, buf, spec.every)
 end
-function _materialize(spec::Spikes, arch, ::Type{T}, N, nsteps) where {T}
-    idx = _resolve_idx(arch, spec.of)
+function _materialize(spec::Spikes, arch, ::Type{T}, N, nsteps, subpops) where {T}
+    idx = _resolve_of(arch, spec.of, subpops)
     buf = WindowBuffer(arch, Bool, _nsel(N, idx), _ncols(nsteps, spec.every))
     return PerUnitMonitor(SpikeSrc(), idx, buf, spec.every)
 end
-function _materialize(spec::Aggregate, arch, ::Type{T}, N, nsteps) where {T}
-    idx = _resolve_idx(arch, spec.inner.of)
+function _materialize(spec::Aggregate, arch, ::Type{T}, N, nsteps, subpops) where {T}
+    idx = _resolve_of(arch, spec.inner.of, subpops)
     buf = WindowBuffer(arch, T, 1, _ncols(nsteps, spec.every))
     src = spec.inner isa Spikes ? SpikeSrc() : _srcof(spec.inner)
     return AggMonitor{typeof(src), typeof(idx), typeof(buf), spec.reducer}(src, idx, buf, spec.every, _nsel(N, idx))
 end
-function _materialize(spec::Probe, arch, ::Type{T}, N, nsteps) where {T}
+function _materialize(spec::Probe, arch, ::Type{T}, N, nsteps, subpops) where {T}
     buf = WindowBuffer(arch, T, spec.n, _ncols(nsteps, spec.every))
     return PerUnitMonitor(ProbeSrc(spec.f), Colon(), buf, spec.every)
 end
 
 # build the monitor NamedTuple from the `record` spec NamedTuple
-_make_monitors(::Nothing, arch, ::Type{T}, N, nsteps) where {T} = NamedTuple()
-function _make_monitors(record::NamedTuple, arch, ::Type{T}, N, nsteps) where {T}
-    return map(spec -> _materialize(spec, arch, T, N, nsteps), record)
+_make_monitors(::Nothing, arch, ::Type{T}, N, nsteps, subpops = nothing) where {T} = NamedTuple()
+function _make_monitors(record::NamedTuple, arch, ::Type{T}, N, nsteps, subpops = nothing) where {T}
+    return map(spec -> _materialize(spec, arch, T, N, nsteps, subpops), record)
 end
 
 # the recorded host result + metadata for a monitor (consumed by raster/firing_rate + the ext)

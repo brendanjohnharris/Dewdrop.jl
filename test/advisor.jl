@@ -42,6 +42,19 @@ end
         @test_logs Dewdrop._advise_runtime(cpuprob, 0.001)
     end
 
+    @testset "CPU: large multithreaded network → suggest backend = Turbo" begin
+        m = LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 10.0, R = 1.0, tref = 2.0)
+        big = DewdropNetwork(m, 12000; input = 0.0, tspan = (0.0, 1.0))   # N ≥ 10k, canonical schedule
+        small = DewdropNetwork(m, 1000; input = 0.0, tspan = (0.0, 1.0))   # N < 10k
+        if Threads.nthreads() > 1                                          # the advice is for multicore
+            Dewdrop.reset_advice!()
+            @test_logs (:info, r"Turbo") Dewdrop._advise_cpu(big)        # Auto already fuses → point to the SIMD tier
+            @test_logs Dewdrop._advise_cpu(big)                          # deduped on the second call → silent
+        end
+        Dewdrop.reset_advice!()
+        @test_logs Dewdrop._advise_cpu(small)                            # N too small → silent (any thread count)
+    end
+
     @testset "runtime regimes pick the right specialised path" begin
         sparse_big = _gpuprob(; N = 4000, p = 0.1)           # nedges ≈ 1.6M, mean degree 400
         Dewdrop.reset_advice!()

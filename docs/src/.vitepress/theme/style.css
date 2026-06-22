@@ -1,0 +1,49 @@
+/* Semantic Fathom → VitePress mapping. `palette.css` is regenerated each build by docs/make.jl from
+   Fathom.jl's colors.yaml, so updating the Fathom palette updates the docs theme automatically. */
+@import './palette.css';
+
+/* Light theme */
+:root {
+    --vp-c-bg: #ffffff;
+    --vp-c-bg-alt: var(--c-abyad-lighter);
+    --vp-c-bg-soft: var(--c-abyad-lighter);
+    --vp-c-text-1: var(--c-chernoe-base);
+    --vp-c-text-2: var(--c-chernoe-light);
+    --vp-c-text-3: var(--c-chernoe-lighter);
+    --vp-c-gray-1: var(--c-abyad-light);
+    --vp-c-gray-2: var(--c-abyad-base);
+    --vp-c-gray-3: var(--c-abyad-lighter);
+
+    --vp-c-brand-1: var(--c-baikal-dark);
+    --vp-c-brand-2: var(--c-baikal-base);
+    --vp-c-brand-3: var(--c-mesopelagic-base);
+    --vp-c-accent: var(--c-ianthina-base);
+    --vp-c-accent-alt: var(--c-ianthina-darker);
+    --vp-c-danger: var(--c-bermejo-base);
+    --vp-c-danger-alt: var(--c-bermejo-darker);
+    --vp-c-warning: var(--c-seohae-base);
+    --vp-c-warning-alt: var(--c-seohae-darker);
+    --vp-c-success: var(--c-qinghai-base);
+    --vp-c-success-alt: var(--c-qinghai-darker);
+    --vp-c-info: var(--c-mesopelagic-base);
+    --vp-c-info-alt: var(--c-mesopelagic-darker);
+}
+
+/* Dark theme: lean into the deep-ocean blacks */
+.dark:root {
+    --vp-c-bg: var(--c-chernoe-dark);
+    --vp-c-bg-alt: var(--c-chernoe-base);
+    --vp-c-bg-soft: var(--c-chernoe-base);
+    --vp-c-text-1: var(--c-abyad-lighter);
+    --vp-c-text-2: var(--c-abyad-light);
+    --vp-c-text-3: var(--c-abyad-base);
+    --vp-c-brand-1: var(--c-baikal-light);
+    --vp-c-brand-2: var(--c-baikal-base);
+    --vp-c-brand-3: var(--c-mesopelagic-light);
+    --vp-c-accent: var(--c-ianthina-light);
+}
+
+/* the Julia pipe `|>` ligature trips some fonts in code */
+.mono {
+    font-feature-settings: 'calt' 0;
+}

@@ -74,3 +74,32 @@ end
         @test g.record.V.data ≈ c.record.V.data
     end
 end
+
+# `step = :fused` runs the fused megakernel on the NATIVE CPU (KA.CPU threads the per-neuron ndrange)
+# instead of the broadcast phases --- the large-N optimisation the advisor suggests. The Array scatter
+# is unchanged and the dense kernel uses the same CPU libm, so it is BIT-IDENTICAL to the default
+# broadcast path even multi-threaded (exact weights ⇒ order-independent atomic scatter).
+@testset "native CPU step = :fused ≡ broadcast" begin
+    m = LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 0.0, R = 1.0, tref = 2.0)
+    ce = fixed_prob(Dewdrop.CPU(), 160, 160, 0.1; weight = 0.5, delay = 5, seed = UInt64(1), sources = 1:120, allow_self = false)
+    ci = fixed_prob(Dewdrop.CPU(), 160, 160, 0.1; weight = -1.0, delay = 5, seed = UInt64(2), sources = 121:160, allow_self = false)
+    prob = DewdropNetwork(m, 160; input = 0.0, tspan = (0.0, 100.0),
+        projections = (Projection(DeltaSynapse(), ce), Projection(DeltaSynapse(), ci)),
+        drive = PoissonDrive(rate = 20.0, weight = 0.5, seed = UInt64(3)))
+    bcast = solve(prob, FixedStep(0.1); advise = false, record = (spikes = Spikes(), V = Trace(:V)))
+    fused = solve(prob, FixedStep(0.1); step = :fused, advise = false, record = (spikes = Spikes(), V = Trace(:V)))
+    @test sum(bcast.spike_count) > 0
+    @test fused.spike_count == bcast.spike_count            # bit-identical (exact weights + same libm)
+    @test fused.state.state.V == bcast.state.state.V
+    @test fused.record.spikes.data == bcast.record.spikes.data
+    @test fused.record.V.data == bcast.record.V.data
+
+    # a multi-state model (AdEx) also fuses on the native CPU
+    ad = AdEx(; C = 200.0, gL = 10.0, EL = -70.0, VT = -50.0, ΔT = 2.0, Vr = -58.0, Vpeak = -40.0,
+        a = 0.0, b = 40.0, τw = 100.0, tref = 0.0)
+    padex = DewdropNetwork(ad, 200; input = 400.0, tspan = (0.0, 60.0))
+    @test solve(padex, FixedStep(0.1); step = :fused, advise = false).spike_count ==
+        solve(padex, FixedStep(0.1); advise = false).spike_count
+
+    @test_throws ArgumentError Dewdrop.init(prob, FixedStep(0.1); step = :bogus)
+end

@@ -1,0 +1,7 @@
+# Python side --- a self-contained uv environment + generated outputs (not committed).
+.venv/
+__pycache__/
+*.pyc
+.python-version
+out/
+# keep: the scripts (*.py, *.jl), pyproject.toml/uv.lock, README.md

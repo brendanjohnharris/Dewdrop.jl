@@ -37,6 +37,23 @@ using Statistics
         @test conn.post == conn2.post && conn.rowptr == conn2.rowptr
     end
 
+    @testset "targets restricts the postsynaptic set" begin
+        # E(1:25) → I(26:50) spatial projection: every edge lands in the target range
+        conn = distance_prob(Dewdrop.CPU(), pos; kernel = box_kernel(10.0), weight = 1.0, delay = 1,
+            seed = UInt64(1), sources = 1:25, targets = 26:50)
+        posts = Int[]
+        srcs = Int[]
+        for pre in 1:50
+            Dewdrop.for_each_post(conn, pre) do post, w, d
+                push!(posts, post)
+                push!(srcs, pre)
+            end
+        end
+        @test !isempty(posts)
+        @test all(in(26:50), posts)     # targets honoured
+        @test all(in(1:25), srcs)       # sources honoured
+    end
+
     @testset "periodic boundary wraps the seam" begin
         connp = distance_prob(Dewdrop.CPU(), pos; kernel = box_kernel(3.0), weight = 1.0,
             delay = 1, seed = UInt64(1), period = (50.0,))
@@ -45,6 +62,59 @@ using Statistics
             post ≥ 48 && (wrapped[] = true)
         end
         @test wrapped[]
+    end
+
+    @testset "random positions (uniform in a box, reproducible)" begin
+        pos = random_positions(200, (1.0, 2.0); seed = UInt64(1))
+        @test length(pos) == 200
+        @test all(p -> 0 ≤ p[1] < 1.0 && 0 ≤ p[2] < 2.0, pos)       # within the domain
+        @test eltype(pos) == NTuple{2, Float64}
+        @test pos == random_positions(200, (1.0, 2.0); seed = UInt64(1))   # reproducible
+        @test pos != random_positions(200, (1.0, 2.0); seed = UInt64(2))   # seed-dependent
+    end
+
+    @testset "fixed-count distance connectivity (Gumbel-max top-k)" begin
+        pos = line_positions(100; spacing = 1.0)
+        conn = distance_fixed_count(Dewdrop.CPU(), pos; kernel = exponential_kernel(3.0), count = 500,
+            weight = 1.0, delay = 1, seed = UInt64(1))
+        @test conn isa SparseCSR
+        @test Dewdrop.nedges(conn) == 500                           # EXACTLY count edges (the point)
+        # reproducible: same seed → identical realised connectome
+        c2 = distance_fixed_count(Dewdrop.CPU(), pos; kernel = exponential_kernel(3.0), count = 500,
+            weight = 1.0, delay = 1, seed = UInt64(1))
+        @test c2.post == conn.post && c2.rowptr == conn.rowptr
+        # localised: the exponential kernel concentrates edges on nearby pairs
+        dists = Float64[]
+        for pre in 1:100
+            Dewdrop.for_each_post(conn, pre) do post, w, d
+                push!(dists, abs(pos[pre][1] - pos[post][1]))
+            end
+        end
+        @test mean(dists) < 20.0                                    # σ=3 localises (uniform ≈ 33 on a 100-line)
+
+        # box kernel → a hard connection radius
+        cb = distance_fixed_count(Dewdrop.CPU(), pos; kernel = box_kernel(5.0), count = 300,
+            weight = 1.0, delay = 1, seed = UInt64(2))
+        @test Dewdrop.nedges(cb) == 300
+        maxd = 0.0
+        for pre in 1:100
+            Dewdrop.for_each_post(cb, pre) do post, w, d
+                maxd = max(maxd, abs(pos[pre][1] - pos[post][1]))
+            end
+        end
+        @test maxd ≤ 5.0                                            # never connects beyond the kernel support
+
+        # sources / targets restrict the sampled pairs (E → I projection)
+        ct = distance_fixed_count(Dewdrop.CPU(), pos; kernel = exponential_kernel(5.0), count = 200,
+            weight = 1.0, delay = 1, seed = UInt64(3), sources = 1:50, targets = 51:100)
+        @test Dewdrop.nedges(ct) == 200
+        pairs = Tuple{Int, Int}[]
+        for pre in 1:100
+            Dewdrop.for_each_post(ct, pre) do post, w, d
+                push!(pairs, (pre, post))
+            end
+        end
+        @test all(pr -> pr[1] in 1:50 && pr[2] in 51:100, pairs)
     end
 
     @testset "Gaussian kernel → local connectivity + runs end-to-end" begin

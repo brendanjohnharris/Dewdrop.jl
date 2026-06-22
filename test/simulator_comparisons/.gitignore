@@ -1,0 +1,9 @@
+# generated data + plots + environments + build artifacts
+*/out/
+out/
+**/.venv/
+**/__pycache__/
+*.pyc
+**/build_*/
+**/*_CODE/
+nestgpu/install/

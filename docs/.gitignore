@@ -1,0 +1,7 @@
+build/
+node_modules/
+.vitepress/cache/
+.vitepress/dist/
+package-lock.json
+Manifest.toml
+src/.vitepress/theme/palette.css

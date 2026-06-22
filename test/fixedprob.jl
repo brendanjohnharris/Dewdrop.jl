@@ -61,4 +61,30 @@ using Test
         end
     end
     @test in_range[] > 0                            # source neurons do
+
+    # `targets` restricts which postsynaptic neurons receive edges (for E→I-only projections)
+    tgt = Dewdrop.fixed_prob(arch, 200, 200, 0.2; weight = 1.0f0, delay = 1, seed = seed, targets = 101:200)
+    @test Dewdrop.npost(tgt) == 200                 # index space unchanged
+    posts = Int[]
+    for pre in 1:200
+        Dewdrop.for_each_post(tgt, pre) do post, w, d
+            push!(posts, post)
+        end
+    end
+    @test !isempty(posts)
+    @test all(in(101:200), posts)                   # every edge lands in the target range
+
+    # `sources` and `targets` compose: a block E(1:100) → I(101:200) projection
+    ei_proj = Dewdrop.fixed_prob(arch, 200, 200, 0.2; weight = 1.0f0, delay = 1, seed = seed,
+        sources = 1:100, targets = 101:200)
+    pairs = Tuple{Int, Int}[]
+    for pre in 1:200
+        Dewdrop.for_each_post(ei_proj, pre) do post, w, d
+            push!(pairs, (pre, post))
+        end
+    end
+    @test !isempty(pairs)
+    @test all(pr -> pr[1] in 1:100 && pr[2] in 101:200, pairs)
+    # expected edge count ≈ p · |sources| · |targets|
+    @test 0.85 * 0.2 * 100 * 100 < length(pairs) < 1.15 * 0.2 * 100 * 100
 end

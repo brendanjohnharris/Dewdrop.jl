@@ -93,13 +93,36 @@ function _advise_runtime(prob::DewdropNetwork, frac::Real)
     return nothing
 end
 
+# CPU suggestion (static, free): at large N the dense per-neuron phases dominate the step. The default
+# `Auto` backend now routes EVERY canonical CPU network through the `Fused` step (the single-pass tight
+# loop --- bit-identical, ~2× the per-phase `Serial` baseline; it gates its own threading on
+# work-per-thread, so small nets run single-threaded and large ones thread), so nothing is needed there.
+# The remaining lever is SIMD: `backend = Turbo()` (LoopVectorization) vectorises the membrane `exp` for
+# ~compiled-C++ throughput, at the cost of bit-identicality (spike-identical). Point users to it when
+# they could benefit (large N, multicore, canonical schedule).
+function _advise_cpu(prob::DewdropNetwork)
+    if Threads.nthreads() > 1 && prob.n ≥ 10_000 && prob.schedule == default_schedule()
+        _emit(:turbo_cpu,
+            "a large CPU network (N = $(prob.n)): the default `Auto` backend already runs the threaded " *
+            "`Fused` step here (a single fused pass, ~2× the per-phase `Serial` baseline, bit-identical). " *
+            "For close to compiled-C++ throughput, `using LoopVectorization` unlocks `backend = Turbo()` " *
+            "--- a SIMD-vectorised step for models with a Turbo specialization (AdEx, LIF, …; see the " *
+            "backend docs). Turbo is spike-identical but not bit-identical (SIMD `exp`).")
+    end
+    return nothing
+end
+
 # Entry point: called by `solve` with the problem and its solution.
 function _run_advisor(prob::DewdropNetwork, sol)
-    (_ADVISE[] && _is_gpu(prob)) || return nothing       # all advice is GPU-targeted
-    _advise_static(prob)                                 # precision/index advice (free)
-    if !_RUNTIME_DONE[]                                  # firing-rate advice: one device reduction per session
-        _RUNTIME_DONE[] = true
-        _advise_runtime(prob, _firing_fraction(sol))
+    _ADVISE[] || return nothing
+    if _is_gpu(prob)
+        _advise_static(prob)                             # GPU precision/index advice (free)
+        if !_RUNTIME_DONE[]                              # GPU firing-rate advice: one device reduction per session
+            _RUNTIME_DONE[] = true
+            _advise_runtime(prob, _firing_fraction(sol))
+        end
+    else
+        _advise_cpu(prob)                                # CPU step-strategy advice (free)
     end
     return nothing
 end

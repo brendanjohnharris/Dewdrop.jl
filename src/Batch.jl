@@ -69,6 +69,17 @@ struct BatchedDelta{R, C} <: AbstractSynapseState
     conn::C
 end
 Adapt.@adapt_structure BatchedDelta
+struct BatchedDualExpCOBA{G, R, C, T} <: AbstractSynapseState
+    g_rise::G
+    g_decay::G
+    buf::R
+    conn::C
+    decay_r::T
+    decay_d::T
+    a::T
+    Erev::T
+end
+Adapt.@adapt_structure BatchedDualExpCOBA
 
 function _make_batched_synstate(arch, syn::CurrentSynapse, conn, ::Type{T}, N, B, dt) where {T}
     Isyn = fill!(allocate(arch, T, Int(N), Int(B)), zero(T))
@@ -80,6 +91,12 @@ function _make_batched_synstate(arch, syn::ConductanceSynapse, conn, ::Type{T}, 
 end
 function _make_batched_synstate(arch, ::DeltaSynapse, conn, ::Type{T}, N, B, dt) where {T}
     return BatchedDelta(BatchedRing(arch, T, N, B, maximum(conn.delay; init = 0)), conn)
+end
+function _make_batched_synstate(arch, syn::DualExpSynapse, conn, ::Type{T}, N, B, dt) where {T}
+    g_rise = fill!(allocate(arch, T, Int(N), Int(B)), zero(T))
+    g_decay = fill!(allocate(arch, T, Int(N), Int(B)), zero(T))
+    return BatchedDualExpCOBA(g_rise, g_decay, BatchedRing(arch, T, N, B, maximum(conn.delay; init = 0)),
+        conn, T(exp(-dt / syn.τr)), T(exp(-dt / syn.τd)), T(_dualexp_a(syn.τr, syn.τd)), T(syn.Erev))
 end
 
 # Per-projection synaptic contribution for cell (i,b): deliver (read+clear the ring slot due at
@@ -115,6 +132,19 @@ end
     v += due
     return (v, gtot, itot)
 end
+@inline function _bsyn_one(s::BatchedDualExpCOBA, i, b, n, v, gtot, itot)
+    slot = mod(n, s.buf.L) + 1
+    @inbounds due = s.buf.slots[i, b, slot]
+    @inbounds s.buf.slots[i, b, slot] = zero(due)
+    @inbounds gr = s.g_rise[i, b] + due
+    @inbounds gd = s.g_decay[i, b] + due
+    g = s.a * (gd - gr)
+    gtot += g
+    itot += g * s.Erev
+    @inbounds s.g_rise[i, b] = gr * s.decay_r
+    @inbounds s.g_decay[i, b] = gd * s.decay_d
+    return (v, gtot, itot)
+end
 
 # External input for cell (i,b): a shared scalar, a per-neuron (N,) vector, or a per-(neuron,batch) matrix.
 @inline _binputval(input::Number, i, b) = input
@@ -129,9 +159,19 @@ end
     return d.weight * draw_poisson(d.rate * dt, d.seed, n, i, s)
 end
 
+# Per-column SDE noise increment for cell (i,b): column b draws its normal from stream `streams[b]`
+# (the counter RNG batch axis), so the B instances are independent. With `streams` all-zero, column
+# b reproduces the scalar (batch-0) draw --- the bit-exact oracle. Strong-zero `false` when no noise.
+@inline _bnoise_kick(::Nothing, n, i, b, dt, m, streams) = false
+@inline function _bnoise_kick(noise::WhiteNoise, n, i, b, dt, m, streams)
+    @inbounds str = streams[b]
+    s = _noise_scale(noise, m, dt)
+    return s * draw_normal(typeof(s), noise.seed, n, i, str)
+end
+
 # The batched fused dense step: deliver + drive + accumulate + membrane + decay + threshold +
 # reset + count for every (neuron,batch), in one launch over a 2-D (N,B) ndrange.
-@kernel function _batched_fused_kernel!(V, refrac, spiked, spike_count, input, syns, m, dt, n, drive, streams)
+@kernel function _batched_fused_kernel!(V, refrac, spiked, spike_count, input, syns, m, dt, n, drive, streams, noise, aux)
     I = @index(Global, Cartesian)
     i = I[1]
     b = I[2]
@@ -143,13 +183,20 @@ end
         itot = oftype(gtot, _binputval(input, i, b))
         v, gtot, itot = _bsyn_contribute(syns, i, b, n, v, gtot, itot)
         v += _bdrive_kick(drive, n, i, b, dt, streams)
-        v = ifelse(r > z, reset_value(m), membrane_step(m, v, gtot, itot, dt))
+        m_i = _resolve(m, i)                 # per-neuron model (Phase 3); `= m` for a scalar model
+        # subthreshold (V, aux) advance + per-column SDE noise (refractory clamps V, no noise);
+        # `aux` is `nothing` for a V-only model -> exactly the prior membrane_step (bit-identical).
+        w0 = _aux_read(aux, i, b)
+        v_adv, w_adv = _advance_unit(m_i, v, w0, gtot, itot, dt)
+        v = ifelse(r > z, reset_value(m_i), v_adv + _bnoise_kick(noise, n, i, b, dt, m_i, streams))
         r = max(r - dt, z)
-        s = (r ≤ z) & threshold(m, v)
-        v = ifelse(s, reset_value(m), v)
-        r = ifelse(s, refractory(m), r)
+        s = (r ≤ z) & threshold(m_i, v)
+        v = ifelse(s, reset_value(m_i), v)
+        w_new = _spike_aux(m_i, w_adv, s)
+        r = ifelse(s, refractory(m_i), r)
         V[i, b] = v
         refrac[i, b] = r
+        _aux_write!(aux, w_new, i, b)
         spiked[i, b] = s
         spike_count[i, b] += s
     end
@@ -282,7 +329,7 @@ function _batched_propagate_step!(c::BatchedCompactionScratch, integ)
 end
 
 # --- Batched integrator (mutable cache; only n/t mutate) ---
-mutable struct BatchedIntegrator{M, ST, In, A, T, BL, C, SY, MO, DR, STR, CO}
+mutable struct BatchedIntegrator{M, ST, In, A, T, BL, C, SY, MO, DR, STR, CO, NO}
     const model::M
     const state::ST
     const input::In
@@ -300,6 +347,7 @@ mutable struct BatchedIntegrator{M, ST, In, A, T, BL, C, SY, MO, DR, STR, CO}
     const batch::Int
     const sync_every::Int        # periodic device sync cadence (0 = never; host reads still sync)
     const compaction::CO         # BatchedCompactionScratch (scatter = :compacted) or `nothing`
+    const noise::NO              # WhiteNoise (SDE diffusion) or `nothing` (compiles away); see Noise.jl
 end
 Adapt.@adapt_structure BatchedIntegrator
 
@@ -345,6 +393,15 @@ function _batched_init(prob::DewdropNetwork, alg::FixedStep, B::Int;
     N = prob.n
     dt = T(alg.dt)
     _check_drive(prob.drive, dt)
+    # heterogeneous / multi-type models (Heterogeneous, MultiModel) resolve per-neuron in the fused
+    # megakernel and need per-group v0 / launches; the batched megakernel is single-model only, so
+    # reject them here (run separate per-member solves instead).
+    _is_hetero(prob.model) &&
+        throw(ArgumentError("heterogeneous / multi-type models (Heterogeneous, MultiModel) are not yet supported in batched runs; run separate solves per ensemble member"))
+    # STDP in the ensemble batch needs per-column (nedges,B) weights + traces (a follow-on); the
+    # shared-CSR batch deliberately keeps one immutable weight set, so reject plastic projections here.
+    any(p -> p.plasticity !== nothing, prob.projections) &&
+        throw(ArgumentError("STDP (plastic projections) are not yet supported in batched runs; run B sequential plastic solves instead"))
     state = batched_population(arch, prob.model, N, B)
     _init_batched_voltage!(state.state.V, T(prob.model.EL), v0, T, v0_seed)
     spiked = fill!(allocate(arch, Bool, N, B), false)
@@ -363,7 +420,7 @@ function _batched_init(prob::DewdropNetwork, alg::FixedStep, B::Int;
         throw(ArgumentError("scatter must be :edge or :compacted (got :$scatter)"))
     return BatchedIntegrator(
         prob.model, state, inp, dt, 0, prob.tspan[1], prob.tspan[2], arch,
-        spiked, spike_count, syns, monitors, prob.drive, str, B, Int(sync_every), compaction,
+        spiked, spike_count, syns, monitors, prob.drive, str, B, Int(sync_every), compaction, prob.noise,
     )
 end
 
@@ -373,7 +430,7 @@ function _batched_step!(integ::BatchedIntegrator)
     backend = get_backend(V)
     _batched_fused_kernel!(backend)(
         V, st.refrac, integ.spiked, integ.spike_count, integ.input,
-        integ.syns, integ.model, integ.dt, integ.n, integ.drive, integ.streams;
+        integ.syns, integ.model, integ.dt, integ.n, integ.drive, integ.streams, integ.noise, _aux_col(st, integ.model);
         ndrange = size(V),
     )
     _batched_propagate_step!(integ.compaction, integ)   # edge-parallel, or compacted per column

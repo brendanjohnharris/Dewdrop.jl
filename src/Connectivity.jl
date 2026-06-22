@@ -110,29 +110,35 @@ event-driven scatter touches only a spiking neuron's own row.
 end
 
 """
-    fixed_prob(arch, npre, npost, p; weight, delay, seed, allow_self=true)
+    fixed_prob(arch, npre, npost, p; weight, delay, seed, allow_self=true, sources=1:npre, targets=1:npost)
 
 Random connectivity in which each `(pre, post)` edge is present with probability `p`,
 sampled reproducibly from the counter-based RNG keyed by `(pre, post)` (so a given `seed`
 yields a fixed, copyable connectome). `weight` and `delay` may be scalars or functions of
 the presynaptic index `pre` --- the latter gives excitatory/inhibitory neurons signed
-weights. Returns a [`SparseCSR`](@ref).
+weights. `sources` / `targets` restrict the presynaptic / postsynaptic neuron sets (for
+named-subpopulation projections, e.g. `:E => :I`); flat `pre` / `post` indices stay
+absolute (`1:npre` / `1:npost`). Returns a [`SparseCSR`](@ref).
 """
 function fixed_prob(
         arch::AbstractArchitecture, npre::Integer, npost::Integer, p::Real;
-        weight, delay, seed::Unsigned, allow_self::Bool = true, sources = 1:npre,
+        weight, delay, seed::Unsigned, allow_self::Bool = true, sources = 1:npre, targets = 1:npost,
         index_type::Type = Int,
     )
     wtype = typeof(to_weight(weight isa Function ? weight(1) : weight))
     edges = Tuple{Int, Int, wtype, Int}[]
     pT = Float64(p)
     pT > 0 || return SparseCSR(arch, edges; npre = npre, npost = npost, index_type = index_type)
-    sizehint!(edges, ceil(Int, 1.1 * pT * length(sources) * npost))
+    ntargets = length(targets)
+    sizehint!(edges, ceil(Int, 1.1 * pT * length(sources) * ntargets))
     # Geometric-gap sampling: instead of testing every (pre, post) pair (O(npre·npost)), draw
     # the run of skipped targets before each edge from a geometric distribution, so cost scales
     # with the number of EDGES (~p·npre·npost). The k-th gap draw for source `pre` is keyed
     # (seed, k, pre), so a given seed still yields a fixed, copyable connectome (a different
     # realisation from per-pair sampling, but the same Bernoulli(p) marginal per target).
+    # Sampling runs over the LOCAL target index `1:ntargets`, then maps through `targets` to the
+    # absolute post index; with the default `targets = 1:npost` the map is the identity, so the
+    # realised connectome (and draw sequence) is unchanged.
     invlog = inv(log1p(-pT))                              # 1/log(1-p) < 0
     for pre in sources
         w = wtype(to_weight(weight isa Function ? weight(pre) : weight))
@@ -146,13 +152,14 @@ function fixed_prob(
                     "the fixed-step engine cannot deliver within the same step"
             )
         )
-        post = 0
+        local_post = 0
         k = 0
         while true
             k += 1
             u = draw_uniform(Float64, seed, k, pre)
-            post += (u > 0.0 ? floor(Int, log(u) * invlog) : npost) + 1   # skip a geometric gap
-            post > npost && break
+            local_post += (u > 0.0 ? floor(Int, log(u) * invlog) : ntargets) + 1   # skip a geometric gap
+            local_post > ntargets && break
+            post = Int(targets[local_post])              # local target index → absolute post index
             (!allow_self && pre == post) && continue
             push!(edges, (Int(pre), post, w, d))
         end

@@ -51,4 +51,31 @@ using TimeseriesBase
         @test_throws Exception Timeseries(sol0)
         @test_throws Exception spiketrain(sol0)
     end
+
+    @testset "Population / Var labelled outputs (named subpopulations)" begin
+        ei = DewdropNetwork(m, 8; input = 1.5, tspan = (0.0, 50.0), subpops = (E = 1:4, I = 5:8))
+        sol = solve(ei, FixedStep(0.1); record = (spikes = Spikes(), V = Trace(:V)))
+
+        # a trace restricted to a subpop: Time × Neuron over that subpop's indices
+        vE = Timeseries(sol, :V; of = :E)
+        @test size(vE) == (nsteps, 4)
+        @test collect(val(dims(vE, Dewdrop.Neuron))) == [1, 2, 3, 4]
+        @test parent(vE) == permutedims(sol.record.V.data[1:4, :])
+
+        # a raster restricted to a subpop
+        sI = spiketrain(sol; of = :I)
+        @test size(sI) == (4, nsteps)
+        @test collect(val(dims(sI, Dewdrop.Neuron))) == [5, 6, 7, 8]
+        @test sum(sI) == sum(sol.record.spikes.data[5:8, :])
+
+        # the bpsolve-style Population × Var nested array of per-population timeseries
+        X = Timeseries(sol, [:E, :I]; vars = [:V])
+        @test X isa TimeseriesBase.AbstractToolsArray
+        @test size(X) == (2, 1)
+        @test :Population in TimeseriesBase.name(dims(X))      # the Population axis (referenced by symbol)
+        @test collect(val(dims(X, :Population))) == [:E, :I]
+        @test collect(val(dims(X, Var))) == [:V]
+        @test parent(X[1, 1]) == parent(vE)                  # the (E, V) cell is the E trace
+        @test size(X[2, 1]) == (nsteps, 4)                   # the (I, V) cell
+    end
 end

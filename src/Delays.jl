@@ -88,3 +88,31 @@ function deliver_due!(target::AbstractVector, buf::DelayBuffer{<:Array}, now::In
     end
     return nothing
 end
+
+"""
+    deliver_due_dual!(a, b, buf, now)
+
+Add the increments due at step `now` into BOTH `a` and `b` in place, then clear that slot --- the
+deliver for a dual-state synapse (e.g. the dual-exponential's `g_rise`/`g_decay`, which receive the
+same kick). Reads the due column once.
+"""
+function deliver_due_dual!(a, b, buf::DelayBuffer, now::Integer)
+    s = _slotof(now, buf.L)
+    @inbounds col = @view buf.slots[:, s]
+    a .+= col
+    b .+= col
+    col .= zero(eltype(buf.slots))
+    return nothing
+end
+function deliver_due_dual!(a::AbstractVector, b::AbstractVector, buf::DelayBuffer{<:Array}, now::Integer)
+    s = _slotof(now, buf.L)
+    slots = buf.slots
+    z = zero(eltype(slots))
+    @inbounds for i in eachindex(a)
+        d = slots[i, s]
+        a[i] += d
+        b[i] += d
+        slots[i, s] = z
+    end
+    return nothing
+end
