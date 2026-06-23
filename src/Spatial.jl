@@ -87,11 +87,11 @@ function distance_prob(arch::AbstractArchitecture, positions; kernel, weight, de
         sources = eachindex(positions), targets = eachindex(positions))
     npost = length(positions)
     wtype = typeof(to_weight(weight isa Function ? weight(1) : weight))
-    edges = Tuple{Int, Int, wtype, Int}[]
+    dtype = typeof(_delayval(delay isa Function ? delay(1) : delay))   # Int (steps) or Float (ms)
+    edges = Tuple{Int, Int, wtype, dtype}[]
     for pre in sources
         w = wtype(to_weight(weight isa Function ? weight(pre) : weight))
-        d = Int(delay isa Function ? delay(pre) : delay)
-        d ≥ 1 || throw(ArgumentError("synaptic delay must be ≥ 1 step (got $d for pre=$pre)"))
+        d = _delayval(delay isa Function ? delay(pre) : delay)         # ms or steps; resolved at init
         ppos = positions[pre]
         for post in targets
             (!allow_self && pre == post) && continue
@@ -195,13 +195,13 @@ function distance_fixed_count(arch::AbstractArchitecture, positions; kernel, cou
         end
     end
     wtype = typeof(to_weight(weight isa Function ? weight(1) : weight))
-    edges = Tuple{Int, Int, wtype, Int}[]
+    dtype = typeof(_delayval(delay isa Function ? delay(1) : delay))   # Int (steps) or Float (ms)
+    edges = Tuple{Int, Int, wtype, dtype}[]
     sizehint!(edges, h.n)
     for k in 1:h.n
         pre, post = h.pre[k], h.post[k]
         w = wtype(to_weight(weight isa Function ? weight(pre) : weight))
-        d = Int(delay isa Function ? delay(pre) : delay)
-        d ≥ 1 || throw(ArgumentError("synaptic delay must be ≥ 1 step (got $d for pre=$pre)"))
+        d = _delayval(delay isa Function ? delay(pre) : delay)         # ms or steps; resolved at init
         push!(edges, (pre, post, w, d))
     end
     sort!(edges; by = e -> (e[1], e[2]))                      # CSR order (by source, then target)

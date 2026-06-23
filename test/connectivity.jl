@@ -80,8 +80,8 @@ end
     @test c32.rowptr == conn.rowptr && c32.post == conn.post && c32.src == conn.src
 
     # fixed_prob with index_type = Int32 yields the SAME connectome as Int64 (bit-identical sampling)
-    a = fixed_prob(arch, 200, 200, 0.1; weight = 0.5, delay = 3, seed = UInt64(9))
-    b = fixed_prob(arch, 200, 200, 0.1; weight = 0.5, delay = 3, seed = UInt64(9), index_type = Int32)
+    a = fixed_prob(arch, 200, 200, 0.1; weight = 0.5, delay = steps(3), seed = UInt64(9))
+    b = fixed_prob(arch, 200, 200, 0.1; weight = 0.5, delay = steps(3), seed = UInt64(9), index_type = Int32)
     @test a.post == b.post && a.rowptr == b.rowptr && a.src == b.src
     @test eltype(b.post) == Int32
 end

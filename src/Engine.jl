@@ -98,7 +98,7 @@ A simulation problem: `N` units of neuron `model` driven by external `input` (a 
 constant current, or a per-unit array) over `tspan`. An optional recurrent [`Projection`](@ref)
 adds synaptic coupling.
 """
-struct DewdropNetwork{M <: AbstractNeuronModel, In, A <: AbstractArchitecture, S <: Schedule, T, P <: Tuple, DR, NO, SP <: NamedTuple, PO}
+struct DewdropNetwork{M <: AbstractNeuronModel, In, A <: AbstractArchitecture, S <: Schedule, T, P <: Tuple, DR, NO, SP <: NamedTuple, PO, PG}
     model::M
     n::Int
     input::In
@@ -110,6 +110,7 @@ struct DewdropNetwork{M <: AbstractNeuronModel, In, A <: AbstractArchitecture, S
     noise::NO                   # WhiteNoise, or `nothing` (compiles away); see Noise.jl
     subpops::SP                 # named-subpopulation registry: name → contiguous range into 1:N; see Builder.jl
     positions::PO               # per-neuron positions (host metadata for spatial measures), or `nothing`
+    projlabels::PG              # per-projection `:src => :dst` names (host metadata, from the builder), or `nothing`
 end
 # normalise the `projection` (singular) / `projections` (plural) keywords to a tuple
 _normalize_projections(p::Projection, ::Nothing) = (p,)
@@ -122,11 +123,11 @@ _normalize_subpops(nt::NamedTuple, N::Int) = merge((all = 1:N,), nt)
 function DewdropNetwork(model::AbstractNeuronModel, N::Integer; input, tspan,
         arch::AbstractArchitecture = CPU(), schedule::Schedule = default_schedule(),
         projection = nothing, projections = nothing, drive = nothing, noise = nothing,
-        subpops = nothing, positions = nothing)
+        subpops = nothing, positions = nothing, projlabels = nothing)
     T = float_type(model)
     in_ = on_architecture(arch, to_current(input))     # per-unit input arrays move to the architecture
     projs = _normalize_projections(projection, projections)
-    return DewdropNetwork(model, Int(N), in_, (T(to_time(tspan[1])), T(to_time(tspan[2]))), arch, schedule, projs, drive, noise, _normalize_subpops(subpops, Int(N)), positions)
+    return DewdropNetwork(model, Int(N), in_, (T(to_time(tspan[1])), T(to_time(tspan[2]))), arch, schedule, projs, drive, noise, _normalize_subpops(subpops, Int(N)), positions, projlabels)
 end
 export DewdropNetwork
 
@@ -149,7 +150,7 @@ export FixedStep
 Mutable, concretely-typed integrator cache (the CommonSolve `integrator`). Holds the SoA
 state and preallocated buffers; only the step counter `n` and time `t` mutate.
 """
-mutable struct DewdropIntegrator{M, ST, In, A, S, T, B, C, SY, GT, MO, DR, CO, NO, BK, SP, PO}
+mutable struct DewdropIntegrator{M, ST, In, A, S, T, B, C, SY, GT, MO, DR, CO, NO, BK, SP, PO, PG}
     const model::M
     const state::ST
     const input::In
@@ -172,6 +173,7 @@ mutable struct DewdropIntegrator{M, ST, In, A, S, T, B, C, SY, GT, MO, DR, CO, N
     const backend::BK            # resolved execution backend (Serial/Fused/Turbo); routes the step, see Fused.jl
     const subpops::SP            # named-subpopulation registry (host-side metadata; travels onto the solution)
     const positions::PO          # per-neuron positions (host-side metadata; travels onto the solution)
+    const progress::PG           # the `progress` kwarg spec (:auto/Bool/String/Int); host-side, read by solve!
 end
 # Device-movable (GPU-readiness contract): adapt the SoA state + buffers, leave the host-side
 # `subpops`/`positions` metadata (a custom rule keeps `positions` host-resident even on a GPU run).
@@ -180,13 +182,14 @@ Adapt.adapt_structure(to, integ::DewdropIntegrator) = DewdropIntegrator(
     integ.n, integ.t, integ.tend, integ.arch, integ.schedule, adapt(to, integ.spiked),
     adapt(to, integ.spike_count), adapt(to, integ.syns), adapt(to, integ.gtot), adapt(to, integ.itot),
     adapt(to, integ.monitors), adapt(to, integ.drive), integ.sync_every, adapt(to, integ.compaction),
-    adapt(to, integ.noise), integ.backend, integ.subpops, integ.positions,
+    adapt(to, integ.noise), integ.backend, integ.subpops, integ.positions, integ.progress,
 )
 
 function CommonSolve.init(prob::DewdropNetwork, alg::FixedStep;
         record = nothing, v0 = nothing, v0_seed::Unsigned = 0x5eed00d % UInt64,
         batch = nothing, input = nothing, streams = nothing, sync_every::Integer = _DEFAULT_WINDOW,
-        scatter::Symbol = :auto, backend::SimBackend = Auto(), step::Union{Nothing, Symbol} = nothing)
+        scatter::Symbol = :auto, backend::SimBackend = Auto(), step::Union{Nothing, Symbol} = nothing,
+        progress = :auto)
     # `scatter = :auto` (default): on the GPU pick edge-parallel vs compacted from the connectome size
     # (the L2-spill crossover, see `_resolve_scatter`); CPU / plastic projections → always `:edge`.
     # Resolved BEFORE the batched dispatch so both the scalar and batched paths receive a concrete mode.
@@ -195,7 +198,7 @@ function CommonSolve.init(prob::DewdropNetwork, alg::FixedStep;
     # path below is unchanged (batch defaults to `nothing`), so existing runs are bit-identical.
     # (the batched path is always the fused megakernel, so the backend does not apply there.)
     batch === nothing || return _batched_init(prob, alg, Int(batch);
-        record, v0, v0_seed, input, streams, sync_every, scatter)
+        record, v0, v0_seed, input, streams, sync_every, scatter, progress)
     # the execution backend (Auto/Serial/Fused/Turbo; see Backends.jl). `Auto` resolves to the best
     # available for this problem; the deprecated `step::Symbol` (:auto/:fused/…) maps onto a backend.
     bk = _resolve_backend(step === nothing ? backend : _step_to_backend(step), prob)
@@ -226,7 +229,9 @@ function CommonSolve.init(prob::DewdropNetwork, alg::FixedStep;
     # postsynaptic-potentiation branch --- plastic projections require the edge scatter.
     scatter === :compacted && any(p -> p.plasticity !== nothing, prob.projections) &&
         throw(ArgumentError("STDP (plastic projections) require scatter = :edge; the compacted scatter cannot drive the postsynaptic potentiation branch"))
-    syns = map(p -> _make_synstate(arch, p.synapse, p.conn, p.plasticity, T, N, dt), prob.projections)
+    # resolve each projection's delays to integer steps at THIS dt (ms → steps; explicit steps pass through),
+    # so a physical delay means a fixed latency regardless of dt and the scatter reads an integer connectome.
+    syns = map(p -> _make_synstate(arch, p.synapse, _resolve_delays(p.conn, dt), p.plasticity, T, N, dt), prob.projections)
     gtot = fill!(allocate(arch, T, N), zero(T))
     itot = fill!(allocate(arch, T, N), zero(T))
     nsteps = round(Int, (prob.tspan[2] - prob.tspan[1]) / dt)
@@ -236,7 +241,7 @@ function CommonSolve.init(prob::DewdropNetwork, alg::FixedStep;
         prob.model, state, prob.input, dt,
         0, prob.tspan[1], prob.tspan[2], arch, prob.schedule, spiked, spike_count, syns,
         gtot, itot, monitors, prob.drive, Int(sync_every), compaction, prob.noise, bk,
-        prob.subpops, prob.positions,
+        prob.subpops, prob.positions, progress,
     )
 end
 
@@ -477,9 +482,13 @@ function CommonSolve.step!(integ::DewdropIntegrator)
 end
 
 function CommonSolve.solve!(integ::DewdropIntegrator)
+    rep = _progress_reporter(integ.progress, _progress_total(integ))   # nothing ⇒ every hook no-ops
+    _progress_start!(rep)
     while integ.t < integ.tend - integ.dt / 2
         step!(integ)
+        _progress_step!(rep, integ.n)
     end
+    _progress_finish!(rep)
     _finalize_all!(integ.monitors)             # flush each monitor's partial last window to host
     return DewdropSolution(integ)
 end

@@ -55,8 +55,8 @@ function probe(P, tag; savefig = true)
 
     m = LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 10.0, R = 1.0, tref = 2.0)
     nb = network(m, NE, NI; arch = Dewdrop.CPU(), tspan = (0.0, T))
-    project!(nb, :E, DeltaSynapse(); p = 0.1, weight = J, delay = D, seed = seed)
-    project!(nb, :I, DeltaSynapse(); p = 0.1, weight = -g * J, delay = D, seed = seed + 0x100)
+    project!(nb, :E, DeltaSynapse(); p = 0.1, weight = J, delay = steps(D), seed = seed)
+    project!(nb, :I, DeltaSynapse(); p = 0.1, weight = -g * J, delay = steps(D), seed = seed + 0x100)
     drive!(nb, PoissonDrive(; rate = P["drive_rate"], weight = P["drive_weight"], seed = seed + 0x200))
 
     v0 = P["v0hi"] > P["v0lo"] ? (P["v0lo"], P["v0hi"]) : nothing

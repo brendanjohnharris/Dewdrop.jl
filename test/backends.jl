@@ -9,7 +9,7 @@ using Test
 @testset "execution backends" begin
     m = LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 10.0, R = 1.0, tref = 2.0)
     N = 64
-    conn = fixed_prob(Dewdrop.CPU(), N, N, 0.1; weight = 0.5, delay = 2, seed = UInt64(1))
+    conn = fixed_prob(Dewdrop.CPU(), N, N, 0.1; weight = 0.5, delay = steps(2), seed = UInt64(1))
     prob = DewdropNetwork(m, N; input = 30.0, tspan = (0.0, 100.0),
         projection = Projection(DeltaSynapse(), conn))   # exact weights → scatter order-independent
 

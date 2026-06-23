@@ -26,8 +26,8 @@ end
 
     @testset "compacted ≡ edge ≡ CPU reference (delta E/I + drive, exact weights)" begin
         N = 300
-        ce = fixed_prob(ARCH, N, N, 0.1; weight = 0.5, delay = 5, seed = UInt64(1), sources = 1:(4N ÷ 5), allow_self = false)
-        ci = fixed_prob(ARCH, N, N, 0.1; weight = -1.0, delay = 5, seed = UInt64(2), sources = (4N ÷ 5 + 1):N, allow_self = false)
+        ce = fixed_prob(ARCH, N, N, 0.1; weight = 0.5, delay = steps(5), seed = UInt64(1), sources = 1:(4N ÷ 5), allow_self = false)
+        ci = fixed_prob(ARCH, N, N, 0.1; weight = -1.0, delay = steps(5), seed = UInt64(2), sources = (4N ÷ 5 + 1):N, allow_self = false)
         prob = DewdropNetwork(_lif(), N; input = 0.0, tspan = (0.0, 80.0), arch = ARCH,
             projections = (Projection(DeltaSynapse(), ce), Projection(DeltaSynapse(), ci)),
             drive = PoissonDrive(rate = 20.0, weight = 0.5, seed = UInt64(3)))
@@ -48,8 +48,8 @@ end
     @testset "compacted ≡ CPU reference for COBA (exact weights)" begin
         N = 200
         mc = LIF(; τ = 20.0, EL = -60.0, Vθ = -50.0, Vr = -60.0, R = 1.0, tref = 5.0)
-        ce = fixed_prob(ARCH, N, N, 0.08; weight = 0.5, delay = 1, seed = UInt64(1), sources = 1:160)
-        ci = fixed_prob(ARCH, N, N, 0.08; weight = 4.0, delay = 1, seed = UInt64(2), sources = 161:N)
+        ce = fixed_prob(ARCH, N, N, 0.08; weight = 0.5, delay = steps(1), seed = UInt64(1), sources = 1:160)
+        ci = fixed_prob(ARCH, N, N, 0.08; weight = 4.0, delay = steps(1), seed = UInt64(2), sources = 161:N)
         prob = DewdropNetwork(mc, N; input = 0.0, tspan = (0.0, 100.0), arch = ARCH,
             projections = (Projection(ConductanceSynapse(τ = 5.0, Erev = 0.0), ce),
                 Projection(ConductanceSynapse(τ = 10.0, Erev = -80.0), ci)),
@@ -63,7 +63,7 @@ end
         # zero spikes / zero edges must not crash the compactify or the 2-level launch
         N = 64
         prob = DewdropNetwork(_lif(), N; input = 0.0, tspan = (0.0, 30.0), arch = ARCH,
-            projection = Projection(DeltaSynapse(), fixed_prob(ARCH, N, N, 0.1; weight = 0.5, delay = 2, seed = UInt64(4))),
+            projection = Projection(DeltaSynapse(), fixed_prob(ARCH, N, N, 0.1; weight = 0.5, delay = steps(2), seed = UInt64(4))),
             drive = PoissonDrive(rate = 5.0, weight = 0.5, seed = UInt64(9)))
         comp = _jl_run(prob, FixedStep(0.1); scatter = :compacted)
         ref = solve(prob, FixedStep(0.1); advise = false).spike_count

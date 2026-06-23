@@ -27,7 +27,7 @@ struct SparseCSR{
         RV <: AbstractVector{<:Integer},
         PV <: AbstractVector{<:Integer},
         WV <: AbstractVector,
-        DV <: AbstractVector{<:Integer},
+        DV <: AbstractVector{<:Real},   # Int = resolved steps (hot path); Float = unresolved ms delays
     } <: AbstractConnectivity
     rowptr::RV   # length npre + 1, 1-based: out-edges of pre i are rowptr[i]:rowptr[i+1]-1
     post::PV     # length nedges, postsynaptic target indices
@@ -43,6 +43,33 @@ struct SparseCSR{
 end
 Adapt.@adapt_structure SparseCSR
 export SparseCSR
+
+# --- Delay units. A synaptic delay is a PHYSICAL TIME (ms) by default --- the same units as `dt` and
+# every other quantity --- resolved to integer steps at the solve `dt`, so its meaning is dt-independent.
+# `steps(n)` is the escape for an exact step count. The connectome stores the delay AS GIVEN (Float ms or
+# Int steps); `init` resolves it via [`_resolve_delays`](@ref) once `dt` is known (the hot-path scatter
+# always reads the resolved integer-step connectome). ---
+struct Steps
+    n::Int
+end
+"""
+    steps(n)
+
+An explicit synaptic delay of `n` integer time steps (units of `dt`), bypassing the default millisecond
+interpretation --- e.g. `delay = steps(5)`. A bare number is a delay in milliseconds. Requires `n ≥ 1`
+(the fixed-step engine delivers in the next step, so it cannot represent a within-step delay).
+"""
+steps(n::Integer) = n ≥ 1 ? Steps(Int(n)) :
+    throw(ArgumentError("steps(n) requires n ≥ 1 (the fixed-step engine cannot deliver within a step); got $n"))
+export steps
+
+@inline _ms_to_steps(ms::Real, dt::Real) = max(1, round(Int, ms / dt))   # physical ms → integer steps (≥1)
+@inline _delayval(d::Steps) = d.n           # explicit steps → stored Int (resolution is the identity)
+@inline _delayval(d::Real) = Float64(d)     # ms → stored Float (resolution converts at the solve dt)
+# At the LOW-LEVEL `SparseCSR(arch, edges)` boundary an edge delay is already a stored value: a raw Int
+# IS a step count, a Float IS ms; a `Steps` wrapper (hand-built edges) is unwrapped to its Int step count.
+@inline _edgedelay(d::Steps) = d.n
+@inline _edgedelay(d::Real) = d
 
 function SparseCSR(
         arch::AbstractArchitecture, edges; npre::Integer, npost::Integer,
@@ -66,9 +93,11 @@ function SparseCSR(
         maxdeg = max(maxdeg, counts[i])
     end
 
+    Td0 = isempty(edges) ? IT : typeof(_edgedelay(edges[1][4]))
+    Td = Td0 <: Integer ? IT : Td0   # step (Int) delays → the narrow index type; ms (Float) keep precision
     post = Vector{IT}(undef, nE)
     weight = Vector{Tw}(undef, nE)
-    delay = Vector{IT}(undef, nE)
+    delay = Vector{Td}(undef, nE)
     src = Vector{IT}(undef, nE)
     fillpos = Vector{Int}(rowptr)
     for e in edges
@@ -76,7 +105,7 @@ function SparseCSR(
         idx = fillpos[pre]
         post[idx] = p
         weight[idx] = w
-        delay[idx] = d
+        delay[idx] = _edgedelay(d)
         src[idx] = pre
         fillpos[pre] += 1
     end
@@ -94,6 +123,20 @@ end
 npre(c::SparseCSR) = c.npre
 npost(c::SparseCSR) = c.npost
 nedges(c::SparseCSR) = length(c.post)
+
+"""
+    _resolve_delays(conn, dt) -> SparseCSR
+
+Resolve a connectome's delays to integer time steps at the solve `dt`. Explicit-step (Int) delays pass
+through unchanged (the identity); physical (Float ms) delays convert via [`_ms_to_steps`](@ref) into the
+connectome's index type. Called once at `init`, so the hot-path scatter always reads integer steps.
+"""
+function _resolve_delays(conn::SparseCSR, dt)
+    eltype(conn.delay) <: Integer && return conn     # explicit steps → identity (already resolved)
+    IT = eltype(conn.src)                            # Float ms delays → Int steps (at the solve dt)
+    stepd = IT.(_ms_to_steps.(conn.delay, dt))
+    return SparseCSR(conn.rowptr, conn.post, conn.weight, stepd, conn.src, conn.maxdeg, conn.npre, conn.npost)
+end
 
 """
     for_each_post(f, conn, pre)
@@ -126,7 +169,8 @@ function fixed_prob(
         index_type::Type = Int,
     )
     wtype = typeof(to_weight(weight isa Function ? weight(1) : weight))
-    edges = Tuple{Int, Int, wtype, Int}[]
+    dtype = typeof(_delayval(delay isa Function ? delay(1) : delay))   # Int (steps) or Float (ms)
+    edges = Tuple{Int, Int, wtype, dtype}[]
     pT = Float64(p)
     pT > 0 || return SparseCSR(arch, edges; npre = npre, npost = npost, index_type = index_type)
     ntargets = length(targets)
@@ -142,16 +186,7 @@ function fixed_prob(
     invlog = inv(log1p(-pT))                              # 1/log(1-p) < 0
     for pre in sources
         w = wtype(to_weight(weight isa Function ? weight(pre) : weight))
-        d = Int(delay isa Function ? delay(pre) : delay)
-        # The clock-driven engine delivers in the :deliver phase, which precedes :propagate,
-        # so the smallest representable synaptic delay is one step; delay 0 would wrap a full
-        # ring (L steps) late. Reject it at construction rather than fail silently.
-        d ≥ 1 || throw(
-            ArgumentError(
-                "synaptic delay must be ≥ 1 step (got $d for pre=$pre); " *
-                    "the fixed-step engine cannot deliver within the same step"
-            )
-        )
+        d = _delayval(delay isa Function ? delay(pre) : delay)   # ms (Float) or steps (Int); resolved at init
         local_post = 0
         k = 0
         while true

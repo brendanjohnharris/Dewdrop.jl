@@ -53,7 +53,7 @@ using ForwardDiff
     end
 
     @testset "error paths (CPU-only, unconnected, canonical for now)" begin
-        conn = fixed_prob(Dewdrop.CPU(), 8, 8, 0.2; weight = 0.5, delay = 1, seed = UInt64(1))
+        conn = fixed_prob(Dewdrop.CPU(), 8, 8, 0.2; weight = 0.5, delay = steps(1), seed = UInt64(1))
         connected = DewdropNetwork(LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 0.0, R = 1.0, tref = 0.0),
             8; input = 30.0, tspan = (0.0, 10.0), projection = Projection(DeltaSynapse(), conn))
         @test_throws Exception init(connected, FixedStep(0.1); backend = Differentiable())  # surrogate scatter is the next step

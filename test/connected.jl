@@ -13,7 +13,7 @@ using JLArrays
     dt, tend = 0.1, 300.0
     Iext = [0.5, 0.0]                                  # neuron 1 driven; neuron 2 silent alone
     syn = CurrentSynapse(τ = 5.0)
-    delay = 15                                          # 1.5 ms at dt = 0.1 ms
+    delay = 15                                                 # 15 steps = 1.5 ms at dt = 0.1 ms (raw edge = steps)
     conn = Dewdrop.SparseCSR(Dewdrop.CPU(), [(1, 2, 40.0, delay)]; npre = 2, npost = 2)
     proj = Dewdrop.Projection(syn, conn)
 

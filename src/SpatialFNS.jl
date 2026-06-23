@@ -83,10 +83,10 @@ end
 # difference), so it lines up with how `PrescribedCOBA` reads the column. Sampling all of (sources × steps)
 # of the connectome/raster is host-side and reproducible from the counter RNG.
 function _external_gext(N, NE, NI, N_ext, p_ext, J_ee, J_ei, nu, dt, nsteps, τr, τd, de, seed)
-    conn_e = fixed_prob(CPU(), N_ext, NE, p_ext; weight = 1.0, delay = de,
+    conn_e = fixed_prob(CPU(), N_ext, NE, p_ext; weight = 1.0, delay = steps(de),
         seed = _subseed(seed, 10), sources = 1:N_ext, targets = 1:NE)
     _correlate_weights!(conn_e, J_ee, 1:NE, _subseed(seed, 12))
-    conn_i = fixed_prob(CPU(), N_ext, NI, p_ext; weight = 1.0, delay = de,
+    conn_i = fixed_prob(CPU(), N_ext, NI, p_ext; weight = 1.0, delay = steps(de),
         seed = _subseed(seed, 11), sources = 1:N_ext, targets = 1:NI)
     _correlate_weights!(conn_i, J_ei, 1:NI, _subseed(seed, 13))
     outE = _out_edges(conn_e)
@@ -233,10 +233,10 @@ end
 # `n_ext × N` CSR --- shared by the streaming drive and (via `_external_gext`) the prescribed drive,
 # using the SAME sub-seeds so the two external-drive paths realise the identical connectome.
 function _build_extconn(arch, N, NE, NI, N_ext, p_ext, J_ee, J_ei, de, seed)
-    ce = fixed_prob(CPU(), N_ext, NE, p_ext; weight = 1.0, delay = de,
+    ce = fixed_prob(CPU(), N_ext, NE, p_ext; weight = 1.0, delay = steps(de),
         seed = _subseed(seed, 10), sources = 1:N_ext, targets = 1:NE)
     _correlate_weights!(ce, J_ee, 1:NE, _subseed(seed, 12))
-    ci = fixed_prob(CPU(), N_ext, NI, p_ext; weight = 1.0, delay = de,
+    ci = fixed_prob(CPU(), N_ext, NI, p_ext; weight = 1.0, delay = steps(de),
         seed = _subseed(seed, 11), sources = 1:N_ext, targets = 1:NI)
     _correlate_weights!(ci, J_ei, 1:NI, _subseed(seed, 13))
     edges = Tuple{Int, Int, Float64, Int}[]
@@ -321,16 +321,16 @@ function spatial_fns(; rho = 20000, dx = 0.5, gamma = 4,
     di = _delay_steps(i_delay, dt)
     period = (Float64(dx), Float64(dx))
     cee = distance_fixed_count(CPU(), positions; kernel = exponential_kernel(sigma_ee),
-        count = K_ee * NE, weight = 1.0, delay = de, seed = _subseed(seed, 2),
+        count = K_ee * NE, weight = 1.0, delay = steps(de), seed = _subseed(seed, 2),
         allow_self = true, period = period, sources = Erange, targets = Erange)
     cei = distance_fixed_count(CPU(), positions; kernel = exponential_kernel(sigma_ei),
-        count = K_ei * NI, weight = 1.0, delay = de, seed = _subseed(seed, 3),
+        count = K_ei * NI, weight = 1.0, delay = steps(de), seed = _subseed(seed, 3),
         allow_self = false, period = period, sources = Erange, targets = Irange)
     cie = distance_fixed_count(CPU(), positions; kernel = exponential_kernel(sigma_ie),
-        count = K_ie * NE, weight = 1.0, delay = di, seed = _subseed(seed, 4),
+        count = K_ie * NE, weight = 1.0, delay = steps(di), seed = _subseed(seed, 4),
         allow_self = false, period = period, sources = Irange, targets = Erange)
     cii = distance_fixed_count(CPU(), positions; kernel = exponential_kernel(sigma_ii),
-        count = K_ii * NI, weight = 1.0, delay = di, seed = _subseed(seed, 5),
+        count = K_ii * NI, weight = 1.0, delay = steps(di), seed = _subseed(seed, 5),
         allow_self = true, period = period, sources = Irange, targets = Irange)
 
     # --- weights (in-degree-scaled; I weights are δ-amplified, sign carried by reversal potential) ---

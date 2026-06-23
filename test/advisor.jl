@@ -11,7 +11,7 @@ using CUDA
 # a GPU-arch problem whose connectivity lives on the host (advice reads it without touching a device)
 function _gpuprob(; T = Float64, IT = Int, N = 4000, p = 0.1)
     m = LIF(; τ = T(20), EL = T(0), Vθ = T(20), Vr = T(10), R = T(1), tref = T(2))
-    conn = fixed_prob(Dewdrop.CPU(), N, N, p; weight = T(0.5), delay = 1, seed = UInt64(1), index_type = IT)
+    conn = fixed_prob(Dewdrop.CPU(), N, N, p; weight = T(0.5), delay = steps(1), seed = UInt64(1), index_type = IT)
     return DewdropNetwork(m, N; input = T(0), tspan = (T(0), T(10)), arch = Dewdrop.GPU(),
         projection = Projection(DeltaSynapse(), conn))
 end
@@ -34,7 +34,7 @@ end
 
     @testset "CPU problems get no GPU advice" begin
         m = LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 10.0, R = 1.0, tref = 2.0)
-        conn = fixed_prob(Dewdrop.CPU(), 100, 100, 0.1; weight = 0.5, delay = 1, seed = UInt64(1))
+        conn = fixed_prob(Dewdrop.CPU(), 100, 100, 0.1; weight = 0.5, delay = steps(1), seed = UInt64(1))
         cpuprob = DewdropNetwork(m, 100; input = 0.0, tspan = (0.0, 10.0), arch = Dewdrop.CPU(),
             projection = Projection(DeltaSynapse(), conn))
         Dewdrop.reset_advice!()

@@ -30,8 +30,8 @@ end
     m = LIF(; τ = 20.0, EL = -60.0, Vθ = -50.0, Vr = -60.0, R = 1.0, tref = 5.0)
     ge, gi, D = 6.0 / 10.0, 67.0 / 10.0, 1        # peak conductances g/g_L; delay 0.1 ms
 
-    ce = fixed_prob(arch, N, N, ε; weight = ge, delay = D, seed = UInt64(1), sources = 1:NE, allow_self = false)
-    ci = fixed_prob(arch, N, N, ε; weight = gi, delay = D, seed = UInt64(2), sources = (NE + 1):N, allow_self = false)
+    ce = fixed_prob(arch, N, N, ε; weight = ge, delay = steps(D), seed = UInt64(1), sources = 1:NE, allow_self = false)
+    ci = fixed_prob(arch, N, N, ε; weight = gi, delay = steps(D), seed = UInt64(2), sources = (NE + 1):N, allow_self = false)
     projs = (Projection(ConductanceSynapse(τ = 5.0, Erev = 0.0), ce),
         Projection(ConductanceSynapse(τ = 10.0, Erev = -80.0), ci))
     drive = PoissonDrive(; rate = 6.0, weight = 0.1, seed = UInt64(7))

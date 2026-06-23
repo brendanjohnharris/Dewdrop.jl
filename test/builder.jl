@@ -10,8 +10,8 @@ using Test
 
     nb = network(m, 80, 20; arch = Dewdrop.CPU(), tspan = (0.0, 200.0))
     @test nb isa Dewdrop.NetworkBuilder
-    project!(nb, :E, ConductanceSynapse(τ = 5.0, Erev = 0.0); p = 0.1, weight = 0.6, delay = 1, seed = UInt64(1))
-    project!(nb, :I, ConductanceSynapse(τ = 10.0, Erev = -80.0); p = 0.1, weight = 6.7, delay = 1, seed = UInt64(2))
+    project!(nb, :E, ConductanceSynapse(τ = 5.0, Erev = 0.0); p = 0.1, weight = 0.6, delay = steps(1), seed = UInt64(1))
+    project!(nb, :I, ConductanceSynapse(τ = 10.0, Erev = -80.0); p = 0.1, weight = 6.7, delay = steps(1), seed = UInt64(2))
     drive!(nb, PoissonDrive(; rate = 6.0, weight = 0.1, seed = UInt64(7)))
     prob = build(nb)
 
@@ -38,7 +38,7 @@ using Test
 
     # :all sources span the whole population
     nb2 = network(m, 80, 20; arch = Dewdrop.CPU(), tspan = (0.0, 50.0))
-    project!(nb2, :all, CurrentSynapse(τ = 5.0); p = 0.05, weight = 1.0, delay = 1, seed = UInt64(3))
+    project!(nb2, :all, CurrentSynapse(τ = 5.0); p = 0.05, weight = 1.0, delay = steps(1), seed = UInt64(3))
     @test length(build(nb2).projections) == 1
 
     # the 2-arg builder now registers the :E / :I subpops on the problem (for the reference API)
@@ -57,7 +57,7 @@ end
         mI = LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 10.0, R = 1.0, tref = 2.0)
         population!(nb, :E, mE, 80; input = 30.0)
         population!(nb, :I, mI, 20; input = 30.0)
-        project!(nb, :E => :I, CurrentSynapse(τ = 5.0); p = 0.1, weight = 1.0, delay = 1, seed = UInt64(1))
+        project!(nb, :E => :I, CurrentSynapse(τ = 5.0); p = 0.1, weight = 1.0, delay = steps(1), seed = UInt64(1))
         drive!(nb, PoissonDrive(; rate = 1.0, weight = 0.1, seed = UInt64(9)))
         prob = build(nb)
         @test prob isa DewdropNetwork
@@ -74,7 +74,7 @@ end
         m = LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 10.0, R = 1.0, tref = 2.0)
         population!(nb, :E, m, 50)
         population!(nb, :I, m, 50)
-        project!(nb, :E => :I, CurrentSynapse(τ = 5.0); p = 0.3, weight = 1.0, delay = 1, seed = UInt64(2))
+        project!(nb, :E => :I, CurrentSynapse(τ = 5.0); p = 0.3, weight = 1.0, delay = steps(1), seed = UInt64(2))
         prob = build(nb)
         conn = prob.projections[1].conn
         pairs = Tuple{Int, Int}[]

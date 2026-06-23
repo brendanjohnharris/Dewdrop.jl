@@ -16,8 +16,8 @@ using Adapt: adapt
 const ARCH = Dewdrop.CPU()
 _lif() = LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 10.0, R = 1.0, tref = 2.0)
 function _ei_delta(input; N = 100, T = 80.0, arch = ARCH)
-    ce = fixed_prob(arch, N, N, 0.1; weight = 0.5, delay = 5, seed = UInt64(1), sources = 1:(4N ÷ 5), allow_self = false)
-    ci = fixed_prob(arch, N, N, 0.1; weight = -1.0, delay = 5, seed = UInt64(2), sources = (4N ÷ 5 + 1):N, allow_self = false)
+    ce = fixed_prob(arch, N, N, 0.1; weight = 0.5, delay = steps(5), seed = UInt64(1), sources = 1:(4N ÷ 5), allow_self = false)
+    ci = fixed_prob(arch, N, N, 0.1; weight = -1.0, delay = steps(5), seed = UInt64(2), sources = (4N ÷ 5 + 1):N, allow_self = false)
     return DewdropNetwork(_lif(), N; input = input, tspan = (0.0, T), arch = arch,
         projections = (Projection(DeltaSynapse(), ce), Projection(DeltaSynapse(), ci)),
         drive = PoissonDrive(rate = 20.0, weight = 0.5, seed = UInt64(3)))
@@ -57,8 +57,8 @@ _ncols_expected(T) = round(Int, T / 0.1)                                 # recor
         inputs = [(b - 1) * 0.25 for b in 1:B]
         # COBA
         cobaprob(input) = let mc = LIF(; τ = 20.0, EL = -60.0, Vθ = -50.0, Vr = -60.0, R = 1.0, tref = 5.0)
-            ce = fixed_prob(ARCH, N, N, 0.1; weight = 0.5, delay = 1, seed = UInt64(1), sources = 1:72)
-            ci = fixed_prob(ARCH, N, N, 0.1; weight = 4.0, delay = 1, seed = UInt64(2), sources = 73:N)
+            ce = fixed_prob(ARCH, N, N, 0.1; weight = 0.5, delay = steps(1), seed = UInt64(1), sources = 1:72)
+            ci = fixed_prob(ARCH, N, N, 0.1; weight = 4.0, delay = steps(1), seed = UInt64(2), sources = 73:N)
             DewdropNetwork(mc, N; input = input, tspan = (0.0, T), arch = ARCH,
                 projections = (Projection(ConductanceSynapse(τ = 5.0, Erev = 0.0), ce),
                     Projection(ConductanceSynapse(τ = 10.0, Erev = -80.0), ci)),
@@ -69,7 +69,7 @@ _ncols_expected(T) = round(Int, T / 0.1)                                 # recor
         @test all(bc.spike_count[:, b] == sc[b] for b in 1:B)
         # CUBA
         cubaprob(input) = DewdropNetwork(_lif(), N; input = input, tspan = (0.0, T), arch = ARCH,
-            projection = Projection(CurrentSynapse(τ = 5.0), fixed_prob(ARCH, N, N, 0.1; weight = 1.0, delay = 3, seed = UInt64(4), allow_self = false)),
+            projection = Projection(CurrentSynapse(τ = 5.0), fixed_prob(ARCH, N, N, 0.1; weight = 1.0, delay = steps(3), seed = UInt64(4), allow_self = false)),
             drive = PoissonDrive(rate = 25.0, weight = 0.5, seed = UInt64(5)))
         su = [solve(cubaprob(inputs[b]), FixedStep(0.1)).spike_count for b in 1:B]
         bu = solve(cubaprob(0.0), FixedStep(0.1); batch = B, input = _colmat(inputs, N), streams = fill(0, B))

@@ -9,7 +9,7 @@ using Test
     arch = Dewdrop.CPU()
     npre, npost, p = 200, 150, 0.1
     seed = UInt64(42)
-    conn = Dewdrop.fixed_prob(arch, npre, npost, p; weight = 0.5f0, delay = 2, seed = seed)
+    conn = Dewdrop.fixed_prob(arch, npre, npost, p; weight = 0.5f0, delay = steps(2), seed = seed)
 
     @test conn isa Dewdrop.SparseCSR
     @test Dewdrop.npre(conn) == npre
@@ -21,15 +21,15 @@ using Test
     @test all(==(2), conn.delay)
 
     # reproducible: same seed → identical realised connectome
-    conn2 = Dewdrop.fixed_prob(arch, npre, npost, p; weight = 0.5f0, delay = 2, seed = seed)
+    conn2 = Dewdrop.fixed_prob(arch, npre, npost, p; weight = 0.5f0, delay = steps(2), seed = seed)
     @test conn.post == conn2.post
     @test conn.rowptr == conn2.rowptr
     # a different seed gives a different connectome
-    conn3 = Dewdrop.fixed_prob(arch, npre, npost, p; weight = 0.5f0, delay = 2, seed = UInt64(43))
+    conn3 = Dewdrop.fixed_prob(arch, npre, npost, p; weight = 0.5f0, delay = steps(2), seed = UInt64(43))
     @test conn3.post != conn2.post
 
     # no self-connections when disallowed
-    rec = Dewdrop.fixed_prob(arch, 100, 100, 0.2; weight = 1.0f0, delay = 1, seed = seed, allow_self = false)
+    rec = Dewdrop.fixed_prob(arch, 100, 100, 0.2; weight = 1.0f0, delay = steps(1), seed = seed, allow_self = false)
     self = 0
     for pre in 1:100
         Dewdrop.for_each_post(rec, pre) do post, w, d
@@ -40,12 +40,12 @@ using Test
 
     # per-source signed weights (excitatory neurons +, inhibitory −)
     NE = 100
-    ei = Dewdrop.fixed_prob(arch, 150, 150, 0.1; weight = pre -> pre ≤ NE ? 1.0f0 : -4.0f0, delay = 1, seed = seed)
+    ei = Dewdrop.fixed_prob(arch, 150, 150, 0.1; weight = pre -> pre ≤ NE ? 1.0f0 : -4.0f0, delay = steps(1), seed = seed)
     @test any(>(0), ei.weight)
     @test any(<(0), ei.weight)
 
     # `sources` restricts which presynaptic neurons emit edges (for E/I subpopulations)
-    sub = Dewdrop.fixed_prob(arch, 200, 150, 0.2; weight = 1.0f0, delay = 1, seed = seed, sources = 1:50)
+    sub = Dewdrop.fixed_prob(arch, 200, 150, 0.2; weight = 1.0f0, delay = steps(1), seed = seed, sources = 1:50)
     @test Dewdrop.npre(sub) == 200                  # index space unchanged
     out_of_range = Ref(0)
     for pre in 51:200
@@ -63,7 +63,7 @@ using Test
     @test in_range[] > 0                            # source neurons do
 
     # `targets` restricts which postsynaptic neurons receive edges (for E→I-only projections)
-    tgt = Dewdrop.fixed_prob(arch, 200, 200, 0.2; weight = 1.0f0, delay = 1, seed = seed, targets = 101:200)
+    tgt = Dewdrop.fixed_prob(arch, 200, 200, 0.2; weight = 1.0f0, delay = steps(1), seed = seed, targets = 101:200)
     @test Dewdrop.npost(tgt) == 200                 # index space unchanged
     posts = Int[]
     for pre in 1:200
@@ -75,7 +75,7 @@ using Test
     @test all(in(101:200), posts)                   # every edge lands in the target range
 
     # `sources` and `targets` compose: a block E(1:100) → I(101:200) projection
-    ei_proj = Dewdrop.fixed_prob(arch, 200, 200, 0.2; weight = 1.0f0, delay = 1, seed = seed,
+    ei_proj = Dewdrop.fixed_prob(arch, 200, 200, 0.2; weight = 1.0f0, delay = steps(1), seed = seed,
         sources = 1:100, targets = 101:200)
     pairs = Tuple{Int, Int}[]
     for pre in 1:200

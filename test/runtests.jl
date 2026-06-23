@@ -27,6 +27,8 @@ Dewdrop.set_advice!(false)   # silence the perf advisor during the suite; test/a
     include("multiproj.jl")
     include("plasticity.jl")        # M5c event-driven STDP (mutable weights + traces, scatter-path)
     include("builder.jl")
+    include("networkspec.jl")       # deferred network spec: freeze(builder)/defer(constructor) → materialise at solve
+    include("blockbatch.jl")        # batching: block-diagonal general path + batch(...) input forms
     include("addressing.jl")        # Phase A named-subpopulation registry + symbol reference API
     include("stats.jl")             # statistical observables (WRCircuit stats.py ports) + internal FFT
     include("initial_conditions.jl")
@@ -35,6 +37,8 @@ Dewdrop.set_advice!(false)   # silence the perf advisor during the suite; test/a
     include("unitful.jl")
     include("timeseriesbase.jl")
     include("recording.jl")
+    include("progress.jl")          # host-side progress reporting (ProgressLogging convention) for solve!
+    include("show.jl")              # hierarchical Base.show rendering (models, synapses, network, builder, solutions)
     include("drive.jl")
     include("noise.jl")             # M5a SDE noise: draw_normal, exact-OU variance, 3-path ≡
     include("gpu_readiness.jl")

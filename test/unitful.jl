@@ -36,8 +36,8 @@ using Unitful
         prob = DewdropNetwork(m, 10; input = 0.5u"pA", tspan = (0u"ms", 50u"ms"))
         @test prob.tspan == (0.0, 50.0) && prob.input == 0.5
         # connectivity weights stripped by their OWN dimension (delta→mV, COBA→nS, CUBA→pA)
-        @test all(≈(0.1), fixed_prob(Dewdrop.CPU(), 10, 10, 0.5; weight = 0.1u"mV", delay = 1, seed = UInt64(1)).weight)
-        @test all(≈(6.0), fixed_prob(Dewdrop.CPU(), 10, 10, 0.5; weight = 6u"nS", delay = 1, seed = UInt64(1)).weight)
+        @test all(≈(0.1), fixed_prob(Dewdrop.CPU(), 10, 10, 0.5; weight = 0.1u"mV", delay = steps(1), seed = UInt64(1)).weight)
+        @test all(≈(6.0), fixed_prob(Dewdrop.CPU(), 10, 10, 0.5; weight = 6u"nS", delay = steps(1), seed = UInt64(1)).weight)
     end
 
     @testset "end-to-end: unitful network == bare-canonical network" begin
@@ -45,7 +45,7 @@ using Unitful
             m = unitful ? LIF(; τ = 20u"ms", EL = 0u"mV", Vθ = 20u"mV", Vr = 10u"mV", R = 1u"GΩ", tref = 2u"ms") :
                 LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 10.0, R = 1.0, tref = 2.0)
             nb = network(m, 80, 20; arch = Dewdrop.CPU(), tspan = unitful ? (0u"ms", 200u"ms") : (0.0, 200.0))
-            project!(nb, :E, DeltaSynapse(); p = 0.1, weight = unitful ? 0.5u"mV" : 0.5, delay = 1, seed = UInt64(1))
+            project!(nb, :E, DeltaSynapse(); p = 0.1, weight = unitful ? 0.5u"mV" : 0.5, delay = steps(1), seed = UInt64(1))
             drive!(nb, PoissonDrive(; rate = unitful ? 0.3u"kHz" : 0.3, weight = unitful ? 0.5u"mV" : 0.5, seed = UInt64(2)))
             return build(nb)
         end

@@ -20,7 +20,7 @@ using Statistics
     pos = line_positions(50; spacing = 1.0)
 
     @testset "distance-dependent connectivity (box kernel = local lattice)" begin
-        conn = distance_prob(Dewdrop.CPU(), pos; kernel = box_kernel(3.0), weight = 1.0, delay = 1, seed = UInt64(1))
+        conn = distance_prob(Dewdrop.CPU(), pos; kernel = box_kernel(3.0), weight = 1.0, delay = steps(1), seed = UInt64(1))
         @test conn isa SparseCSR && Dewdrop.nedges(conn) > 0
         maxd = Ref(0.0)
         self = Ref(0)
@@ -33,13 +33,13 @@ using Statistics
         @test maxd[] ≤ 3.0          # all edges within the kernel radius
         @test self[] == 0           # no autapses
         # reproducible
-        conn2 = distance_prob(Dewdrop.CPU(), pos; kernel = box_kernel(3.0), weight = 1.0, delay = 1, seed = UInt64(1))
+        conn2 = distance_prob(Dewdrop.CPU(), pos; kernel = box_kernel(3.0), weight = 1.0, delay = steps(1), seed = UInt64(1))
         @test conn.post == conn2.post && conn.rowptr == conn2.rowptr
     end
 
     @testset "targets restricts the postsynaptic set" begin
         # E(1:25) → I(26:50) spatial projection: every edge lands in the target range
-        conn = distance_prob(Dewdrop.CPU(), pos; kernel = box_kernel(10.0), weight = 1.0, delay = 1,
+        conn = distance_prob(Dewdrop.CPU(), pos; kernel = box_kernel(10.0), weight = 1.0, delay = steps(1),
             seed = UInt64(1), sources = 1:25, targets = 26:50)
         posts = Int[]
         srcs = Int[]
@@ -56,7 +56,7 @@ using Statistics
 
     @testset "periodic boundary wraps the seam" begin
         connp = distance_prob(Dewdrop.CPU(), pos; kernel = box_kernel(3.0), weight = 1.0,
-            delay = 1, seed = UInt64(1), period = (50.0,))
+            delay = steps(1), seed = UInt64(1), period = (50.0,))
         wrapped = Ref(false)
         Dewdrop.for_each_post(connp, 1) do post, w, d   # neuron 1 (x=0) reaches x≈49 across the seam
             post ≥ 48 && (wrapped[] = true)
@@ -76,12 +76,12 @@ using Statistics
     @testset "fixed-count distance connectivity (Gumbel-max top-k)" begin
         pos = line_positions(100; spacing = 1.0)
         conn = distance_fixed_count(Dewdrop.CPU(), pos; kernel = exponential_kernel(3.0), count = 500,
-            weight = 1.0, delay = 1, seed = UInt64(1))
+            weight = 1.0, delay = steps(1), seed = UInt64(1))
         @test conn isa SparseCSR
         @test Dewdrop.nedges(conn) == 500                           # EXACTLY count edges (the point)
         # reproducible: same seed → identical realised connectome
         c2 = distance_fixed_count(Dewdrop.CPU(), pos; kernel = exponential_kernel(3.0), count = 500,
-            weight = 1.0, delay = 1, seed = UInt64(1))
+            weight = 1.0, delay = steps(1), seed = UInt64(1))
         @test c2.post == conn.post && c2.rowptr == conn.rowptr
         # localised: the exponential kernel concentrates edges on nearby pairs
         dists = Float64[]
@@ -94,7 +94,7 @@ using Statistics
 
         # box kernel → a hard connection radius
         cb = distance_fixed_count(Dewdrop.CPU(), pos; kernel = box_kernel(5.0), count = 300,
-            weight = 1.0, delay = 1, seed = UInt64(2))
+            weight = 1.0, delay = steps(1), seed = UInt64(2))
         @test Dewdrop.nedges(cb) == 300
         maxd = 0.0
         for pre in 1:100
@@ -106,7 +106,7 @@ using Statistics
 
         # sources / targets restrict the sampled pairs (E → I projection)
         ct = distance_fixed_count(Dewdrop.CPU(), pos; kernel = exponential_kernel(5.0), count = 200,
-            weight = 1.0, delay = 1, seed = UInt64(3), sources = 1:50, targets = 51:100)
+            weight = 1.0, delay = steps(1), seed = UInt64(3), sources = 1:50, targets = 51:100)
         @test Dewdrop.nedges(ct) == 200
         pairs = Tuple{Int, Int}[]
         for pre in 1:100
@@ -118,7 +118,7 @@ using Statistics
     end
 
     @testset "Gaussian kernel → local connectivity + runs end-to-end" begin
-        cg = distance_prob(Dewdrop.CPU(), pos; kernel = gaussian_kernel(2.0), weight = 1.0, delay = 1, seed = UInt64(7))
+        cg = distance_prob(Dewdrop.CPU(), pos; kernel = gaussian_kernel(2.0), weight = 1.0, delay = steps(1), seed = UInt64(7))
         dists = Float64[]
         for pre in 1:50
             Dewdrop.for_each_post(cg, pre) do post, w, d

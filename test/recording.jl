@@ -73,7 +73,7 @@ using GPUArrays
     @testset "other state vars, synaptic vars, and a probe" begin
         @test all(≥(-1e-9), solve(prob, FixedStep(dt); record = (r = Trace(:refrac),)).record.r.data)
         # a CUBA projection exposes a synaptic current column
-        conn = fixed_prob(Dewdrop.CPU(), 4, 4, 0.5; weight = 1.0, delay = 2, seed = UInt64(1))
+        conn = fixed_prob(Dewdrop.CPU(), 4, 4, 0.5; weight = 1.0, delay = steps(2), seed = UInt64(1))
         cprob = DewdropNetwork(m, 4; input = 0.5, tspan = (0.0, tend),
             projection = Projection(CurrentSynapse(τ = 5.0), conn))
         cs = solve(cprob, FixedStep(dt); record = (I = Trace(:Isyn; projection = 1),))

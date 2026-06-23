@@ -9,7 +9,7 @@ using Test
     m = LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 10.0, R = 1.0, tref = 2.0)
 
     @testset "empty projection is a no-op (no crash)" begin
-        empty_conn = fixed_prob(Dewdrop.CPU(), 50, 50, 0.0; weight = 1.0, delay = 1, seed = UInt64(1))
+        empty_conn = fixed_prob(Dewdrop.CPU(), 50, 50, 0.0; weight = 1.0, delay = steps(1), seed = UInt64(1))
         @test Dewdrop.nedges(empty_conn) == 0
         se = solve(DewdropNetwork(m, 50; input = 2.0, tspan = (0.0, 5.0),
                 projection = Projection(CurrentSynapse(τ = 5.0), empty_conn)), FixedStep(0.1))
@@ -18,8 +18,8 @@ using Test
     end
 
     @testset "delay must be ≥ 1 step" begin
-        @test_throws ArgumentError fixed_prob(Dewdrop.CPU(), 10, 10, 0.5; weight = 1.0, delay = 0, seed = UInt64(1))
-        @test fixed_prob(Dewdrop.CPU(), 10, 10, 0.5; weight = 1.0, delay = 1, seed = UInt64(1)) isa SparseCSR
+        @test_throws ArgumentError fixed_prob(Dewdrop.CPU(), 10, 10, 0.5; weight = 1.0, delay = steps(0), seed = UInt64(1))
+        @test fixed_prob(Dewdrop.CPU(), 10, 10, 0.5; weight = 1.0, delay = steps(1), seed = UInt64(1)) isa SparseCSR
     end
 
     @testset "Poisson drive λ underflow guard" begin

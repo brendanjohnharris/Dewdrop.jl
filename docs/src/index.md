@@ -44,6 +44,14 @@ prob = DewdropNetwork(m, 10_000; input = 1.5, tspan = (0.0, 1000.0))
 sol = solve(prob, FixedStep(0.1))            # backend = Auto() picks the best execution path
 ```
 
+`solve` shows a **live progress bar** by default (`progress = :auto`): it appears once a run has
+gone on long enough to matter (calibrating its update rate from the first ~0.3 s) and renders
+natively in VSCode, Pluto and any `TerminalLogger` REPL, while staying silent in plain scripts. Pass
+`progress = false` to silence it, `progress = true` to force it on from the start, a `String` to name
+the bar, or an `Int` to set a fixed update stride. It is a standard
+[ProgressLogging](https://github.com/JuliaLogging/ProgressLogging.jl) log record --- so it needs no
+extra dependency, and it never perturbs the simulation (a `progress` run is bit-identical to none).
+
 See **[Choosing a backend](guide/backends.md)** for when to use each, and **[Turbo & model
 specialization](guide/turbo.md)** for the SIMD backend and how to add a Turbo specialization to a
 model.

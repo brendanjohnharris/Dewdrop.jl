@@ -28,13 +28,13 @@ using Test
     population!(nb, :I, fnsI, NI; input = 0.5, positions = posI)
     # four distance-dependent fixed-count projections; broad inhibition (larger σ), periodic box
     project!(nb, :E => :E, exc(); kernel = exponential_kernel(2.0), count = 6 * NE, weight = 0.002,
-        delay = 2, seed = UInt64(1), period = (Lx, Ly))
+        delay = steps(2), seed = UInt64(1), period = (Lx, Ly))
     project!(nb, :E => :I, exc(); kernel = exponential_kernel(2.5), count = 6 * NI, weight = 0.002,
-        delay = 2, seed = UInt64(2), period = (Lx, Ly))
+        delay = steps(2), seed = UInt64(2), period = (Lx, Ly))
     project!(nb, :I => :E, inh(); kernel = exponential_kernel(4.5), count = 6 * NE, weight = 0.004,
-        delay = 2, seed = UInt64(3), period = (Lx, Ly))
+        delay = steps(2), seed = UInt64(3), period = (Lx, Ly))
     project!(nb, :I => :I, inh(); kernel = exponential_kernel(4.5), count = 6 * NI, weight = 0.004,
-        delay = 2, seed = UInt64(4), period = (Lx, Ly))
+        delay = steps(2), seed = UInt64(4), period = (Lx, Ly))
     prob = build(nb)
 
     @test prob.model isa Heterogeneous                # same FNS type, per-neuron ΔgK
@@ -140,9 +140,9 @@ end
     exc(p) = FrozenDualExpSynapse(; τr = 1.0, τd = 5.0, Erev = 0.0)
     inh(p) = FrozenDualExpSynapse(; τr = 2.0, τd = 4.5, Erev = -80.0)
     cee = distance_fixed_count(Dewdrop.CPU(), pos; kernel = exponential_kernel(2.0), count = 6NE,
-        weight = 0.002, delay = 14, seed = UInt64(1), period = (8.0, 8.0), sources = 1:NE, targets = 1:NE)
+        weight = 0.002, delay = steps(14), seed = UInt64(1), period = (8.0, 8.0), sources = 1:NE, targets = 1:NE)
     cie = distance_fixed_count(Dewdrop.CPU(), pos; kernel = exponential_kernel(4.0), count = 6NE,
-        weight = 0.004, delay = 14, seed = UInt64(3), period = (8.0, 8.0), sources = (NE + 1):N, targets = 1:NE)
+        weight = 0.004, delay = steps(14), seed = UInt64(3), period = (8.0, 8.0), sources = (NE + 1):N, targets = 1:NE)
     projs = [Projection(exc(0), cee), Projection(inh(0), cie)]
     nsteps = 2000
     gext = fill(0.05, N, nsteps)                                  # a constant external conductance (Erev=0)

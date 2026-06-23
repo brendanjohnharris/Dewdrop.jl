@@ -88,16 +88,17 @@ function population!(nb::NetworkBuilder, name::Symbol, model::AbstractNeuronMode
 end
 export population!
 
-# the registry of subpop ranges from the populations added so far (declaration order).
-function _registry(nb::NetworkBuilder)
+# the registry of subpop ranges from population names + sizes (declaration order).
+function _registry(names, sizes)
     ranges = Pair{Symbol, UnitRange{Int}}[]
     off = 0
-    for (nm, sz) in zip(nb.names, nb.sizes)
+    for (nm, sz) in zip(names, sizes)
         push!(ranges, nm => (off + 1):(off + sz))
         off += sz
     end
     return NamedTuple(ranges)
 end
+_registry(nb::NetworkBuilder) = _registry(nb.names, nb.sizes)
 
 """
     project!(nb, src => dst, synapse; p, weight, delay, seed, allow_self=false, plasticity=nothing) -> nb
@@ -107,8 +108,10 @@ Add a projection from subpopulation `src` onto `dst` (a `src => dst` pair of sub
 single-symbol form targets the whole network, `src => :all`). Connectivity is `fixed_prob` with
 probability `p` by default, `distance_prob` if a `kernel` is given (using the populations'
 `positions`), or a prebuilt `connectivity`. `weight`/`delay` may be scalars or per-source functions
-of the presynaptic index. (Named `project!` rather than `connect!` to avoid clashing with
-`Observables.connect!`, which `Makie` re-exports.)
+of the presynaptic index; `delay` is a physical time in **milliseconds** (resolved to integer steps at
+the solve `dt`), or use `steps(n)` for an explicit step count. An optional `adjust = conn -> …` hook
+runs over the materialised connectivity (e.g. to rescale/correlate weights). (Named `project!` rather
+than `connect!` to avoid clashing with `Observables.connect!`, which `Makie` re-exports.)
 """
 function project!(nb::NetworkBuilder, pair::Pair{Symbol, Symbol}, synapse::AbstractSynapseModel;
         plasticity = nothing, kw...)
@@ -201,6 +204,10 @@ function _build_projection(spec::_ProjSpec, reg::NamedTuple, positions, arch, N:
         fixed_prob(arch, N, N, kw.p; weight = kw.weight, delay = kw.delay, seed = kw.seed,
             allow_self = get(kw, :allow_self, false), sources = sources, targets = targets)
     end
+    # optional post-build hook: `project!(…; adjust = conn -> …)` runs over the materialised connectivity
+    # (e.g. in-degree-scaled / spatially-correlated weights) --- the builder analogue of `_correlate_weights!`.
+    adj = get(kw, :adjust, nothing)
+    adj === nothing || adj(conn)
     return Projection(spec.synapse, conn; plasticity = spec.plasticity)
 end
 
@@ -211,16 +218,27 @@ Assemble the builder into a [`DewdropNetwork`](@ref): concatenate the population
 (recording their ranges in the subpop registry), merge the per-group models and inputs, and
 materialise the projections. `input` overrides the per-population inputs with a single global value.
 """
-function build(nb::NetworkBuilder; input = nothing, schedule::Schedule = default_schedule())
-    isempty(nb.names) && error("network has no populations --- add them with `population!`")
-    N = sum(nb.sizes)
-    reg = merge((all = 1:N,), _registry(nb))      # include the implicit :all so projections can target it
-    model = _combine_models(nb.models, nb.sizes)
+# The single assembly path, shared by `build(::NetworkBuilder)` and `materialize(::FrozenBuilder)` (the
+# deferred spec; see NetworkSpec.jl). Concatenates the populations, merges models/inputs, materialises the
+# projections, and records the named-projection labels --- parameterised by `tspan` (so a frozen spec can
+# override the builder's default duration). The dynamic boundary (heterogeneous models/projspecs) is here.
+function _build_network(arch, tspan, names, models, sizes, inputs, positions_in, projspecs, drive;
+        input = nothing, schedule::Schedule = default_schedule())
+    isempty(names) && error("network has no populations --- add them with `population!`")
+    N = sum(sizes)
+    reg = merge((all = 1:N,), _registry(names, sizes))   # include the implicit :all so projections can target it
+    model = _combine_models(models, sizes)
     T = float_type(model)
-    in_ = input === nothing ? _combine_inputs(nb.inputs, nb.sizes, T) : input
-    positions = _combine_positions(nb.positions, nb.sizes)
-    projs = Tuple(_build_projection(spec, reg, positions, nb.arch, N) for spec in nb.projspecs)
-    return DewdropNetwork(model, N; input = in_, tspan = nb.tspan, arch = nb.arch,
-        schedule = schedule, projections = projs, drive = nb.drive, subpops = reg, positions = positions)
+    in_ = input === nothing ? _combine_inputs(inputs, sizes, T) : input
+    positions = _combine_positions(positions_in, sizes)
+    projs = Tuple(_build_projection(spec, reg, positions, arch, N) for spec in projspecs)
+    labels = isempty(projspecs) ? nothing : Tuple(spec.src => spec.dst for spec in projspecs)
+    return DewdropNetwork(model, N; input = in_, tspan = tspan, arch = arch,
+        schedule = schedule, projections = projs, drive = drive, subpops = reg, positions = positions,
+        projlabels = labels)
 end
+
+build(nb::NetworkBuilder; input = nothing, schedule::Schedule = default_schedule()) =
+    _build_network(nb.arch, nb.tspan, nb.names, nb.models, nb.sizes, nb.inputs, nb.positions, nb.projspecs,
+        nb.drive; input = input, schedule = schedule)
 export build

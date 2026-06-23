@@ -95,8 +95,10 @@ end
 function _make_batched_synstate(arch, syn::DualExpSynapse, conn, ::Type{T}, N, B, dt) where {T}
     g_rise = fill!(allocate(arch, T, Int(N), Int(B)), zero(T))
     g_decay = fill!(allocate(arch, T, Int(N), Int(B)), zero(T))
-    return BatchedDualExpCOBA(g_rise, g_decay, BatchedRing(arch, T, N, B, maximum(conn.delay; init = 0)),
-        conn, T(exp(-dt / syn.τr)), T(exp(-dt / syn.τd)), T(_dualexp_a(syn.τr, syn.τd)), T(syn.Erev))
+    return BatchedDualExpCOBA(
+        g_rise, g_decay, BatchedRing(arch, T, N, B, maximum(conn.delay; init = 0)),
+        conn, T(exp(-dt / syn.τr)), T(exp(-dt / syn.τd)), T(_dualexp_a(syn.τr, syn.τd)), T(syn.Erev)
+    )
 end
 
 # Per-projection synaptic contribution for cell (i,b): deliver (read+clear the ring slot due at
@@ -169,6 +171,35 @@ end
     return s * draw_normal(typeof(s), noise.seed, n, i, str)
 end
 
+# --- Fused Mode A: per-MEMBER model parameters in the (N,B) megakernel. A `BatchedModel` carries per-member
+# override arrays (each length B); the kernel resolves the column's scalar model via `_resolve(m, i, b)` ---
+# the same seam Heterogeneous uses per-NEURON, here indexed by the batch column `b`. The connectome is the
+# single shared CSR, so memory stays O(edges) AND the dynamics are fused (one launch over (N,B)). ---
+struct BatchedModel{M <: AbstractNeuronModel, NT <: NamedTuple} <: AbstractNeuronModel
+    base::M
+    params::NT          # per-member override arrays, keyed by base field name (each length B)
+end
+Adapt.@adapt_structure BatchedModel                          # moves the per-member arrays to the device
+Base.Broadcast.broadcastable(bm::BatchedModel) = Ref(bm)
+statevars(::Type{BatchedModel{M, NT}}) where {M, NT} = statevars(M)
+float_type(bm::BatchedModel) = float_type(bm.base)
+_resting(bm::BatchedModel) = _resting(bm.base)
+@inline _is_hetero(::BatchedModel) = false                   # allowed in batched init; resolved per-column in the kernel
+
+# the per-column scalar model: rebuild `base` with the b-th value of each overridden field (`@generated` →
+# specialises per (base type, override keys), inlines to a plain isbits constructor; GPU-kernel-safe).
+@generated function _resolve_member(bm::BatchedModel{M, NT}, b) where {M, NT}
+    overkeys = NT.parameters[1]
+    args = map(fieldnames(M)) do f
+        f in overkeys ? :(@inbounds(bm.params.$f[b])) : :(getfield(bm.base, $(QuoteNode(f))))
+    end
+    return :($(M)($(args...)))
+end
+@inline _resolve(bm::BatchedModel, i, b) = _resolve_member(bm, b)
+@inline _resolve(bm::BatchedModel, i) = bm.base
+# 3-arg seam: a scalar / per-neuron model ignores the batch column (bit-identical to the prior 2-arg path).
+@inline _resolve(m::AbstractNeuronModel, i, b) = _resolve(m, i)
+
 # The batched fused dense step: deliver + drive + accumulate + membrane + decay + threshold +
 # reset + count for every (neuron,batch), in one launch over a 2-D (N,B) ndrange.
 @kernel function _batched_fused_kernel!(V, refrac, spiked, spike_count, input, syns, m, dt, n, drive, streams, noise, aux)
@@ -183,7 +214,7 @@ end
         itot = oftype(gtot, _binputval(input, i, b))
         v, gtot, itot = _bsyn_contribute(syns, i, b, n, v, gtot, itot)
         v += _bdrive_kick(drive, n, i, b, dt, streams)
-        m_i = _resolve(m, i)                 # per-neuron model (Phase 3); `= m` for a scalar model
+        m_i = _resolve(m, i, b)              # per-(neuron, member) model; `= m` for a scalar model
         # subthreshold (V, aux) advance + per-column SDE noise (refractory clamps V, no noise);
         # `aux` is `nothing` for a V-only model -> exactly the prior membrane_step (bit-identical).
         w0 = _aux_read(aux, i, b)
@@ -329,7 +360,7 @@ function _batched_propagate_step!(c::BatchedCompactionScratch, integ)
 end
 
 # --- Batched integrator (mutable cache; only n/t mutate) ---
-mutable struct BatchedIntegrator{M, ST, In, A, T, BL, C, SY, MO, DR, STR, CO, NO}
+mutable struct BatchedIntegrator{M, ST, In, A, T, BL, C, SY, MO, DR, STR, CO, NO, PG}
     const model::M
     const state::ST
     const input::In
@@ -348,6 +379,7 @@ mutable struct BatchedIntegrator{M, ST, In, A, T, BL, C, SY, MO, DR, STR, CO, NO
     const sync_every::Int        # periodic device sync cadence (0 = never; host reads still sync)
     const compaction::CO         # BatchedCompactionScratch (scatter = :compacted) or `nothing`
     const noise::NO              # WhiteNoise (SDE diffusion) or `nothing` (compiles away); see Noise.jl
+    const progress::PG           # the `progress` kwarg spec (:auto/Bool/String/Int); host-side, read by solve!
 end
 Adapt.@adapt_structure BatchedIntegrator
 
@@ -384,10 +416,12 @@ function _init_batched_voltage!(V, EL, v0::Tuple{<:Real, <:Real}, ::Type{T}, see
     return V
 end
 
-function _batched_init(prob::DewdropNetwork, alg::FixedStep, B::Int;
-        record = nothing, v0 = nothing, v0_seed::Unsigned = 0x5eed00d % UInt64,
+function _batched_init(
+        prob::DewdropNetwork, alg::FixedStep, B::Int;
+        record = nothing, v0 = nothing, v0_seed::Unsigned = 0x05eed00d % UInt64,
         input = nothing, streams = nothing, sync_every::Integer = _DEFAULT_WINDOW,
-        scatter::Symbol = :edge)
+        scatter::Symbol = :edge, progress = :auto
+    )
     arch = prob.arch
     T = float_type(prob.model)
     N = prob.n
@@ -403,10 +437,10 @@ function _batched_init(prob::DewdropNetwork, alg::FixedStep, B::Int;
     any(p -> p.plasticity !== nothing, prob.projections) &&
         throw(ArgumentError("STDP (plastic projections) are not yet supported in batched runs; run B sequential plastic solves instead"))
     state = batched_population(arch, prob.model, N, B)
-    _init_batched_voltage!(state.state.V, T(prob.model.EL), v0, T, v0_seed)
+    _init_batched_voltage!(state.state.V, T(_resting(prob.model)), v0, T, v0_seed)   # `_resting` handles BatchedModel (no `.EL`)
     spiked = fill!(allocate(arch, Bool, N, B), false)
     spike_count = fill!(allocate(arch, Int, N, B), 0)
-    syns = map(p -> _make_batched_synstate(arch, p.synapse, p.conn, T, N, B, dt), prob.projections)
+    syns = map(p -> _make_batched_synstate(arch, p.synapse, _resolve_delays(p.conn, dt), T, N, B, dt), prob.projections)
     inp = input === nothing ? prob.input : on_architecture(arch, to_current(input))
     str = on_architecture(arch, collect(Int, streams === nothing ? (0:(B - 1)) : streams))
     # guard the per-column data shapes against B (the kernel reads streams[b]/input[i,b] @inbounds)
@@ -420,7 +454,7 @@ function _batched_init(prob::DewdropNetwork, alg::FixedStep, B::Int;
         throw(ArgumentError("scatter must be :edge or :compacted (got :$scatter)"))
     return BatchedIntegrator(
         prob.model, state, inp, dt, 0, prob.tspan[1], prob.tspan[2], arch,
-        spiked, spike_count, syns, monitors, prob.drive, str, B, Int(sync_every), compaction, prob.noise,
+        spiked, spike_count, syns, monitors, prob.drive, str, B, Int(sync_every), compaction, prob.noise, progress,
     )
 end
 
@@ -447,9 +481,13 @@ function CommonSolve.step!(integ::BatchedIntegrator)
 end
 
 function CommonSolve.solve!(integ::BatchedIntegrator)
+    rep = _progress_reporter(integ.progress, _progress_total(integ))   # nothing ⇒ every hook no-ops
+    _progress_start!(rep)
     while integ.t < integ.tend - integ.dt / 2
         step!(integ)
+        _progress_step!(rep, integ.n)
     end
+    _progress_finish!(rep)
     _finalize_all!(integ.monitors)
     return BatchedSolution(integ)
 end

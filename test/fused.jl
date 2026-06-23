@@ -29,8 +29,8 @@ end
 
     @testset "delta multi-projection (E/I) + Poisson drive + monitors" begin
         m = LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 10.0, R = 1.0, tref = 2.0)
-        ce = fixed_prob(Dewdrop.CPU(), 120, 120, 0.1; weight = 0.5, delay = 5, seed = UInt64(1), sources = 1:90, allow_self = false)
-        ci = fixed_prob(Dewdrop.CPU(), 120, 120, 0.1; weight = -1.0, delay = 5, seed = UInt64(2), sources = 91:120, allow_self = false)
+        ce = fixed_prob(Dewdrop.CPU(), 120, 120, 0.1; weight = 0.5, delay = steps(5), seed = UInt64(1), sources = 1:90, allow_self = false)
+        ci = fixed_prob(Dewdrop.CPU(), 120, 120, 0.1; weight = -1.0, delay = steps(5), seed = UInt64(2), sources = 91:120, allow_self = false)
         prob = DewdropNetwork(m, 120; input = 0.0, tspan = (0.0, 80.0), arch = Dewdrop.CPU(),
             projections = (Projection(DeltaSynapse(), ce), Projection(DeltaSynapse(), ci)),
             drive = PoissonDrive(rate = 20.0, weight = 0.5, seed = UInt64(3)))
@@ -43,8 +43,8 @@ end
 
     @testset "COBA conductance synapses + randomized init" begin
         mc = LIF(; τ = 20.0, EL = -60.0, Vθ = -50.0, Vr = -60.0, R = 1.0, tref = 5.0)
-        ce = fixed_prob(Dewdrop.CPU(), 150, 150, 0.08; weight = 0.6, delay = 1, seed = UInt64(1), sources = 1:120)
-        ci = fixed_prob(Dewdrop.CPU(), 150, 150, 0.08; weight = 6.7, delay = 1, seed = UInt64(2), sources = 121:150)
+        ce = fixed_prob(Dewdrop.CPU(), 150, 150, 0.08; weight = 0.6, delay = steps(1), seed = UInt64(1), sources = 1:120)
+        ci = fixed_prob(Dewdrop.CPU(), 150, 150, 0.08; weight = 6.7, delay = steps(1), seed = UInt64(2), sources = 121:150)
         prob = DewdropNetwork(mc, 150; input = 0.0, tspan = (0.0, 120.0), arch = Dewdrop.CPU(),
             projections = (Projection(ConductanceSynapse(τ = 5.0, Erev = 0.0), ce),
                 Projection(ConductanceSynapse(τ = 10.0, Erev = -80.0), ci)),
@@ -56,7 +56,7 @@ end
 
     @testset "CUBA current synapse" begin
         m = LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 0.0, R = 1.0, tref = 1.0)
-        ce = fixed_prob(Dewdrop.CPU(), 80, 80, 0.1; weight = 1.2, delay = 3, seed = UInt64(4), allow_self = false)
+        ce = fixed_prob(Dewdrop.CPU(), 80, 80, 0.1; weight = 1.2, delay = steps(3), seed = UInt64(4), allow_self = false)
         prob = DewdropNetwork(m, 80; input = 0.0, tspan = (0.0, 60.0), arch = Dewdrop.CPU(),
             projection = Projection(CurrentSynapse(τ = 5.0), ce),
             drive = PoissonDrive(rate = 30.0, weight = 0.8, seed = UInt64(5)))
@@ -81,8 +81,8 @@ end
 # broadcast path even multi-threaded (exact weights ⇒ order-independent atomic scatter).
 @testset "native CPU step = :fused ≡ broadcast" begin
     m = LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 0.0, R = 1.0, tref = 2.0)
-    ce = fixed_prob(Dewdrop.CPU(), 160, 160, 0.1; weight = 0.5, delay = 5, seed = UInt64(1), sources = 1:120, allow_self = false)
-    ci = fixed_prob(Dewdrop.CPU(), 160, 160, 0.1; weight = -1.0, delay = 5, seed = UInt64(2), sources = 121:160, allow_self = false)
+    ce = fixed_prob(Dewdrop.CPU(), 160, 160, 0.1; weight = 0.5, delay = steps(5), seed = UInt64(1), sources = 1:120, allow_self = false)
+    ci = fixed_prob(Dewdrop.CPU(), 160, 160, 0.1; weight = -1.0, delay = steps(5), seed = UInt64(2), sources = 121:160, allow_self = false)
     prob = DewdropNetwork(m, 160; input = 0.0, tspan = (0.0, 100.0),
         projections = (Projection(DeltaSynapse(), ce), Projection(DeltaSynapse(), ci)),
         drive = PoissonDrive(rate = 20.0, weight = 0.5, seed = UInt64(3)))
