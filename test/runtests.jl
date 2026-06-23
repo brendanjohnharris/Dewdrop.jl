@@ -54,4 +54,5 @@ Dewdrop.set_advice!(false)   # silence the perf advisor during the suite; test/a
     include("brunel.jl")
     include("vogels_abbott.jl")
     include("wrcircuit.jl")         # WRCircuit end-to-end: spatial FNS E/I + dual-exp + fixed-count distance conn
+    include("spatialfns.jl")        # native spatial FNS constructor (BrainPy `Spatial` re-expressed; no Python)
 end

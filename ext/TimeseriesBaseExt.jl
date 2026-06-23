@@ -24,10 +24,18 @@ abstract type PopulationDim{T} <: ToolsDim{T} end
 DimensionalData.@dim Population PopulationDim "Population"
 
 # Expose the per-unit dims in Dewdrop's namespace (so `Dewdrop.Neuron(...)` / `import Dewdrop: Neuron`
-# work once TimeseriesBase is loaded). Done at load time, not precompile, to avoid mutating the
-# parent module during its precompilation. (`Var`/`Obs`/`𝑡` come from TimeseriesBase itself;
-# `Population` is referenced by symbol, see above.)
+# work once TimeseriesBase is loaded). Done at load time, not precompile, to avoid mutating the parent
+# module during its precompilation. (`Var`/`Obs`/`𝑡` come from TimeseriesBase itself; `Population` is
+# referenced by symbol, see above.)
+#
+# The `jl_generating_output` guard is load-bearing: when a DOWNSTREAM package that depends on both
+# Dewdrop and TimeseriesBase is precompiled, this ext's `__init__` runs while that package's output is
+# being generated, and evaluating into the (sealed) `Dewdrop` module then throws "Evaluation into the
+# closed module Dewdrop breaks incremental compilation". Skipping the injection during ANY precompile
+# output generation avoids that; the names are still injected at interactive/runtime load (when they
+# are actually used), and a downstream package that wants the `Neuron`/`Synapse` dims defines its own.
 function __init__()
+    ccall(:jl_generating_output, Cint, ()) == 1 && return nothing
     isdefined(Dewdrop, :Neuron) || Core.eval(Dewdrop, :(const Neuron = $Neuron))
     isdefined(Dewdrop, :Synapse) || Core.eval(Dewdrop, :(const Synapse = $Synapse))
     return nothing

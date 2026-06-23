@@ -186,7 +186,11 @@ Adapt.adapt_structure(to, integ::DewdropIntegrator) = DewdropIntegrator(
 function CommonSolve.init(prob::DewdropNetwork, alg::FixedStep;
         record = nothing, v0 = nothing, v0_seed::Unsigned = 0x5eed00d % UInt64,
         batch = nothing, input = nothing, streams = nothing, sync_every::Integer = _DEFAULT_WINDOW,
-        scatter::Symbol = :edge, backend::SimBackend = Auto(), step::Union{Nothing, Symbol} = nothing)
+        scatter::Symbol = :auto, backend::SimBackend = Auto(), step::Union{Nothing, Symbol} = nothing)
+    # `scatter = :auto` (default): on the GPU pick edge-parallel vs compacted from the connectome size
+    # (the L2-spill crossover, see `_resolve_scatter`); CPU / plastic projections → always `:edge`.
+    # Resolved BEFORE the batched dispatch so both the scalar and batched paths receive a concrete mode.
+    scatter = _resolve_scatter(scatter, prob.arch, prob.projections)
     # `batch = B` routes to the ensemble (tensor) batched path (src/Batch.jl); the scalar B=1
     # path below is unchanged (batch defaults to `nothing`), so existing runs are bit-identical.
     # (the batched path is always the fused megakernel, so the backend does not apply there.)
@@ -236,12 +240,36 @@ function CommonSolve.init(prob::DewdropNetwork, alg::FixedStep;
     )
 end
 
-# `scatter = :edge` (default) → the edge-parallel scatter (no per-step sync); `:compacted` → the
-# compacted device fast path (src/Compaction.jl), allocating the per-step active-neuron scratch.
+# `:edge` → the edge-parallel scatter (no per-step sync); `:compacted` → the compacted device fast path
+# (src/Compaction.jl), allocating the per-step active-neuron scratch. `:auto` is resolved to one of these
+# in `init` (see `_resolve_scatter`) before this is reached.
 _make_compaction(scatter::Symbol, arch, N) =
     scatter === :compacted ? CompactionScratch(arch, N) :
     scatter === :edge ? nothing :
-    throw(ArgumentError("scatter must be :edge or :compacted (got :$scatter)"))
+    throw(ArgumentError("scatter must be :edge, :compacted or :auto (got :$scatter)"))
+
+# Default GPU L2 cache size (bytes) when the device can't be queried (CUDA unloaded / older driver); the
+# CUDA extension overrides `_l2_cache_bytes(::GPU)` with the real device attribute.
+const _DEFAULT_L2_BYTES = 40 * 1024 * 1024
+_l2_cache_bytes(::AbstractArchitecture) = _DEFAULT_L2_BYTES
+
+# Resolve `scatter = :auto`. The fused GPU edge-parallel scatter reads one source index PER EDGE every
+# step (Θ(nedges) memory traffic, independent of how few neurons fire), so once the connectome's index
+# array spills the L2 cache the step becomes bandwidth-bound and scales with edge count --- a large GPU
+# network degrades superlinearly. The compacted scatter (Compaction.jl) touches only ACTIVE sources
+# (work ∝ spikes, for the usual sparse firing), winning past that crossover despite its per-step host
+# sync. So: CPU → always `:edge` (the CPU scatter already walks only spiking rows --- compaction has no
+# upside and adds a compactify pass); plastic projections → `:edge` (the compacted scatter cannot drive
+# STDP potentiation); GPU → `:compacted` once the index footprint exceeds ~half the L2 (calibrated to the
+# measured ~1.3e7-edge / 96 MB-L2 crossover), else `:edge`. The firing rate is unknown at init, so this
+# assumes the sparse-firing regime typical of SNNs --- force a mode (`scatter = :edge` / `:compacted`)
+# for a dense large GPU network.
+function _resolve_scatter(scatter::Symbol, arch::AbstractArchitecture, projections)
+    scatter === :auto || return scatter
+    (arch isa GPU && !isempty(projections) && all(p -> p.plasticity === nothing, projections)) || return :edge
+    src_bytes = sum(p -> nedges(p.conn) * sizeof(eltype(p.conn.src)), projections; init = 0)
+    return src_bytes > _l2_cache_bytes(arch) ÷ 2 ? :compacted : :edge
+end
 
 # Guard the Poisson drive against the sampler's underflow cliff: `poisson_count` inverts the
 # CDF from `exp(-λ)`, which underflows to 0 for λ ≳ 745 and then silently returns the iteration
@@ -328,7 +356,18 @@ end
 @inline _decay_all!(::Tuple{}) = nothing
 @inline _decay_all!(s::Tuple) = (_decay!(first(s)); _decay_all!(Base.tail(s)))
 
+# Once-per-step GLOBAL synapse hook, run at the very start of the step in EVERY backend (before any
+# per-neuron synaptic work). The default is a no-op (compiles away for ordinary synapses, so the step
+# stays bit-identical and dispatch-free); a streaming drive overrides it to GENERATE + SCATTER its own
+# events each step (the external Poisson population, with no precomputed (N×nsteps) matrix). It is kept
+# distinct from `_deliver!` because the Fused/megakernel path fuses delivery into the per-neuron
+# `_syn_one` and never calls `_deliver!`, yet a global once-per-step generator still needs a home there.
+@inline _synprestep!(::AbstractSynapseState, integ) = nothing
+@inline _synprestep_all!(::Tuple{}, integ) = nothing
+@inline _synprestep_all!(s::Tuple, integ) = (_synprestep!(first(s), integ); _synprestep_all!(Base.tail(s), integ))
+
 @inline function run_phase!(::Val{:deliver}, integ::DewdropIntegrator)
+    _synprestep_all!(integ.syns, integ)                    # streaming drives generate + scatter their own events
     _deliver_all!(integ.syns, integ)                       # ring-buffer due → per-projection state (or V, for delta)
     _apply_drive!(integ.drive, integ)                      # external Poisson kicks → V
     return nothing

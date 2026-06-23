@@ -72,7 +72,10 @@ function _advise_runtime(prob::DewdropNetwork, frac::Real)
     ne = _total_edges(prob)
     md = _mean_degree(prob)
     pct = round(frac * 100; digits = 2)
-    if ne > 1_000_000 && frac < 0.02
+    # only suggest compaction if the default `scatter = :auto` did NOT already select it for this network
+    # (past the L2-spill crossover it is automatic, so the hint would be redundant); below that crossover
+    # the connectome is L2-resident and the edge scatter's no-sync launch is the right pick.
+    if ne > 1_000_000 && frac < 0.02 && _resolve_scatter(:auto, prob.arch, prob.projections) === :edge
         _emit(:compaction,
             "sparse firing ($(pct)% of neurons per step) over a large network " *
             "(nedges = $ne): the scatter wastes most of its threads on silent synapses. The " *

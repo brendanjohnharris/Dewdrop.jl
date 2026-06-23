@@ -45,5 +45,6 @@ include("Builder.jl")
 include("FFT.jl")               # self-contained DFT/FFT for the spectral observables
 include("Stats.jl")             # statistical observables (WRCircuit stats.py ports; host-side analysis)
 include("WRCircuit.jl")         # WRCircuit reproduction: frozen-COBA + prescribed synapses + native builder
+include("SpatialFNS.jl")        # native spatial FNS "working-regime" constructor (BrainPy `Spatial`, no Python)
 
 end # module Dewdrop

@@ -50,3 +50,5 @@ an `@neuron` macro, and labeled outputs are in progress.
 
 The design is CPU-first with GPU-readiness enforced in CI (via `JLArrays` +
 `allowscalar(false)`); the test suite is Aqua- and JET-clean.
+
+![simulator_comparisons](comparison.png)

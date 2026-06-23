@@ -101,7 +101,7 @@ end
 # megakernel (`_fused_kernel!` below, one thread per neuron) AND the CPU tight loop (`_tight_step!`,
 # a plain Julia `for`/`@threads` loop). Each neuron writes only its own state, so the loop is
 # embarrassingly parallel → bit-identical regardless of thread count or driver.
-@inline function _fused_unit!(V, refrac, spiked, spike_count, input, syns, m, dt, n, drive, noise, aux, i)
+@inline function _fused_unit!(V, refrac, spiked, spike_count, input, itotarr, gtotarr, syns, m, dt, n, drive, noise, aux, i)
     @inbounds begin
         v = V[i]
         r = refrac[i]
@@ -110,6 +110,11 @@ end
         itot = oftype(gtot, _inputval(input, i))
         # synaptic deliver + accumulate + decay (delta also kicks `v`), then external drive
         v, gtot, itot = _syn_contribute(syns, i, n, v, gtot, itot)
+        # materialise the membrane accumulators so `Trace(:itot)`/`Trace(:gtot)` record real values under
+        # the fused/GPU path too (bit-identical to what the Serial `_accum_all!` writes); one store each,
+        # negligible against the membrane `exp`.
+        itotarr[i] = itot
+        gtotarr[i] = gtot
         v += _drive_kick(drive, n, i, dt)
         # resolve the per-neuron model (Phase 3): `_resolve(m, i) = m` for a scalar model (bit-identical),
         # the i-th override values for a Heterogeneous one.
@@ -136,10 +141,10 @@ end
 
 # The GPU megakernel: one thread per neuron, `offset` shifts a group's launch into its flat range.
 # (`@index(Global)` on its own line --- inlining the `+ offset` breaks KA's cartesian-context macro.)
-@kernel function _fused_kernel!(V, refrac, spiked, spike_count, input, syns, m, dt, n, drive, noise, aux, offset)
+@kernel function _fused_kernel!(V, refrac, spiked, spike_count, input, itotarr, gtotarr, syns, m, dt, n, drive, noise, aux, offset)
     g = @index(Global)
     i = g + offset
-    _fused_unit!(V, refrac, spiked, spike_count, input, syns, m, dt, n, drive, noise, aux, i)
+    _fused_unit!(V, refrac, spiked, spike_count, input, itotarr, gtotarr, syns, m, dt, n, drive, noise, aux, i)
 end
 
 # Launch the fused kernel (no synchronisation --- it pipelines with the scatter and monitors on
@@ -166,7 +171,7 @@ end
 end
 @inline function _launch_group!(backend, m, integ, st, offset::Int, len::Int)
     _fused_kernel!(backend)(
-        st.V, st.refrac, integ.spiked, integ.spike_count, integ.input,
+        st.V, st.refrac, integ.spiked, integ.spike_count, integ.input, integ.itot, integ.gtot,
         integ.syns, m, integ.dt, integ.n, integ.drive, integ.noise, _aux_col(st, m), offset;
         ndrange = len,
     )
@@ -184,6 +189,7 @@ end
 # One fused device step: dense megakernel → sparse scatter → monitors (the count is already in
 # the megakernel, so `:record` here is just the monitors).
 function _fused_step!(integ::DewdropIntegrator)
+    _synprestep_all!(integ.syns, integ)         # streaming drives (host-side; the fused path has no global :deliver)
     _launch_fused!(integ)
     _propagate_step!(integ.compaction, integ)   # edge-parallel, or compacted if scatter = :compacted
     _record_all!(integ.monitors, integ)
@@ -197,6 +203,7 @@ end
 # threaded atomic scatter is order-dependent, unchanged). One range per group (MultiModel).
 function _tight_step!(integ::DewdropIntegrator)
     st = integ.state.state
+    _synprestep_all!(integ.syns, integ)         # streaming drives (the fused tight loop has no global :deliver)
     _tight_groups!(integ.model, integ, st)
     _propagate_step!(integ.compaction, integ)
     _record_all!(integ.monitors, integ)
@@ -220,14 +227,15 @@ const _TIGHT_MIN_PER_THREAD = 256
 function _tight_range!(m, integ::DewdropIntegrator, st, lo::Int, hi::Int)
     V, refrac, spiked, spike_count = st.V, st.refrac, integ.spiked, integ.spike_count
     input, syns, dt, n = integ.input, integ.syns, integ.dt, integ.n
+    itotarr, gtotarr = integ.itot, integ.gtot
     drive, noise, aux = integ.drive, integ.noise, _aux_col(st, m)
     if Threads.nthreads() > 1 && (hi - lo + 1) ≥ Threads.nthreads() * _TIGHT_MIN_PER_THREAD
         Threads.@threads for i in lo:hi
-            _fused_unit!(V, refrac, spiked, spike_count, input, syns, m, dt, n, drive, noise, aux, i)
+            _fused_unit!(V, refrac, spiked, spike_count, input, itotarr, gtotarr, syns, m, dt, n, drive, noise, aux, i)
         end
     else
         @inbounds for i in lo:hi
-            _fused_unit!(V, refrac, spiked, spike_count, input, syns, m, dt, n, drive, noise, aux, i)
+            _fused_unit!(V, refrac, spiked, spike_count, input, itotarr, gtotarr, syns, m, dt, n, drive, noise, aux, i)
         end
     end
     return nothing

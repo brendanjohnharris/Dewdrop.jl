@@ -128,22 +128,22 @@ function _check_backend(b::SimBackend, prob)
     return nothing
 end
 
-# The dense membrane accumulators `:gtot`/`:itot` are materialised into `integ.gtot`/`integ.itot` ONLY
-# by the Serial broadcast and Turbo paths (`_accum_all!`). The fused tight loop / GPU megakernel compute
-# them per-neuron IN-KERNEL and never write them back, so a `Trace(:gtot)`/`Trace(:itot)` there would
-# silently record zeros (the batched path errors on this too, see Batch.jl). Reject it with a clear
-# pointer rather than return wrong data. Synaptic state (`Trace(:g_decay; projection = i)`) is
-# materialised on every backend, so it is the portable way to record a conductance.
-@inline _populates_accum(b::SimBackend) = (b isa Serial) || (b isa Turbo)
+# The dense membrane accumulators `:gtot`/`:itot` are materialised into `integ.gtot`/`integ.itot` by the
+# Serial/Turbo paths (`_accum_all!`) AND by the fused tight loop / GPU megakernel (`_fused_unit!` writes
+# the per-neuron values back before the membrane step). The ensemble-BATCHED path is the exception (it
+# keeps them per-lane in registers; Batch.jl errors there). Reject recording them on a backend that
+# would leave them zero, with a clear pointer, rather than return wrong data. Synaptic state
+# (`Trace(:g_decay; projection = i)`) is materialised on every backend regardless.
+@inline _populates_accum(b::SimBackend) = (b isa Serial) || (b isa Turbo) || (b isa Fused)
 function _check_accum_record(bk::SimBackend, record)
     (record === nothing || _populates_accum(bk)) && return nothing
     for spec in values(record)
         if spec isa Trace && spec.projection === nothing && spec.var in (:gtot, :itot)
             throw(ArgumentError(
-                "Trace(:$(spec.var)) requires `backend = Serial()` (or Turbo): the fused/GPU step " *
-                "computes the $(spec.var) accumulator per-neuron in-kernel and never materialises it, " *
-                "so recording it here would silently return zeros. Pass `backend = Serial()`, or record " *
-                "a synaptic variable instead, e.g. `Trace(:g_decay; projection = i)`."))
+                "Trace(:$(spec.var)) is not materialised by backend = $(nameof(typeof(bk)))(): that step " *
+                "keeps the $(spec.var) accumulator per-lane and never writes it back, so recording it " *
+                "here would silently return zeros. Use backend = Serial()/Fused(), or record a synaptic " *
+                "variable instead, e.g. `Trace(:g_decay; projection = i)`."))
         end
     end
     return nothing
