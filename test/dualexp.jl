@@ -53,10 +53,20 @@ end
         sources = 1:1, targets = 2:2)
     prob = DewdropNetwork(m, 2; input = [20.0, 0.0], tspan = (0.0, 300.0),
         projection = Projection(DualExpSynapse(; τr = 1.0, τd = 5.0, Erev = 0.0), edge))
-    sol = solve(prob, FixedStep(dt); record = (V = Trace(:V), g = Trace(:gtot)))
+    # record the dual-exp conductance from the SYNAPSE STATE (`g_decay`), materialised on every backend,
+    # rather than the `:gtot` membrane accumulator (only Serial/Turbo write `integ.gtot`; the default
+    # fused/GPU step computes it per-neuron in-kernel, so recording `:gtot` there would silently return
+    # zeros — now a clear error, mirroring the batched path).
+    sol = solve(prob, FixedStep(dt); record = (V = Trace(:V), g = Trace(:g_decay; projection = 1)))
     @test sum(sol.spike_count) > 0                  # neuron 1 fires, drives neuron 2
-    @test maximum(sol.record.g.data[2, :]) > 0      # conductance delivered to neuron 2
+    @test maximum(sol.record.g.data[2, :]) > 0      # dual-exp conductance delivered to neuron 2
     @test mean(sol.record.V.data[2, :]) > m.EL      # neuron 2 depolarised above rest by excitation
+
+    # the `:gtot` membrane accumulator is kernel-local on the default fused backend → rejected with a
+    # clear pointer; it works on the Serial broadcast path (which materialises `integ.gtot`).
+    @test_throws ArgumentError solve(prob, FixedStep(dt); record = (g = Trace(:gtot),))
+    solS = solve(prob, FixedStep(dt); backend = Serial(), record = (g = Trace(:gtot),))
+    @test maximum(solS.record.g.data[2, :]) > 0
 end
 
 @testset "dual-exp COBA: CPU broadcast ≡ JLArray fused" begin

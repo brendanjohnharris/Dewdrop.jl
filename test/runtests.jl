@@ -41,6 +41,7 @@ Dewdrop.set_advice!(false)   # silence the perf advisor during the suite; test/a
     include("backends.jl")          # execution backends: Auto/Serial/Fused/Turbo selection + dispatch
     include("fused.jl")             # M6 fused megakernel ≡ broadcast (JLArrays, no GPU needed)
     include("turbo.jl")             # Turbo backend (LoopVectorization ext) ≡ Serial spike-identical; loads the ext
+    include("differentiable.jl")    # Differentiable backend (surrogate-gradient): ForwardDiff gradient ≡ finite-diff, trains
     include("batch.jl")             # ensemble (tensor) batching ≡ scalar oracle (CPU + JLArrays)
     include("compaction.jl")        # compacted scatter ≡ edge/CPU reference (JLArrays, no GPU needed)
     include("cuda.jl")              # arch-seam check always; device sims guarded by CUDA.functional()

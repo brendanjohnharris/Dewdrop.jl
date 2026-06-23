@@ -54,6 +54,8 @@ pages = [
     "Guide" => [
         "Choosing a backend" => "guide/backends.md",
         "Turbo & model specialization" => "guide/turbo.md",
+        "Differentiable simulation & training" => "guide/training.md",
+        "Reproducing the WRCircuit (BrainPy)" => "guide/wrcircuit.md",
     ],
     "Reference" => "reference.md",
 ]

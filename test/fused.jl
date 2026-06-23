@@ -60,7 +60,7 @@ end
         prob = DewdropNetwork(m, 80; input = 0.0, tspan = (0.0, 60.0), arch = Dewdrop.CPU(),
             projection = Projection(CurrentSynapse(τ = 5.0), ce),
             drive = PoissonDrive(rate = 30.0, weight = 0.8, seed = UInt64(5)))
-        c, g = _cpu_vs_fused(prob, FixedStep(0.1); record = (spikes = Spikes(), I = Trace(:itot)))
+        c, g = _cpu_vs_fused(prob, FixedStep(0.1); record = (spikes = Spikes(),))
         @test Array(g.spike_count) == c.spike_count
         @test g.record.spikes.data == c.record.spikes.data
     end

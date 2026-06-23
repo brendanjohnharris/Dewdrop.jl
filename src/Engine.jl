@@ -196,6 +196,7 @@ function CommonSolve.init(prob::DewdropNetwork, alg::FixedStep;
     # available for this problem; the deprecated `step::Symbol` (:auto/:fused/…) maps onto a backend.
     bk = _resolve_backend(step === nothing ? backend : _step_to_backend(step), prob)
     _check_backend(bk, prob)
+    _check_accum_record(bk, record)        # :gtot/:itot recording needs a backend that materialises them
     arch = prob.arch
     T = float_type(prob.model)
     N = prob.n
@@ -210,8 +211,12 @@ function CommonSolve.init(prob::DewdropNetwork, alg::FixedStep;
         throw(ArgumentError("Heterogeneous / MultiModel models require the canonical schedule (they run via the fused per-neuron step)"))
     state = Population(arch, prob.model, N)                 # type-stable (names from model type)
     _init_voltage_model!(state.state.V, prob.model, v0, T, v0_seed)   # refrac stays 0; per-group EL via _resting
-    spiked = fill!(allocate(arch, Bool, N), false)
-    spike_count = fill!(allocate(arch, Int, N), 0)
+    # `spiked`/`spike_count` eltype is Bool/Int for every backend (bit-identical), except the
+    # `Differentiable` backend, which accumulates a REAL-valued surrogate spike (eltype = state float).
+    ST = _spiked_eltype(bk, T)
+    CT = _count_eltype(bk, T)
+    spiked = fill!(allocate(arch, ST, N), zero(ST))
+    spike_count = fill!(allocate(arch, CT, N), zero(CT))
     # plastic projections (STDP) build a PlasticState (mutable weights + traces); static ones the
     # base synapse state. The compacted scatter walks active SOURCES only, so it cannot drive STDP's
     # postsynaptic-potentiation branch --- plastic projections require the edge scatter.

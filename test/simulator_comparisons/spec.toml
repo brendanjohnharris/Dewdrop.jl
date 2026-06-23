@@ -13,7 +13,7 @@ dt = 0.1                  # integration step (ms)
 T = 500.0                 # duration for the throughput runs (ms)
 T_correctness = 1000.0    # duration for the statistics (rate, CV-ISI) run (ms)
 # A doubling range (one point per octave) so the throughput scan reveals SCALING behaviour (log-log).
-Ns = [2000, 4000, 8000, 16000, 32000, 64000, 128000]
+Ns = [2000, 4000, 8000, 16000, 32000, 64000, 128000, 256000, 512000]
 N_correctness = 8000      # network size for the statistics run
 
 [network]

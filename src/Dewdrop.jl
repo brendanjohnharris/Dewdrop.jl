@@ -36,6 +36,7 @@ include("Backends.jl")          # execution backends (Auto/Serial/Fused/Turbo) â
 include("Engine.jl")
 include("Fused.jl")
 include("Compaction.jl")
+include("Differentiable.jl")    # surrogate-gradient backend (autodiff-able CPU step); after Fused/Compaction
 include("Batch.jl")
 include("Plasticity.jl")
 include("Advisor.jl")
@@ -43,5 +44,6 @@ include("Macro.jl")
 include("Builder.jl")
 include("FFT.jl")               # self-contained DFT/FFT for the spectral observables
 include("Stats.jl")             # statistical observables (WRCircuit stats.py ports; host-side analysis)
+include("WRCircuit.jl")         # WRCircuit reproduction: frozen-COBA + prescribed synapses + native builder
 
 end # module Dewdrop

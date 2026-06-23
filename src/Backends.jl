@@ -46,7 +46,36 @@ spike-identical but not bit-reproducible (hence opt-in, never an `Auto` default)
 """
 struct Turbo <: SimBackend end
 
-export SimBackend, Auto, Serial, Fused, Turbo
+"""
+    Differentiable(; β = 10)
+
+A surrogate-gradient execution backend that makes a CPU run **automatically differentiable**: it
+replaces the discontinuous spike (hard threshold + reset + integer count) with a smooth fast-sigmoid
+surrogate `s = 1 / (1 + exp(-β·(V - Vθ)))`, a soft reset `V ← V - s·(V - Vr)`, and a real-valued spike
+accumulation. Everything else — the exact subthreshold propagator, the counter-based RNG — differentiates
+as-is, so gradients of a scalar loss flow back to the model parameters through the whole time loop. Pair
+it with any AD tool: `ForwardDiff` for a few parameters, `Enzyme` reverse-mode for many (e.g. weights).
+
+`β` is the surrogate steepness (larger → closer to the true Heaviside, but stiffer gradients). The
+gradients are *approximate* gradients of the true discrete dynamics (standard surrogate-gradient
+training), so this is a distinct numerical path you opt into — every other backend is unaffected and
+stays bit-identical. CPU-only and single-population for now; synaptic-weight training (a
+surrogate-weighted scatter) and a GPU path are the documented next steps.
+"""
+struct Differentiable{T <: Real} <: SimBackend
+    β::T
+end
+Differentiable(; β::Real = 10) = Differentiable(float(β))
+
+export SimBackend, Auto, Serial, Fused, Turbo, Differentiable
+
+# The differentiable backend accumulates a REAL-valued surrogate spike, so `spiked` / `spike_count`
+# take the state float type instead of `Bool` / `Int`. Every other backend keeps `Bool` / `Int`, so the
+# default allocation — and therefore every existing run — is byte-for-byte unchanged.
+@inline _spiked_eltype(::SimBackend, ::Type{T}) where {T} = Bool
+@inline _spiked_eltype(::Differentiable, ::Type{T}) where {T} = T
+@inline _count_eltype(::SimBackend, ::Type{T}) where {T} = Int
+@inline _count_eltype(::Differentiable, ::Type{T}) where {T} = T
 
 # --- resolution: Auto → a concrete backend for this problem; explicit backends pass through ---
 @inline _resolve_backend(b::SimBackend, prob) = b
@@ -96,5 +125,38 @@ function _check_backend(b::SimBackend, prob)
         supports_turbo(typeof(prob.model)) ||
             throw(ArgumentError("model $(typeof(prob.model)) has no Turbo specialization (define `Dewdrop.turbo_kernel(::Type{$(nameof(typeof(prob.model)))})`, or use Fused())"))
     end
+    return nothing
+end
+
+# The dense membrane accumulators `:gtot`/`:itot` are materialised into `integ.gtot`/`integ.itot` ONLY
+# by the Serial broadcast and Turbo paths (`_accum_all!`). The fused tight loop / GPU megakernel compute
+# them per-neuron IN-KERNEL and never write them back, so a `Trace(:gtot)`/`Trace(:itot)` there would
+# silently record zeros (the batched path errors on this too, see Batch.jl). Reject it with a clear
+# pointer rather than return wrong data. Synaptic state (`Trace(:g_decay; projection = i)`) is
+# materialised on every backend, so it is the portable way to record a conductance.
+@inline _populates_accum(b::SimBackend) = (b isa Serial) || (b isa Turbo)
+function _check_accum_record(bk::SimBackend, record)
+    (record === nothing || _populates_accum(bk)) && return nothing
+    for spec in values(record)
+        if spec isa Trace && spec.projection === nothing && spec.var in (:gtot, :itot)
+            throw(ArgumentError(
+                "Trace(:$(spec.var)) requires `backend = Serial()` (or Turbo): the fused/GPU step " *
+                "computes the $(spec.var) accumulator per-neuron in-kernel and never materialises it, " *
+                "so recording it here would silently return zeros. Pass `backend = Serial()`, or record " *
+                "a synaptic variable instead, e.g. `Trace(:g_decay; projection = i)`."))
+        end
+    end
+    return nothing
+end
+
+function _check_backend(b::Differentiable, prob)
+    prob.arch isa GPU &&
+        throw(ArgumentError("backend = Differentiable() is CPU-only for now (a GPU surrogate-AD path is the documented next step); run the forward pass on the GPU with Fused()"))
+    prob.schedule == default_schedule() ||
+        throw(ArgumentError("backend = Differentiable() requires the canonical schedule"))
+    isempty(prob.projections) ||
+        throw(ArgumentError("backend = Differentiable() currently supports unconnected populations only; synaptic-weight training needs a surrogate-weighted scatter (the next step)"))
+    _is_hetero(prob.model) &&
+        throw(ArgumentError("backend = Differentiable() does not yet support Heterogeneous / MultiModel models"))
     return nothing
 end
