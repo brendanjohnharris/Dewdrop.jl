@@ -15,13 +15,17 @@
 line_positions(n::Integer; spacing = 1.0) = [(spacing * (i - 1),) for i in 1:n]
 
 """
-    grid_positions(nx, ny; spacing=1.0)
+    grid_positions(nx, ny; spacing=1.0, centered=false)
 
 `nx*ny` neurons on a rectangular grid (x varies fastest: neuron `(j-1)*nx + i` sits at
-`((i-1)·spacing, (j-1)·spacing)`).
+`((i-1)·spacing, (j-1)·spacing)`). With `centered=true` the points are cell-centred ---
+`((i-0.5)·spacing, (j-0.5)·spacing)` --- tiling `[0, nx·spacing] × [0, ny·spacing]` symmetrically,
+the convention for a periodic box (e.g. a spatial E/I sheet).
 """
-grid_positions(nx::Integer, ny::Integer; spacing = 1.0) =
-    [(spacing * (i - 1), spacing * (j - 1)) for j in 1:ny for i in 1:nx]
+function grid_positions(nx::Integer, ny::Integer; spacing = 1.0, centered::Bool = false)
+    centered || return [(spacing * (i - 1), spacing * (j - 1)) for j in 1:ny for i in 1:nx]
+    return [(spacing * (i - 0.5), spacing * (j - 0.5)) for j in 1:ny for i in 1:nx]
+end
 
 """
     ring_positions(n; radius=1.0)

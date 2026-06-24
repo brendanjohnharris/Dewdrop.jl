@@ -124,6 +124,11 @@ npre(c::SparseCSR) = c.npre
 npost(c::SparseCSR) = c.npost
 nedges(c::SparseCSR) = length(c.post)
 
+# An empty (0-edge) CSR over the whole network, for projections whose contribution is not network-spike
+# driven (a prescribed/streaming external drive): makes the per-step network scatter a no-op while
+# satisfying the synapse-state interface (the real wiring, if any, lives inside the synapse model).
+_empty_csr(arch, N) = SparseCSR(arch, Tuple{Int, Int, Float64, Int}[]; npre = N, npost = N)
+
 """
     _resolve_delays(conn, dt) -> SparseCSR
 
@@ -151,6 +156,62 @@ event-driven scatter touches only a spiking neuron's own row.
     end
     return nothing
 end
+
+"""
+    correlate_weights!(conn, J; targets = 1:npost(conn), jitter = 0.05, seed) -> conn
+
+Rescale a connectome's weights in place to **in-degree-normalised** values --- the standard
+balanced-network `1/√k` scaling. Each edge into post-neuron `p` gets mean weight `wₘ = J_rec / √k[p]`
+(with `k[p]` the in-degree of `p` over `targets`), plus a relative Gaussian jitter `N(0,1)·jitter·wₘ`
+drawn reproducibly from the counter RNG keyed by edge index and `seed`. The recurrent scale is
+
+    J_rec = J · Σ k[p] / Σ √k[p]      (both sums over connected targets, k[p] ≥ 1)
+
+so a uniformly-connected target population (all `k[p] = k`) gives every weight ≈ `J`. A zero-in-degree
+target receives no recurrent input and contributes nothing to the scale, so `J_rec` is set by the
+connected sub-population alone --- unaffected by isolated neurons. (BrainPy's vectorised `√max(k,1)`
+instead adds 1 per empty target, shrinking every weight; that matters only for sparse graphs and is a
+no-op when every target is wired, as in `spatial_fns`.) `targets` is the post sub-population the
+in-degrees are counted over (a contiguous global-index range), so a projection into a sub-population
+normalises against that sub-population. Mutates `conn.weight` host-side; reproducible from the seed.
+"""
+function correlate_weights!(conn::SparseCSR, J::Real; targets = 1:npost(conn),
+        jitter::Real = 0.05, seed::Unsigned)
+    lo = first(targets)
+    n = length(targets)
+    k = zeros(Int, n)
+    @inbounds for p in conn.post
+        k[Int(p) - lo + 1] += 1
+    end
+    sum_k = 0.0
+    sum_sqrt = 0.0
+    @inbounds for kk in k
+        if kk > 0                    # empty target (k=0) receives no recurrent input → contributes nothing
+            sum_k += kk
+            sum_sqrt += sqrt(kk)
+        end
+    end
+    J_rec = sum_sqrt > 0 ? J * sum_k / sum_sqrt : 0.0
+    w = conn.weight
+    T = eltype(w)
+    @inbounds for e in eachindex(conn.post)
+        wm = J_rec / sqrt(k[Int(conn.post[e]) - lo + 1])
+        w[e] = T(wm + draw_normal(Float64, seed, e, 0) * jitter * wm)
+    end
+    return conn
+end
+export correlate_weights!
+
+"""
+    correlate_weights(J; jitter = 0.05, seed) -> adjuster
+
+Curried [`correlate_weights!`](@ref) for the builder's `adjust` hook:
+`project!(…; adjust = correlate_weights(J; seed))`. The hook supplies the projection's resolved
+destination range, so the in-degree normalisation is taken over the actual post sub-population.
+"""
+correlate_weights(J::Real; jitter::Real = 0.05, seed::Unsigned) =
+    (conn, ctx) -> correlate_weights!(conn, J; targets = ctx.targets, jitter = jitter, seed = seed)
+export correlate_weights
 
 """
     fixed_prob(arch, npre, npost, p; weight, delay, seed, allow_self=true, sources=1:npre, targets=1:npost)

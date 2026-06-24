@@ -146,9 +146,7 @@ end
 end
 
 # --- Native WRCircuit builder ------------------------------------------------------------------
-# An empty (0-edge) CSR over the whole network, for projections whose contribution is not spike-driven
-# (the prescribed external drive); makes the per-step scatter a no-op while satisfying the interface.
-_empty_csr(arch, N) = SparseCSR(arch, Tuple{Int, Int, Float64, Int}[]; npre = N, npost = N)
+# (`_empty_csr` --- the 0-edge interface CSR for non-spike-driven projections --- now lives in Connectivity.jl.)
 
 """
     wrcircuit(; NE, NI, E, I, projections, gext=nothing, positions=nothing, tspan, arch=CPU())

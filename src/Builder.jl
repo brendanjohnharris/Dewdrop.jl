@@ -138,6 +138,23 @@ function drive!(nb::NetworkBuilder, target::Symbol, drive)
     nb.drive = drive
     return nb
 end
+
+"""
+    drive!(nb, target, synapse; rate, n_ext, p, weight=1.0, delay=1.0, seed, adjust=nothing) -> nb
+
+Attach a streaming external Poisson drive to the `target` sub-population: `n_ext` virtual Poisson sources
+(rate `rate` Hz) wired to `target` by `fixed_prob(p)`, delivering through any `synapse` model (the
+postsynaptic kinetics). Appended as a drive projection --- a [`PoissonSource`](@ref) over an empty outer
+CSR --- materialised at [`build`](@ref) once `target`'s global range is known. `adjust` (e.g.
+[`correlate_weights`](@ref)) optionally rescales the external weights.
+"""
+function drive!(nb::NetworkBuilder, target::Symbol, synapse::AbstractSynapseModel;
+        rate, n_ext::Integer, p::Real, weight = 1.0, delay = 1.0, seed = 0x9e3779b97f4a7c15, adjust = nothing)
+    push!(nb.projspecs, _ProjSpec(:__poisson__, target, synapse,
+        (; rate = rate, n_ext = Int(n_ext), p = p, weight = weight, delay = delay,
+            seed = seed % UInt64, adjust = adjust), nothing))
+    return nb
+end
 export drive!
 
 # --- model merge ------------------------------------------------------------------------------
@@ -184,6 +201,7 @@ end
 
 # build one projection's connectivity from its spec, resolving src/dst names against the registry.
 function _build_projection(spec::_ProjSpec, reg::NamedTuple, positions, arch, N::Int)
+    spec.src === :__poisson__ && return _build_drive(spec, reg, arch, N)   # targeted Poisson drive
     sources = _subrange(reg, spec.src)
     targets = _subrange(reg, spec.dst)
     kw = spec.kw
@@ -205,11 +223,32 @@ function _build_projection(spec::_ProjSpec, reg::NamedTuple, positions, arch, N:
             allow_self = get(kw, :allow_self, false), sources = sources, targets = targets)
     end
     # optional post-build hook: `project!(…; adjust = conn -> …)` runs over the materialised connectivity
-    # (e.g. in-degree-scaled / spatially-correlated weights) --- the builder analogue of `_correlate_weights!`.
+    # (e.g. in-degree-scaled / spatially-correlated weights). A 2-arg adjuster `(conn, ctx)` additionally
+    # receives the projection's resolved `(; sources, targets)` ranges --- e.g. `correlate_weights`, which
+    # normalises the in-degree over the destination sub-population.
     adj = get(kw, :adjust, nothing)
-    adj === nothing || adj(conn)
+    adj === nothing || _apply_adjust(adj, conn, sources, targets)
     return Projection(spec.synapse, conn; plasticity = spec.plasticity)
 end
+
+# Materialise a targeted Poisson drive spec (`drive!(nb, target, synapse; …)`, marked `src = :__poisson__`)
+# into a drive projection: build the `n_ext × N` external connectome into the destination sub-population's
+# global range, optionally rescale its weights (`adjust`), and wrap a `PoissonSource` over the chosen synapse
+# with an empty outer CSR (so the network scatter is a no-op; the wiring lives inside the source).
+function _build_drive(spec::_ProjSpec, reg::NamedTuple, arch, N::Int)
+    rng = _subrange(reg, spec.dst)
+    kw = spec.kw
+    wseed = kw.seed ⊻ 0x243f6a8885a308d3     # wiring stream, independent of the per-step firing stream
+    extconn = fixed_prob(arch, kw.n_ext, N, kw.p; weight = kw.weight, delay = kw.delay,
+        seed = wseed, sources = 1:(kw.n_ext), targets = rng)
+    kw.adjust === nothing || _apply_adjust(kw.adjust, extconn, 1:(kw.n_ext), rng)
+    return Projection(PoissonSource(spec.synapse, extconn; rate = kw.rate, seed = kw.seed), _empty_csr(arch, N))
+end
+
+# Apply the post-build `adjust` hook, accepting either a 2-arg `(conn, ctx)` adjuster (given the resolved
+# `(; sources, targets)` ranges) or a plain 1-arg `conn ->` adjuster.
+_apply_adjust(adj, conn, sources, targets) =
+    applicable(adj, conn, (; sources, targets)) ? adj(conn, (; sources, targets)) : adj(conn)
 
 """
     build(nb; input=nothing, schedule=default_schedule()) -> DewdropNetwork
@@ -232,7 +271,8 @@ function _build_network(arch, tspan, names, models, sizes, inputs, positions_in,
     in_ = input === nothing ? _combine_inputs(inputs, sizes, T) : input
     positions = _combine_positions(positions_in, sizes)
     projs = Tuple(_build_projection(spec, reg, positions, arch, N) for spec in projspecs)
-    labels = isempty(projspecs) ? nothing : Tuple(spec.src => spec.dst for spec in projspecs)
+    labels = isempty(projspecs) ? nothing :
+        Tuple((spec.src === :__poisson__ ? :poisson : spec.src) => spec.dst for spec in projspecs)
     return DewdropNetwork(model, N; input = in_, tspan = tspan, arch = arch,
         schedule = schedule, projections = projs, drive = drive, subpops = reg, positions = positions,
         projlabels = labels)

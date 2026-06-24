@@ -85,3 +85,34 @@ end
     @test a.post == b.post && a.rowptr == b.rowptr && a.src == b.src
     @test eltype(b.post) == Int32
 end
+
+# correlate_weights!: in-degree-normalised (1/√k) weights with relative Gaussian jitter, reproducible from
+# the seed --- the generic primitive WRCircuit/spatial_fns consume. See networkspec.jl for the curried
+# `correlate_weights` used through the builder's `adjust` hook.
+@testset "correlate_weights! (in-degree normalisation)" begin
+    arch = Dewdrop.CPU()
+    _mean(x) = sum(x) / length(x)
+    mk() = fixed_prob(arch, 30, 30, 0.5; weight = 1.0, delay = steps(1), seed = UInt64(1))
+    c = mk()
+    correlate_weights!(c, 0.1; seed = UInt64(7))
+    k = zeros(Int, 30)
+    for p in c.post
+        k[p] += 1
+    end
+    sum_k = sum(kk for kk in k if kk > 0)
+    sum_sqrt = sum(sqrt(kk) for kk in k if kk > 0)
+    J_rec = 0.1 * sum_k / sum_sqrt
+    for p in unique(c.post)                              # mean weight into target p ≈ J_rec/√k[p]
+        @test isapprox(_mean(c.weight[c.post .== p]), J_rec / sqrt(k[p]); rtol = 0.2)
+    end
+    c2 = mk()
+    correlate_weights!(c2, 0.1; seed = UInt64(7))
+    @test c.weight == c2.weight                          # reproducible from the seed
+
+    # principled 'empty → 0': an isolated (zero-in-degree) target does not change the scale on the others
+    c3 = Dewdrop.SparseCSR(arch, [(1, 1, 1.0, 1), (1, 2, 1.0, 1)]; npre = 1, npost = 3)  # target 3 unwired
+    correlate_weights!(c3, 0.2; targets = 1:3, seed = UInt64(3))
+    c2t = Dewdrop.SparseCSR(arch, [(1, 1, 1.0, 1), (1, 2, 1.0, 1)]; npre = 1, npost = 2) # no empty target
+    correlate_weights!(c2t, 0.2; targets = 1:2, seed = UInt64(3))
+    @test c3.weight == c2t.weight                        # the empty target is irrelevant to J_rec
+end

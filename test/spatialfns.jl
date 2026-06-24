@@ -29,7 +29,7 @@ end
 
     # four recurrent projections (FrozenDualExpSynapse) + the external drive (streaming by default)
     @test length(prob.projections) == 5
-    @test prob.projections[5].synapse isa PoissonDualExpDrive
+    @test prob.projections[5].synapse isa PoissonSource
     cee, cei, cie, cii = (prob.projections[k].conn for k in 1:4)
     # EXACT fixed edge counts = K_xx · N_post (mean in-degree = K_xx)
     @test Dewdrop.nedges(cee) == 20 * NE
@@ -92,7 +92,7 @@ end
         nu = 15.0, n_ext = 40, Delta_g_K = 0.005, tspan = (0.0, 300.0), dt = 0.1, seed = 20)
     prob_s = spatial_fns(; P..., external = :streaming)
     prob_p = spatial_fns(; P..., external = :prescribed)
-    @test prob_s.projections[5].synapse isa PoissonDualExpDrive
+    @test prob_s.projections[5].synapse isa PoissonSource
     @test prob_p.projections[5].synapse isa PrescribedCOBA
 
     sol_s = solve(prob_s, FixedStep(0.1); v0 = (-70.0, -50.0))

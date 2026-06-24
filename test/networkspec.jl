@@ -115,4 +115,15 @@ end
         adjust = c -> (c.weight .*= 2))                # doubles the built weights in place
     net = build(nb)
     @test all(==(1.0), net.projections[1].conn.weight)   # 0.5 doubled post-build
+
+    # a 2-arg adjuster `(conn, ctx)` additionally receives the resolved `(; sources, targets)` ranges;
+    # `correlate_weights` uses ctx.targets to normalise the in-degree over the destination sub-population.
+    nb2 = network(; tspan = (0.0, 20.0))
+    population!(nb2, :E, _lif(), 8; input = 0.3)
+    population!(nb2, :I, _lif(), 8; input = 0.3)
+    project!(nb2, :E => :I, DeltaSynapse(); p = 0.6, weight = 1.0, delay = steps(1), seed = UInt64(2),
+        adjust = correlate_weights(0.1; seed = UInt64(7)))
+    w = build(nb2).projections[1].conn.weight
+    @test !all(==(1.0), w) && all(>(0.0), w)             # in-degree-normalised, not the raw 1.0
+    @test build(nb2).projections[1].conn.weight == w     # deterministic / reproducible
 end

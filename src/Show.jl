@@ -164,6 +164,27 @@ function Base.show(io::IO, s::AbstractSynapseModel)
     return nothing
 end
 
+# A PoissonSource (streaming Poisson drive) renders as its driving statistics --- rate + #sources over the
+# wrapped synapse --- not a field dump of the inner synapse + extconn CSR. It inherits the inner synapse's
+# kind tag (COBA / CUBA / delta / …).
+_synkind(s::PoissonSource) = _synkind(s.synapse)
+function Base.show(io::IO, ::MIME"text/plain", s::PoissonSource)
+    get(io, :compact, false) && return show(io, s)
+    kind = _synkind(s)
+    print(io, "PoissonSource ")
+    _styled(io, "→ " * string(nameof(typeof(s.synapse))) * (isempty(kind) ? "" : " · " * kind), :dim)
+    print(io, "\n  ")
+    _styled(io, rpad("rate", 5), :field)
+    print(io, " = ", _fmt(s.rate), " ")
+    _styled(io, "Hz", :unit)
+    print(io, "\n  ")
+    _styled(io, rpad("n_ext", 5), :field)
+    print(io, " = ", _fmt(npre(s.extconn)))
+    return nothing
+end
+Base.show(io::IO, s::PoissonSource) =
+    print(io, "PoissonSource(", _fmt(s.rate), " Hz → ", nameof(typeof(s.synapse)), ")")
+
 # === MultiModel: one tree row per group (range + group model) ===
 _total_N(mm::MultiModel) = isempty(mm.ranges) ? 0 : last(last(mm.ranges))
 function Base.show(io::IO, ::MIME"text/plain", mm::MultiModel)

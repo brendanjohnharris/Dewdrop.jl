@@ -2,7 +2,7 @@
 # (conductance-adaptation FNS E/I on a 2D periodic box, distance-dependent COBA connectivity, plus an
 # external Poisson drive) re-expressed as a single high-level constructor over Dewdrop primitives. No
 # Python/BrainPy: the connectome is sampled with the native Gumbel-top-k `distance_fixed_count`, weights
-# with a port of WRCircuit's in-degree-scaled `correlate_weights`, the four recurrent paths use the
+# with the generic in-degree-scaled `correlate_weights!` (a reusable Dewdrop primitive), the recurrent paths use the
 # BrainPy-faithful `FrozenDualExpSynapse`, and the external drive is replayed as a `PrescribedCOBA`
 # conductance generated from a native Poisson raster.
 #
@@ -17,46 +17,12 @@
 @inline _subseed(seed::Unsigned, tag::Integer) = (seed % UInt64) ⊻ ((tag % UInt64) * 0x9e3779b97f4a7c15)
 
 # Cell-centred grid over [0, dx]^2 with ne×ne points (BrainPy `GridPositions`: spacing dx/ne, points at
-# dx/ne·(i-0.5)). Pairwise distances are translation-invariant, so the half-cell offset and the neuron
-# ordering only relabel; what matters is that E tiles [0,dx]^2 and I is uniform on the same box.
-function _grid_centered(ne::Integer, dx::Real)
-    sp = dx / ne
-    return [(sp * (i - 0.5), sp * (j - 0.5)) for j in 1:ne for i in 1:ne]
-end
+# dx/ne·(i-0.5)) --- the first-class `grid_positions(…; centered=true)`. E tiles [0,dx]^2; I is uniform on it.
+_grid_centered(ne::Integer, dx::Real) = grid_positions(ne, ne; spacing = dx / ne, centered = true)
 
-# In-degree-scaled weights --- a port of WRCircuit `utils.correlate_weights`. Per edge `e` with post
-# neuron `p`: `w = wm + N(0,1)·0.05·wm`, `wm = J_rec/√k[p]`, `J_rec = J·Σk/Σ√k` (the Σ√k denominator
-# adds 1 per zero-in-degree post, matching the reference). `k`/the sums run over the post population only
-# (`targets`, a contiguous global-index range), so a projection into a sub-population is normalised
-# against that sub-population --- exactly as BrainPy normalises against `N_post`. Mutates `conn.weight`
-# in place (host-side); reproducible normals from the counter RNG keyed by edge index.
-function _correlate_weights!(conn::SparseCSR, J::Real, targets, seed::Unsigned)
-    lo = first(targets)
-    n = length(targets)
-    k = zeros(Int, n)
-    @inbounds for p in conn.post
-        k[Int(p) - lo + 1] += 1
-    end
-    sum_k = 0.0
-    sum_sqrt = 0.0
-    @inbounds for kk in k
-        if kk > 0
-            sum_k += kk
-            sum_sqrt += sqrt(kk)
-        else
-            sum_sqrt += 1.0          # zero-in-degree post adds 1 to the denominator (reference quirk)
-        end
-    end
-    J_rec = sum_sqrt > 0 ? J * sum_k / sum_sqrt : 0.0
-    w = conn.weight
-    T = eltype(w)
-    @inbounds for e in eachindex(conn.post)
-        kp = k[Int(conn.post[e]) - lo + 1]
-        wm = J_rec / sqrt(kp)
-        w[e] = T(wm + draw_normal(Float64, seed, e, 0) * 0.05 * wm)
-    end
-    return conn
-end
+# In-degree-scaled recurrent weights are the generic `correlate_weights!` (see Connectivity.jl) --- the
+# WRCircuit `utils.correlate_weights` port now lives there as a reusable building block, called below with
+# the per-path `targets`/`seed`.
 
 # Physical synaptic latency `delay_ms` → Dewdrop stored delay (steps). BrainPy's delay `D=round(delay/dt)`
 # onsets the postsynaptic conductance at spike+D; Dewdrop's ring buffer + dual-exp onsets at spike+stored+1,
@@ -85,10 +51,10 @@ end
 function _external_gext(N, NE, NI, N_ext, p_ext, J_ee, J_ei, nu, dt, nsteps, τr, τd, de, seed)
     conn_e = fixed_prob(CPU(), N_ext, NE, p_ext; weight = 1.0, delay = steps(de),
         seed = _subseed(seed, 10), sources = 1:N_ext, targets = 1:NE)
-    _correlate_weights!(conn_e, J_ee, 1:NE, _subseed(seed, 12))
+    correlate_weights!(conn_e, J_ee; targets = 1:NE, seed = _subseed(seed, 12))
     conn_i = fixed_prob(CPU(), N_ext, NI, p_ext; weight = 1.0, delay = steps(de),
         seed = _subseed(seed, 11), sources = 1:N_ext, targets = 1:NI)
-    _correlate_weights!(conn_i, J_ei, 1:NI, _subseed(seed, 13))
+    correlate_weights!(conn_i, J_ei; targets = 1:NI, seed = _subseed(seed, 13))
     outE = _out_edges(conn_e)
     outI = _out_edges(conn_i)
 
@@ -136,98 +102,11 @@ function _external_gext(N, NE, NI, N_ext, p_ext, J_ee, J_ei, nu, dt, nsteps, τr
     return G
 end
 
-# --- Streaming external Poisson → dual-exp COBA drive (the scalable alternative to the dense `gext`) ---
-# `N_ext` virtual Poisson sources (rate-driven, NOT network neurons) wired to E/I targets by an internal
-# CSR; each step a once-per-step `_synprestep!` generates the sources' Poisson spikes and scatters them
-# into the SAME ring-buffer + dual-exp machinery as `FrozenDualExpSynapse` (so the onset/timing is
-# identical to the recurrent paths and the dense `gext`). O(N) memory --- no precomputed `(N, nsteps)`
-# matrix --- so it scales to long, large runs. CPU-only for now (the prestep scatter is host-side).
-"""
-    PoissonDualExpDrive(extconn, rate, τr, τd, Erev, n_ext, seed)
-
-An external drive of `n_ext` Poisson sources (rate `rate` Hz) wired to the network by `extconn`
-(`n_ext × N` CSR, weights/delays as for a recurrent projection). Each step it generates the sources'
-Poisson spikes and scatters them into a dual-exponential COBA conductance (frozen current `g·(Erev−V)`,
-BrainPy scheme), with no precomputed conductance matrix. The streaming analogue of replaying a
-[`PrescribedCOBA`](@ref) `gext`; the WRCircuit external drive. Add via a `Projection(drive, empty_csr)`
-(its own wiring lives inside; the network scatter is a no-op). CPU-only.
-"""
-struct PoissonDualExpDrive{C, T} <: AbstractSynapseModel
-    extconn::C       # n_ext sources → N targets (correlate_weights weights, per-edge delays)
-    rate::T          # source Poisson rate (Hz)
-    τr::T
-    τd::T
-    Erev::T
-    n_ext::Int
-    seed::UInt64
-end
-export PoissonDualExpDrive
-
-# Same conductance fields as FrozenDualExpCOBAState (so the deliver/accumulate/decay/`_syn_one` bodies
-# match the recurrent frozen synapse) plus the ext wiring + Poisson parameters used by `_synprestep!`.
-struct PoissonDualExpDriveState{G, B, EC, CC, T} <: AbstractSynapseState
-    g_rise::G
-    g_decay::G
-    buf::B           # dual-exp ring buffer (written by the prestep, read by deliver/`_syn_one`)
-    extconn::EC      # ext wiring (used only by the once-per-step Poisson scatter)
-    conn::CC         # empty CSR: the network scatter through it is a no-op (interface satisfaction)
-    decay_r::T
-    decay_d::T
-    a::T
-    Erev::T
-    p_spike::T       # rate·dt/1000 (BrainPy PoissonGroup per-source per-step Bernoulli probability)
-    n_ext::Int
-    seed::UInt64
-end
-Adapt.@adapt_structure PoissonDualExpDriveState
-
-function _make_synstate(arch, syn::PoissonDualExpDrive, conn, ::Type{T}, N, dt) where {T}
-    arch isa GPU &&
-        throw(ArgumentError("PoissonDualExpDrive is CPU-only (host-side prestep scatter); use spatial_fns(external=:prescribed) on GPU"))
-    g_rise = fill!(allocate(arch, T, N), zero(T))
-    g_decay = fill!(allocate(arch, T, N), zero(T))
-    buf = DelayBuffer(arch, T, N, maximum(syn.extconn.delay; init = 0))
-    return PoissonDualExpDriveState(g_rise, g_decay, buf, syn.extconn, conn,
-        T(exp(-dt / syn.τr)), T(exp(-dt / syn.τd)), T(_dualexp_a(syn.τr, syn.τd)), T(syn.Erev),
-        T(syn.rate * dt / 1000), syn.n_ext, syn.seed)
-end
-
-# Once-per-step: generate each source's Poisson spike (pure draw keyed by (seed, step, source)) and
-# scatter it into the ring buffer with the per-edge delay. Only spiking sources do work (event-driven).
-@inline function _synprestep!(s::PoissonDualExpDriveState, integ)
-    n = integ.n
-    @inbounds for j in 1:(s.n_ext)
-        draw_uniform(Float64, s.seed, n, j) < s.p_spike || continue
-        for_each_post(s.extconn, j) do post, w, d
-            deposit!(s.buf, n, post, w, d)
-        end
-    end
-    return nothing
-end
-
-# Deliver / accumulate / decay / fused-`_syn_one`: identical to FrozenDualExpCOBAState (frozen current,
-# conductance stays out of the membrane leak); the buffer is already populated by `_synprestep!`.
-@inline _deliver!(s::PoissonDualExpDriveState, integ) =
-    (deliver_due_dual!(s.g_rise, s.g_decay, s.buf, integ.n); nothing)
-@inline function _accumulate!(s::PoissonDualExpDriveState, gtot, itot, V)
-    @. itot += s.a * (s.g_decay - s.g_rise) * (s.Erev - V)
-    return nothing
-end
-@inline _decay!(s::PoissonDualExpDriveState) =
-    (@. s.g_rise *= s.decay_r; @. s.g_decay *= s.decay_d; nothing)
-@inline function _syn_one(s::PoissonDualExpDriveState, i, n, v, gtot, itot)
-    L = s.buf.L
-    slot = mod(n, L) + 1
-    @inbounds due = s.buf.slots[i, slot]
-    @inbounds s.buf.slots[i, slot] = zero(due)
-    @inbounds gr = s.g_rise[i] + due
-    @inbounds gd = s.g_decay[i] + due
-    g = s.a * (gd - gr)
-    itot += g * (s.Erev - v)
-    @inbounds s.g_rise[i] = gr * s.decay_r
-    @inbounds s.g_decay[i] = gd * s.decay_d
-    return (v, gtot, itot)
-end
+# --- Streaming external Poisson drive: now the generic `PoissonSource{FrozenDualExpSynapse}` (see
+# PoissonSource.jl). This was a bespoke `PoissonDualExpDrive` synapse with hand-copied dual-exp
+# deliver/accumulate/decay bodies; it is now `PoissonSource` wrapping the frozen dual-exp synapse ---
+# bit-identical (same (seed, step, source) RNG keying, same scatter order, same frozen-current kinetics),
+# but generalised to drive ANY synapse and to route Poisson events through the shared `scatter!`.
 
 # Build the merged external connectome (ext2E + ext2I, weights via `correlate_weights`) as one
 # `n_ext × N` CSR --- shared by the streaming drive and (via `_external_gext`) the prescribed drive,
@@ -235,10 +114,10 @@ end
 function _build_extconn(arch, N, NE, NI, N_ext, p_ext, J_ee, J_ei, de, seed)
     ce = fixed_prob(CPU(), N_ext, NE, p_ext; weight = 1.0, delay = steps(de),
         seed = _subseed(seed, 10), sources = 1:N_ext, targets = 1:NE)
-    _correlate_weights!(ce, J_ee, 1:NE, _subseed(seed, 12))
+    correlate_weights!(ce, J_ee; targets = 1:NE, seed = _subseed(seed, 12))
     ci = fixed_prob(CPU(), N_ext, NI, p_ext; weight = 1.0, delay = steps(de),
         seed = _subseed(seed, 11), sources = 1:N_ext, targets = 1:NI)
-    _correlate_weights!(ci, J_ei, 1:NI, _subseed(seed, 13))
+    correlate_weights!(ci, J_ei; targets = 1:NI, seed = _subseed(seed, 13))
     edges = Tuple{Int, Int, Float64, Int}[]
     sizehint!(edges, length(ce.post) + length(ci.post))
     @inbounds for e in eachindex(ce.post)
@@ -275,7 +154,7 @@ at `nu` Hz drives E and I (`FixedProb(p_ext=√(n_ext/NE))`), replayed as a `Pre
 
 `synapse` selects the COBA integration scheme: `:frozen` ([`FrozenDualExpSynapse`](@ref), the BrainPy
 `sum_current_inputs` scheme --- use to reproduce WRCircuit) or `:exact` ([`DualExpSynapse`](@ref), the
-exact propagator). `external` selects the drive: `:streaming` ([`PoissonDualExpDrive`](@ref), generated
+exact propagator). `external` selects the drive: `:streaming` ([`PoissonSource`](@ref) over a frozen dual-exp synapse, generated
 on the fly --- O(N) memory, the default, scales to long/large runs, CPU-only) or `:prescribed` (a dense
 `(N, nsteps)` conductance replayed via [`PrescribedCOBA`](@ref) --- backend-agnostic, for bit-for-bit
 replay/validation at small scale). Both realise the identical external connectome + Poisson raster for a
@@ -336,10 +215,10 @@ function spatial_fns(; rho = 20000, dx = 0.5, gamma = 4,
     # --- weights (in-degree-scaled; I weights are δ-amplified, sign carried by reversal potential) ---
     J_ie = J_ee * delta
     J_ii = J_ei * delta
-    _correlate_weights!(cee, J_ee, Erange, _subseed(seed, 6))
-    _correlate_weights!(cei, J_ei, Irange, _subseed(seed, 7))
-    _correlate_weights!(cie, J_ie, Erange, _subseed(seed, 8))
-    _correlate_weights!(cii, J_ii, Irange, _subseed(seed, 9))
+    correlate_weights!(cee, J_ee; targets = Erange, seed = _subseed(seed, 6))
+    correlate_weights!(cei, J_ei; targets = Irange, seed = _subseed(seed, 7))
+    correlate_weights!(cie, J_ie; targets = Erange, seed = _subseed(seed, 8))
+    correlate_weights!(cii, J_ii; targets = Irange, seed = _subseed(seed, 9))
 
     synmodel(τr, τd, Erev) = synapse === :frozen ? FrozenDualExpSynapse(; τr = τr, τd = τd, Erev = Erev) :
                              synapse === :exact ? DualExpSynapse(; τr = τr, τd = τd, Erev = Erev) :
@@ -357,8 +236,8 @@ function spatial_fns(; rho = 20000, dx = 0.5, gamma = 4,
     if external === :streaming
         extconn = _build_extconn(arch, N, NE, NI, N_ext, p_ext, J_ee, J_ei, de, seed)
         drive = Projection(
-            PoissonDualExpDrive(extconn, Float64(nu), Float64(tau_r_e), Float64(tau_d_e),
-                Float64(V_rev_e), N_ext, _subseed(seed, 14)),
+            PoissonSource(FrozenDualExpSynapse(; τr = tau_r_e, τd = tau_d_e, Erev = V_rev_e),
+                extconn; rate = nu, seed = _subseed(seed, 14)),
             _empty_csr(arch, N))
         return wrcircuit(; NE = NE, NI = NI, E = E, I = I, projections = vcat(projections, [drive]),
             gext = nothing, positions = positions, tspan = tspan, arch = arch)

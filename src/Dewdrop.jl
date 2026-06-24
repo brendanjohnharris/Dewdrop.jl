@@ -43,6 +43,7 @@ include("Plasticity.jl")
 include("Advisor.jl")
 include("Macro.jl")
 include("Builder.jl")
+include("PoissonSource.jl")     # generic streaming Poisson drive: PoissonSource{Synapse} over any synapse
 include("NetworkSpec.jl")       # deferred network spec: specify a network without building the connectome
 include("BlockBatch.jl")        # batching: run B members together (block-diagonal general path; batch(...) forms)
 include("FFT.jl")               # self-contained DFT/FFT for the spectral observables

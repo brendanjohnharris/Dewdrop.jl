@@ -40,6 +40,7 @@ Dewdrop.set_advice!(false)   # silence the perf advisor during the suite; test/a
     include("progress.jl")          # host-side progress reporting (ProgressLogging convention) for solve!
     include("show.jl")              # hierarchical Base.show rendering (models, synapses, network, builder, solutions)
     include("drive.jl")
+    include("poissonsource.jl")     # generic streaming Poisson drive: PoissonSource{Synapse} + drive! verb
     include("noise.jl")             # M5a SDE noise: draw_normal, exact-OU variance, 3-path ≡
     include("gpu_readiness.jl")
     include("backends.jl")          # execution backends: Auto/Serial/Fused/Turbo selection + dispatch
@@ -59,4 +60,5 @@ Dewdrop.set_advice!(false)   # silence the perf advisor during the suite; test/a
     include("vogels_abbott.jl")
     include("wrcircuit.jl")         # WRCircuit end-to-end: spatial FNS E/I + dual-exp + fixed-count distance conn
     include("spatialfns.jl")        # native spatial FNS constructor (BrainPy `Spatial` re-expressed; no Python)
+    include("spatial_builder.jl")   # WRCircuit-class circuit built from first-class builder components (no custom constructor)
 end
