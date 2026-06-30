@@ -76,4 +76,4 @@ faster than NEST at N=512k) and the **fastest on the GPU** (2.2Ã— brian2cuda, 8Ã
 competitive with both at small sizes. Full methodology and tables are in the
 [benchmarks documentation](https://brendanjohnharris.github.io/Dewdrop.jl/dev/benchmarks).
 
-![Simulation time and peak memory versus network size, on CPU and GPU, across simulators.](comparison.png)
+![Simulation time and peak memory versus network size, on CPU and GPU, across simulators.](docs/srcs/assets/comparison.png)
