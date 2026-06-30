@@ -4,7 +4,7 @@ using Test
 # Deferred network spec (src/NetworkSpec.jl): an immutable, run-parameter-free description that
 # materialises into a `DewdropNetwork` only at solve time, when `dt`/`tspan` are known. Two reps under
 # `AbstractNetworkSpec`: `freeze(builder)` (structured) and `defer(constructor; kw...)` (thunk).
-# Contract: `materialize(spec, FixedStep(dt); tspan)` is a pure (spec, run-params) → DewdropNetwork, and
+# Behaviour: `materialize(spec, FixedStep(dt); tspan)` is a pure (spec, run-params) → DewdropNetwork, and
 # `solve(spec, …)` is bit-identical to solving the materialised network.
 
 _lif() = LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 100.0, tref = 2.0)

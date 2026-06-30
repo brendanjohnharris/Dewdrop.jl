@@ -1,7 +1,7 @@
 using Dewdrop
 using Test
 
-# M2 --- random fixed-probability connectivity, the workhorse for balanced E/I networks.
+# Random fixed-probability connectivity, the workhorse for balanced E/I networks.
 # Each possible (pre, post) edge is present with probability `p`, sampled reproducibly from
 # the counter-based RNG keyed by (pre, post). Weights/delays may be scalars or per-source
 # functions (so excitatory vs inhibitory neurons get signed weights).

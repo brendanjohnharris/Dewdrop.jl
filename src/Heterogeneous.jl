@@ -1,4 +1,4 @@
-# * Per-neuron heterogeneous parameters (Phase 3) --- `Heterogeneous(base; field = array, …)` wraps a
+# * Per-neuron heterogeneous parameters --- `Heterogeneous(base; field = array, …)` wraps a
 # scalar neuron model and overrides chosen parameters with per-neuron arrays. Storage is a FROZEN
 # ARRAY (computed once at construction, read many times), not a procedural in-kernel draw: a per-neuron
 # parameter is time-constant, so recomputing it every step would be pure waste; an array is general

@@ -3,7 +3,7 @@ using Test
 using Adapt
 using JLArrays
 
-# M1c --- the event-driven sparse scatter as a KernelAbstractions kernel: one thread per
+# The event-driven sparse scatter as a KernelAbstractions kernel: one thread per
 # presynaptic neuron, spiking ones walk their CSR row and deposit each synapse's weight into
 # the delay ring buffer at (now + per-synapse delay), accumulating atomically. The SAME
 # kernel runs on CPU and device arrays via `get_backend`.

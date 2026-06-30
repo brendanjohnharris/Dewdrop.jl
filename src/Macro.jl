@@ -1,4 +1,4 @@
-# * @neuron macro (M2) --- declarative sugar for defining a linear (LIF-family) neuron model
+# * @neuron macro --- declarative sugar for defining a linear (LIF-family) neuron model
 # without the struct + hook boilerplate. The user writes hook expressions over the model's
 # parameters plus the reserved names `I` (total input current) and `V` (membrane potential);
 # the macro rewrites every parameter symbol to a field access `m.<param>` (no equation parsing,

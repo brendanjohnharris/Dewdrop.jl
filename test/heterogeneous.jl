@@ -3,11 +3,11 @@ using Test
 using Adapt
 using JLArrays
 
-# Phase 3 --- per-neuron heterogeneous parameters. `Heterogeneous(base; field = array, …)` wraps a
+# Per-neuron heterogeneous parameters. `Heterogeneous(base; field = array, …)` wraps a
 # scalar neuron model and overrides chosen parameters with per-neuron arrays (the storage decision:
 # frozen arrays, computed once, read many; fill reproducibly via the counter RNG). The engine
 # resolves a per-neuron scalar model in the hot loop, so a homogeneous run is unchanged and a
-# heterogeneous one (e.g. E adapts / I doesn't, the WRCircuit E/I pattern) works on every path.
+# heterogeneous one (e.g. E adapts / I doesn't, the E/I pattern) works on every path.
 
 @testset "no-op heterogeneity ≡ scalar model (bit-identical)" begin
     m = LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 10.0, R = 1.0, tref = 2.0)
@@ -34,7 +34,7 @@ end
     @test all(==(0), sol.spike_count[(N ÷ 2 + 1):end])           # high-threshold half never fires
 end
 
-@testset "block E/I heterogeneity: only E adapts (WRCircuit pattern)" begin
+@testset "block E/I heterogeneity: only E adapts (E/I pattern)" begin
     base = AdaptLIF(; τ = 20.0, EL = -65.0, Vθ = -50.0, Vr = -65.0, R = 1.0, tref = 2.0,
         a = 0.0, b = 0.0, τw = 150.0)
     N = 100

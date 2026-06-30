@@ -3,12 +3,12 @@ using Test
 using Adapt
 using JLArrays
 
-# WRCircuit Phase 1 --- `FNSNeuron`, a conductance-adaptation LIF (Treves-style; the WRCircuit
-# neuron). `C dV/dt = -gL(V-VL) - gK(V-VK) + I`, `τK dgK/dt = -gK`; spike (`V ≥ Vθ`) → `V ← Vr`,
+# `FNSNeuron`, a conductance-adaptation LIF (Treves-style).
+# `C dV/dt = -gL(V-VL) - gK(V-VK) + I`, `τK dgK/dt = -gK`; spike (`V ≥ Vθ`) → `V ← Vr`,
 # `gK += ΔgK`. The adaptation is a CONDUCTANCE `gK` with reversal `VK` (not a current like AdaptLIF's
 # `w`), so it folds onto the same exact COBA propagator: `gK` adds to the total conductance and a
 # reversal drive `gK·VK`. E neurons adapt (`ΔgK > 0`); I neurons have `ΔgK = 0` (a plain
-# conductance-LIF). Reuses the M5b multi-state seam (the generic aux column `:w` holds `gK`).
+# conductance-LIF). Reuses the multi-state seam (the generic aux column `:w` holds `gK`).
 
 # exact engine recursion for one FNS neuron, no synapses/drive (matches the broadcast phases:
 # w-first split, refractory V-clamp, threshold after refrac decrement, reset + gK increment).
@@ -81,7 +81,7 @@ end
     @test only(sI.spike_count) > only(sE.spike_count)
 end
 
-@testset "FNS + Heterogeneous: E adapts, I doesn't (the WRCircuit E/I pattern)" begin
+@testset "FNS + Heterogeneous: E adapts, I doesn't (the E/I pattern)" begin
     # one concatenated FNS population, per-neuron ΔgK: E (1:NE) adapts, I (NE+1:N) does not
     base = FNSNeuron(; C = 0.25, gL = 0.0167, VL = -70.0, VK = -85.0, Vθ = -50.0, Vr = -60.0,
         tref = 4.0, τK = 80.0, ΔgK = 0.0)

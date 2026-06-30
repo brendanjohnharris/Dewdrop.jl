@@ -1,9 +1,9 @@
 using Dewdrop
 using Test
 
-# M0 contract 4 --- counter-based RNG keyed by (step, entity): a *pure* function,
+# Counter-based RNG keyed by (step, entity): a *pure* function,
 # so draws are identical regardless of thread count or iteration order. This fixes
-# the numerics and must be locked before any golden-seed regression test.
+# the numerics and must be locked before any fixed-seed regression test.
 @testset "counter-based RNG" begin
     seed = UInt64(0xDEADBEEF)
 
@@ -38,7 +38,7 @@ using Test
     @test Dewdrop.draw_uniform(Float32, seed, 1, 1) isa Float32
     @test 0.0f0 <= Dewdrop.draw_uniform(Float32, seed, 1, 1) < 1.0f0
 
-    # zero-allocation guard: the whole counter-RNG reproducibility contract relies on
+    # zero-allocation guard: the whole counter-RNG reproducibility guarantee relies on
     # the mutable Philox being SROA'd to registers (no heap box). Guard both float
     # widths so a compiler-version regression that defeats escape analysis fails CI.
     # Use literal seeds here, NOT the captured `seed` above: the earlier

@@ -3,7 +3,7 @@ using Test
 using Adapt
 using JLArrays
 
-# M1b --- per-synapse heterogeneous conduction delays via a NEST-style ring buffer of
+# Per-synapse heterogeneous conduction delays via a NEST-style ring buffer of
 # postsynaptic accumulators. A spike scattered at step `now` along a synapse of integer
 # delay `d` lands in ring slot (now+d) mod L for its target, and is delivered when the
 # clock reaches that step. Sized L = maxdelay + 1.

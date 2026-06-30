@@ -76,7 +76,7 @@ end
     @. s.spiked = draw_uniform(Float64, s.seed, n, idx) < s.p_spike
     # `sync = false`: this scatter and the next read of `s.buf` (the fused step's inline deliver) run on the SAME
     # device stream, so ordering already guarantees visibility --- no host sync needed. The `scatter!` default
-    # `sync = true` would `synchronize()` the device EVERY step (and twice over for a 2-drive net like WRCircuit),
+    # `sync = true` would `synchronize()` the device EVERY step (and twice over for a 2-drive net),
     # draining the pipeline the fused path builds (Fused.jl:197 passes `sync = false` for the same reason) and
     # leaving the GPU step launch-bound / slower than CPU. Behaviour-identical; the buffer contents are the same.
     scatter!(s.buf, s.extconn, s.spiked, n; sync = false)

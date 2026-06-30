@@ -1,4 +1,4 @@
-# * SoA population state (M0 contract 2)
+# * SoA population state
 # Per-unit state is a struct-of-arrays of an `isbits` element type, allocated
 # through the architecture seam, so a population is contiguous and coalescing on
 # CPU and GPU alike and is movable to a device via `Adapt`.

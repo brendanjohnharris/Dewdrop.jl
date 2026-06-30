@@ -7,7 +7,7 @@ using Logging
 # TerminalLoggers render a live bar and a bare script silently filters it. We do NOT depend on any
 # progress package; the producer side is a logging convention, captured here with a `TestLogger`.
 #
-# Contract under test:
+# What's checked:
 #   `:auto` (default) → on, but auto-SUPPRESSED until the run has run ~0.3 s wall-clock (so trivial
 #                       runs never flash a bar); the update stride is CALIBRATED to ~2 Hz.
 #   `true`            → force on from the start (visible during the calibration window too).

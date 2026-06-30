@@ -4,7 +4,7 @@ using Adapt
 using StructArrays
 using JLArrays
 
-# M0 contract 2 --- struct-of-arrays population state of `isbits` elements,
+# Struct-of-arrays population state of `isbits` elements,
 # allocated through the architecture seam and movable to a device via `Adapt`.
 @testset "SoA population state" begin
     arch = Dewdrop.CPU()

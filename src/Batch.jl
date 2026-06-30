@@ -1,7 +1,7 @@
 # * Ensemble (tensor) batching --- run B independent network instances at once.
 #
 # This is the OUTER/ensemble axis (parameter / seed / input sweeps), distinct from the inner
-# device axis. The chosen strategy is the SHARED-CONNECTIVITY tensor batch (M0 contract 8): one
+# device axis. The chosen strategy is the SHARED-CONNECTIVITY tensor batch: one
 # SparseCSR + one ring length L are BROADCAST across all B instances (read-only), while the
 # per-neuron state gains a trailing batch dimension --- V/refrac/spiked/spike_count/Isyn/g go
 # (N,) → (N,B) and the delay ring (N_post,L) → (N_post,B,L). Each (neuron,batch) is independent,
@@ -17,7 +17,7 @@
 # Independence comes from the counter RNG's free batch axis: each column draws its drive from
 # stream `streams[b]` (the Philox high counter word), so the B instances are independent and
 # bit-reproducible. With `streams` all-zero the columns share the scalar (B=1) drive, which is
-# the bit-exact oracle: column b then equals a scalar solve with that column's input/v0.
+# the bit-exact reference: column b then equals a scalar solve with that column's input/v0.
 #
 # This is a SEPARATE path: the scalar B=1 engine (DewdropIntegrator + the broadcast/fused step)
 # is untouched, so the existing suite stays bit-for-bit identical. The batched path uses KA
@@ -252,7 +252,7 @@ end
 
 # Per-column SDE noise increment for cell (i,b): column b draws its normal from stream `streams[b]`
 # (the counter RNG batch axis), so the B instances are independent. With `streams` all-zero, column
-# b reproduces the scalar (batch-0) draw --- the bit-exact oracle. Strong-zero `false` when no noise.
+# b reproduces the scalar (batch-0) draw --- the bit-exact reference. Strong-zero `false` when no noise.
 @inline _bnoise_kick(::Nothing, n, i, b, dt, m, streams) = false
 @inline function _bnoise_kick(noise::WhiteNoise, n, i, b, dt, m, streams)
     @inbounds str = streams[b]
@@ -503,7 +503,7 @@ end
 _init_batched_voltage!(V, EL, ::Nothing, ::Type{T}, seed) where {T} = (fill!(V, EL); V)
 _init_batched_voltage!(V, EL, v0::Real, ::Type{T}, seed) where {T} = (fill!(V, T(v0)); V)
 # a per-neuron vector v0 (length N) is broadcast across the batch --- every column gets the same
-# initial condition (matching the scalar contract). A bare `copyto!(V, v0)` would linear-fill only
+# initial condition (matching the scalar path). A bare `copyto!(V, v0)` would linear-fill only
 # column 1 of the (N,B) state and leave the rest at the allocation zero (a silent wrong v0).
 function _init_batched_voltage!(V, EL, v0::AbstractVector, ::Type{T}, seed) where {T}
     size(V, 1) == length(v0) || throw(DimensionMismatch("v0 length $(length(v0)) ≠ N = $(size(V, 1))"))
@@ -561,7 +561,7 @@ function _batched_init(
     itot = fill!(allocate(arch, T, N, B), zero(T))      # materialised by the kernel so Trace(:itot)/:gtot
     gtot = fill!(allocate(arch, T, N, B), zero(T))      # record real values per (neuron, member)
     # per-projection batched synapse states; `syn_overrides[j]` (a NamedTuple like `(; a = avec)`) makes
-    # chosen scalar params of projection j vary per member (the generic synaptic sweep, e.g. WRCircuit `delta`).
+    # chosen scalar params of projection j vary per member (the generic synaptic sweep, e.g. `delta`).
     ov(j) = syn_overrides === nothing ? (;) : get(syn_overrides, j, (;))
     syns = ntuple(length(prob.projections)) do j
         p = prob.projections[j]
@@ -666,7 +666,7 @@ mutable struct BatchedWindow{W <: AbstractArray, H <: AbstractArray}
     filled::Int
     flushed::Int
 end
-# adapt ONLY the device window; the host store stays a host Array (the M0 device-window/host-store split)
+# adapt ONLY the device window; the host store stays a host Array (the device-window/host-store split)
 Adapt.adapt_structure(to, wb::BatchedWindow) =
     BatchedWindow(adapt(to, wb.window), wb.store, wb.Wcols, wb.filled, wb.flushed)
 function BatchedWindow(arch, ::Type{E}, leaddims::Dims, ncols::Integer) where {E}
@@ -767,7 +767,7 @@ function _bmaterialize(spec::Aggregate, arch, ::Type{T}, N, B, nsteps, dt) where
     return BatchedAgg{typeof(src), typeof(idx), typeof(buf), spec.reducer}(src, idx, buf, spec.every, _nsel(N, idx))
 end
 _bmaterialize(::Probe, arch, ::Type{T}, N, B, nsteps, dt) where {T} =
-    error("Probe is not yet supported in batched runs (needs an (n,B) batch contract); use Trace/Spikes/Aggregate")
+    error("Probe is not yet supported in batched runs (needs an (n,B) batched layout); use Trace/Spikes/Aggregate")
 
 _result(m::BatchedPerUnit{<:SpikeSrc}) = RecordResult(m.buf.store, m.idx, m.every, :spikes)
 _result(m::BatchedPerUnit) = RecordResult(m.buf.store, m.idx, m.every, :trace)

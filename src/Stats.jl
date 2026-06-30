@@ -1,12 +1,12 @@
-# * Statistical observables (analysis layer) --- Julia ports of the WRCircuit `stats.py` measures,
+# * Statistical observables (analysis layer) --- spatial-network measures,
 # operating on the recorded traces of a `DewdropSolution`. Two layers: matrix-core functions over a
-# Neuron×Time raster `S` (Dewdrop's recording orientation; note `stats.py` uses Time×Neuron), and
+# Neuron×Time raster `S` (Dewdrop's recording orientation), and
 # `sol`-based wrappers that pull the `Spikes`/`Trace` data, the time step, positions, and the
 # named-subpopulation registry (`of = :E`) from the solution. Spectral measures use the internal FFT
 # (FFT.jl). These are host-side analysis, not engine work --- pure functions of recorded output.
 
-# population mean / variance without a Statistics dependency (population variance, ÷N, matching the
-# `mean(x²) − mean(x)²` of stats.py's susceptibility).
+# population mean / variance without a Statistics dependency (population variance, ÷N, the
+# `mean(x²) − mean(x)²` form used by the susceptibility measure).
 @inline _mean(x) = sum(x) / length(x)
 @inline _popvar(x) = (μ = _mean(x); _mean(abs2.(x .- μ)))
 
@@ -26,7 +26,7 @@ end
     coarsegrain(S, binsize; dims=2) -> Matrix
 
 Sum a matrix into non-overlapping bins of width `binsize` along `dims` (default the time axis, dim 2
-for a Neuron×Time raster); the trailing remainder is discarded. Mirrors the WRCircuit `coarsegrain`.
+for a Neuron×Time raster); the trailing remainder is discarded.
 """
 function coarsegrain(S::AbstractMatrix, binsize::Integer; dims::Integer = 2)
     bs = Int(binsize)
@@ -127,7 +127,7 @@ export temporal_average
     grand_distribution(X, nbins) -> (counts, centers)
 
 Histogram of all values in `X` into `nbins` equal-width bins spanning `[min, max]`; returns the bin
-counts and bin centres (the WRCircuit grand distribution).
+counts and bin centres.
 """
 function grand_distribution(X, nbins::Integer)
     nbins ≥ 1 || throw(ArgumentError("nbins must be ≥ 1"))
@@ -178,8 +178,7 @@ export cv_isi
 
 Bartlett-averaged power spectral density of a Neuron×Time raster: split time into `n_segments`
 segments, form the periodogram `|FFT|²/seg` of each, average over segments and neurons. Returns the
-PSD and the `fftfreq` frequency axis (from the segment length and `dt`). Mirrors the WRCircuit
-`spike_spectrum`.
+PSD and the `fftfreq` frequency axis (from the segment length and `dt`).
 """
 function power_spectrum(S::AbstractMatrix; n_segments::Integer = 1, dt::Real = 1.0)
     nN, Tn = size(S)
@@ -207,7 +206,7 @@ export power_spectrum
 Spatial coding efficiency per time bin: coarse-grain time by `tau`, group neurons into spatial bins
 (`bin_indices[i,j]` is a vector of neuron indices in spatial bin `(i,j)`), form the spatial spike
 distribution per time bin, its entropy `H`, and the energy cost `C` (total spikes); `η = n·H/C`
-(`n` = neuron count). Mirrors the WRCircuit `efficiency`.
+(`n` = neuron count).
 """
 function efficiency(S::AbstractMatrix, bin_indices::AbstractMatrix{<:AbstractVector{<:Integer}}, tau; dt::Real = 1.0)
     tbinned = coarsegrain(S, round(Int, tau / dt); dims = 2)        # neuron × n_tbins
@@ -248,8 +247,7 @@ Radially-averaged spatial autocorrelation of a Neuron×Time raster on a rectangu
 (`positions` a flat list of `(x, y)` site coordinates). Each time frame is reshaped to the grid, its
 2-D autocorrelation computed by FFT (`C = ifft2(|fft2(f₀)|²)/(XY)`, normalised to `C(0)=1`),
 radially averaged into shells of width `dr`, then averaged over the variance-nonzero frames. Returns
-the radial profile `g_r` (with `g_r[1] ≈ 1`) and the shell left-edges. Mirrors the WRCircuit
-`radial_autocorrelation`. Requires a full rectangular, evenly-spaced grid.
+the radial profile `g_r` (with `g_r[1] ≈ 1`) and the shell left-edges. Requires a full rectangular, evenly-spaced grid.
 """
 function radial_autocorrelation(S::AbstractMatrix, positions; dr::Real = 0.05)
     xs = sort(unique(first.(positions)))

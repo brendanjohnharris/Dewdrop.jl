@@ -1,4 +1,4 @@
-# * Spatial / structured connectivity (M3).
+# * Spatial / structured connectivity.
 # Neurons carry positions (D-dimensional coordinate tuples); `distance_prob` then connects each
 # ordered pair with a probability that is a function of their separation (a connection kernel),
 # optionally on a periodic box. This expresses distance-dependent, ring and grid topologies as a
@@ -113,7 +113,7 @@ export distance_prob
 `N` uniformly-random positions in the box `domain` (a tuple of per-dimension side lengths, e.g.
 `(0.5, 0.5)`), drawn reproducibly from the counter-based RNG keyed by `(seed, neuron, dim)`. Pair
 with [`distance_prob`](@ref)/[`distance_fixed_count`](@ref) for the random-placement populations of a
-spatial network (e.g. the WRCircuit inhibitory neurons). `sort=true` lexicographically sorts the
+spatial network (e.g. a randomly placed inhibitory population). `sort=true` lexicographically sorts the
 points.
 """
 function random_positions(N::Integer, domain::Tuple; seed::Unsigned, sort::Bool = false)
@@ -179,7 +179,7 @@ Distance-dependent connectivity with an EXACT total edge `count`: samples `count
 without replacement, with probability ∝ `kernel(distance(positions[pre], positions[post]))`, via the
 Gumbel-max top-k trick (`score = log p + Gumbel`, keep the top `count`), reproducibly from the
 counter-based RNG. Unlike per-pair Bernoulli [`distance_prob`](@ref) (random edge count), this fixes
-the count exactly --- the WRCircuit connectivity. `sources`/`targets` restrict the pair set; pairs
+the count exactly --- a fixed-degree connectivity. `sources`/`targets` restrict the pair set; pairs
 with zero kernel probability are never selected. O(|sources|·|targets|) time, O(count) memory.
 """
 function distance_fixed_count(arch::AbstractArchitecture, positions; kernel, count, weight, delay,

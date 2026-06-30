@@ -1,4 +1,4 @@
-# * Connectivity interface (M0 contract 5)
+# * Connectivity interface
 # Connectivity is an interface --- `for_each_post(f, conn, pre)` walks a presynaptic
 # neuron's out-edges --- backed by CSR-parallel arrays over *source* neurons, never a
 # dense [post x pre] matrix. Per-synapse weight and delay (in integer time steps)

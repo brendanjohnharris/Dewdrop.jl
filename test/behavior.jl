@@ -2,14 +2,14 @@ using Dewdrop
 using Test
 
 # Engine behaviours not covered by the subthreshold / f-I tests: the CommonSolve verb
-# contract, solution metadata, the exact refractory branch semantics, custom schedules,
+# interface, solution metadata, the exact refractory branch semantics, custom schedules,
 # float-type propagation.
 @testset "engine behaviour" begin
     m = LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 100.0, tref = 2.0)
 
-    @testset "CommonSolve verb contract" begin
+    @testset "CommonSolve verb interface" begin
         prob = DewdropNetwork(m, 4; input = 0.5, tspan = (0.0, 100.0))
-        # step! returns the integrator (CommonSolve contract)
+        # step! returns the integrator (CommonSolve interface)
         integ0 = init(prob, FixedStep(0.1))
         @test step!(integ0) === integ0
         # solve! consumes a pre-built integrator and equals the solve convenience

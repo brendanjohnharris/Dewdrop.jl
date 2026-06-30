@@ -5,15 +5,15 @@ using StructArrays
 using JLArrays
 using GPUArrays
 
-# The GPU-readiness suite turns "GPU-aware architecture" into enforced contracts,
+# The GPU-readiness suite turns "GPU-aware architecture" into enforced requirements,
 # checkable on CPU with NO GPU present via JLArrays + allowscalar(false). This is the
 # guard against the CPU-convenience "bolt-on" trap: it fails CI the moment the core
 # acquires host-side scalar indexing, non-isbits state, non-movable structures, or
 # order-dependent RNG.
-@testset "GPU-readiness contracts" begin
+@testset "GPU-readiness requirements" begin
     arch = Dewdrop.CPU()
 
-    @testset "isbits SoA + adapt-movability (contracts 2, 5)" begin
+    @testset "isbits SoA + adapt-movability" begin
         pop = Dewdrop.Population(arch, Float32, (:V, :ge, :gi), 16)
         @test isbitstype(eltype(pop.state))
         gpop = adapt(JLArray, pop)
@@ -28,18 +28,18 @@ using GPUArrays
         @test isbitstype(eltype(gconn.delay))
     end
 
-    @testset "no host scalar indexing on the broadcast path (contract 3)" begin
+    @testset "no host scalar indexing on the broadcast path" begin
         pop = Dewdrop.Population(arch, Float32, (:V, :ge), 32)
         gpop = adapt(JLArray, pop)
         GPUArrays.allowscalar(false)
         # a fused, exponential-Euler-shaped state update must run with scalar
-        # indexing disallowed (Tier-1 dynamics path).
+        # indexing disallowed (fused dynamics path).
         gpop.state.ge .= 1.0f0
         @. gpop.state.V = gpop.state.V - 0.1f0 * gpop.state.V + gpop.state.ge
         @test all(==(1.0f0), Array(gpop.state.V))
     end
 
-    @testset "RNG determinism across thread count (contract 4)" begin
+    @testset "RNG determinism across thread count" begin
         seed = UInt64(0x1234)
         N = 2048
         seq = [Dewdrop.draw_uniform(Float32, seed, 3, i) for i in 1:N]
@@ -56,7 +56,7 @@ using GPUArrays
         @test @allocated(Dewdrop.draw_uniform(Float64, UInt64(1), 1, 1)) == 0
     end
 
-    @testset "engine step! is GPU-ready (contract 3)" begin
+    @testset "engine step! is GPU-ready" begin
         m = LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 100.0, tref = 2.0)
         prob = DewdropNetwork(m, 64; input = 0.5, tspan = (0.0, 5.0))
         cpu = init(prob, FixedStep(0.1))

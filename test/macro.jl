@@ -1,7 +1,7 @@
 using Dewdrop
 using Test
 
-# M2 --- the @neuron macro: a declarative model definition lowering to the same parameter
+# The @neuron macro: a declarative model definition lowering to the same parameter
 # struct + hooks the engine consumes. Define a LIF through the macro and check it reproduces
 # the hand-written LIF exactly, and that the generated model integrates (incl. with COBA).
 @neuron MacroLIF begin

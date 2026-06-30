@@ -1,4 +1,4 @@
-# * Differentiable execution backend (surrogate-gradient SNN, M3 proof-of-principle).
+# * Differentiable execution backend (surrogate-gradient SNN).
 #
 # `backend = Differentiable()` makes a CPU forward pass automatically differentiable so a scalar loss
 # can be back-propagated to the model parameters through the whole time loop (gradient-based fitting and

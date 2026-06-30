@@ -1,4 +1,4 @@
-# * Multi-type populations (Phase B) --- `MultiModel` holds an ordered tuple of (model, range)
+# * Multi-type populations --- `MultiModel` holds an ordered tuple of (model, range)
 # groups over one flat concatenated SoA, so a network can mix neuron model TYPES (e.g. AdEx
 # excitatory + LIF inhibitory) in one engine. The groups partition `1:N` contiguously in
 # declaration order.

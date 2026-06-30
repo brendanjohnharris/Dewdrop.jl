@@ -1,4 +1,4 @@
-# * Neuron models (M1) --- "model as code": a small isbits parameter struct plus pure,
+# * Neuron models --- "model as code": a small isbits parameter struct plus pure,
 # scalar, allocation-free functions for its dynamics, threshold and reset.
 #
 # The subthreshold update is deliberately structured as the EXACT linear propagator

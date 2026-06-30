@@ -1,9 +1,9 @@
-# * Monitor (recording) framework (M4).
+# * Monitor (recording) framework.
 # A network is recorded by a NamedTuple of monitors, materialised from a `record = (...)` spec
 # and held in the integrator. The `:record` phase unrolls them (tuple-recursion, dispatch-free,
 # like the projection tuple). Each monitor stages into an arch-resident WINDOW buffer that
 # flushes to a host store in windows --- O(1) host transfers per window, the GPU-resident
-# recording substrate (M0 contract 8). Four axes: WHAT (state/synaptic/accumulator var, spikes,
+# recording mechanism. Four axes: WHAT (state/synaptic/accumulator var, spikes,
 # or a Probe fn) × WHERE (`:all` or an index subset) × HOW (per-unit, or a scalar Aggregate) ×
 # WHEN (stride). The `:record` slot runs after `:reset`, so traces are the post-reset state.
 
@@ -40,7 +40,7 @@ mutable struct WindowBuffer{W <: AbstractMatrix, H <: AbstractMatrix}
 end
 # Adapt ONLY the staging window onto the target architecture; the `store` is the host-resident
 # result and must stay a host `Array` (else the flush writes into a device store via scalar
-# `setindex!`). This is the device-window/host-store split of M0 contract 8.
+# `setindex!`). This is the device-window/host-store split.
 Adapt.adapt_structure(to, wb::WindowBuffer) =
     WindowBuffer(adapt(to, wb.window), wb.store, wb.Wcols, wb.filled, wb.flushed)
 function WindowBuffer(arch, ::Type{E}, n_out::Integer, ncols::Integer) where {E}
@@ -131,7 +131,7 @@ function _aggregate!(buf::WindowBuffer{<:Array}, vals, m::AggMonitor, col)
 end
 
 # GPU path: a single-thread in-kernel reduction writing the device window slot directly (no
-# host round-trip --- the GPU-resident aggregate). A parallel reduction is the M6 refinement.
+# host round-trip --- the GPU-resident aggregate). A parallel reduction is a possible refinement.
 @kernel function _agg_kernel!(window, col, @Const(vals), n, mean::Bool)
     acc = zero(eltype(window))
     @inbounds for k in eachindex(vals)
@@ -143,7 +143,7 @@ function _aggregate!(buf::WindowBuffer, vals, m::AggMonitor{S, I, B, R}, col) wh
     backend = get_backend(buf.window)
     _agg_kernel!(backend)(buf.window, col, vals, m.n, R === :mean; ndrange = 1)
     # No per-step synchronisation: the window slot is read only at the windowed flush (a DtoH
-    # copy that synchronises the stream), so steps pipeline on the device (M6 Tier-1).
+    # copy that synchronises the stream), so steps pipeline on the device.
     return nothing
 end
 

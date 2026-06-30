@@ -3,7 +3,7 @@ using Test
 using Adapt
 using JLArrays
 
-# M1c --- a CONNECTED network: presynaptic spikes drive postsynaptic neurons through the
+# A CONNECTED network: presynaptic spikes drive postsynaptic neurons through the
 # synapse. Validated on a 2-neuron chain: neuron 1 is driven supra-threshold; neuron 2 has
 # NO external input and fires only via synaptic transmission from neuron 1, after the
 # conduction delay. This exercises the full chain scatter → ring buffer → deliver → synaptic

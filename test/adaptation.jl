@@ -3,7 +3,7 @@ using Test
 using Adapt
 using JLArrays
 
-# M5b --- adaptation neurons. `AdaptLIF` (linear adaptation current `w`) and `AdEx` (nonlinear
+# Adaptation neurons. `AdaptLIF` (linear adaptation current `w`) and `AdEx` (nonlinear
 # exponential spike initiation) both add a `w` state variable advanced WITH `V` (the "w-first"
 # split: w from the old V, then V from the new w) plus a spike-triggered increment `w += b`. LIF
 # and every `@neuron` model keep the V-only fast path bit-identical (the empty-aux dispatch).
@@ -112,7 +112,7 @@ end
     @test isapprox(t_eng[1], t_ref[1]; rtol = 0.05)
 end
 
-@testset "adaptation: CPU broadcast ≡ JLArray fused; batched oracle" begin
+@testset "adaptation: CPU broadcast ≡ JLArray fused; batched reference" begin
     m = AdaptLIF(; τ = 20.0, EL = -65.0, Vθ = -50.0, Vr = -65.0, R = 1.0, tref = 2.0,
         a = 0.02, b = 0.5, τw = 100.0)
     dt = 0.1

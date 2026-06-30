@@ -2,7 +2,7 @@ using Dewdrop
 using Test
 using Statistics
 
-# M2 --- randomized / explicit initial membrane potential (`v0` kwarg to `init`/`solve`).
+# Randomized / explicit initial membrane potential (`v0` kwarg to `init`/`solve`).
 # `nothing` keeps the synchronous EL default; a `(lo, hi)` tuple draws per-neuron uniform
 # initial conditions from the counter-based RNG (deterministic, reproducible) which breaks
 # the initial synchrony that otherwise traps strongly-driven balanced networks.

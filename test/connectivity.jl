@@ -3,7 +3,7 @@ using Test
 using Adapt
 using JLArrays
 
-# M0 contract 5 --- connectivity is an interface (`for_each_post`) backed by CSR
+# Connectivity is an interface (`for_each_post`) backed by CSR
 # arrays over *source* neurons, never a dense [post x pre] matrix. Per-synapse
 # weight and delay live in CSR-parallel arrays. This keeps event-driven scatter and
 # (later) procedural connectivity expressible, and is Adapt-movable to a device.

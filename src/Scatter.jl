@@ -1,4 +1,4 @@
-# * Event-driven sparse scatter (M1c) --- the spike-propagation hot path, written ONCE as a
+# * Event-driven sparse scatter --- the spike-propagation hot path, written ONCE as a
 # KernelAbstractions kernel so the same source runs on CPU (`@threads`) and GPU (PTX/AIR).
 # One thread per presynaptic neuron; spiking neurons walk their CSR row and deposit each
 # synapse's weight into the delay ring buffer at (now + per-synapse delay), accumulating with
@@ -49,7 +49,7 @@ function scatter!(buf::DelayBuffer, conn::SparseCSR, spiked, now::Integer; sync:
     end
     # Some backends (e.g. the JLArrays reference backend) run kernels synchronously and
     # define no `synchronize`; only wait where the backend actually needs it (CPU, GPU). The
-    # fused device step passes `sync = false` so steps pipeline on one stream (M6 Tier-1); the
+    # fused device step passes `sync = false` so steps pipeline on one stream; the
     # next deliver/read on the same stream still sees this scatter's writes.
     sync && applicable(synchronize, backend) && synchronize(backend)
     return nothing

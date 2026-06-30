@@ -1,7 +1,7 @@
 using Dewdrop
 using Test
 
-# M1a cycle 3 --- validate the full threshold/reset/refractory machinery against the
+# Validate the full threshold/reset/refractory machinery against the
 # analytic LIF f-I curve:  ISI = tref + τ·ln((V∞ - Vr)/(V∞ - Vθ))  for V∞ = EL + R·I > Vθ,
 # else the neuron is silent. The fixed-step engine reproduces this up to dt-quantisation
 # of the threshold crossing (sub-dt interpolation is a deferred refinement).

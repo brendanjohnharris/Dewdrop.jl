@@ -3,7 +3,7 @@
 # (numpy / `jnp.fft` convention) via recursive radix-2 Cooley--Tukey for power-of-2 lengths and
 # Bluestein's chirp-z transform for arbitrary lengths, so the spectral observables (`power_spectrum`,
 # `radial_autocorrelation` in Stats.jl) match a numpy reference for ANY length. A direct O(N²) `_dft`
-# is kept as the correctness oracle (the tests cross-check `_fft` against it). Self-contained because
+# is kept as the correctness reference (the tests cross-check `_fft` against it). Self-contained because
 # the test environment cannot add a binary FFT dependency (FFTW); these run on the host at analysis
 # time, not in the hot loop, so the O(N log N) pure-Julia transform is more than adequate.
 
@@ -16,7 +16,7 @@ function _nextpow2(n::Integer)
     return m
 end
 
-# Direct DFT / inverse DFT (the O(N²) oracle). `sign = -1` forward, `+1` inverse (unnormalised).
+# Direct DFT / inverse DFT (the O(N²) reference). `sign = -1` forward, `+1` inverse (unnormalised).
 function _dft(x::AbstractVector{<:Number}, sign::Int = -1)
     n = length(x)
     out = zeros(ComplexF64, n)

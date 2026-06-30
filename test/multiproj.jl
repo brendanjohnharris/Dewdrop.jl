@@ -3,7 +3,7 @@ using Test
 using Adapt
 using JLArrays
 
-# M2 --- multiple projections per population + conductance-based (COBA) synapses. The
+# Multiple projections per population + conductance-based (COBA) synapses. The
 # integrate phase accumulates a per-neuron conductance (gtot) and current (itot) from every
 # projection, then takes the COBA effective-τ / effective-V∞ exponential-Euler step, so a
 # population can carry several synapse types at once (the prerequisite for E/I COBA networks).

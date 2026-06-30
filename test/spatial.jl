@@ -2,7 +2,7 @@ using Dewdrop
 using Test
 using Statistics
 
-# M3 --- spatial / structured connectivity: positions + a distance kernel build distance-
+# Spatial / structured connectivity: positions + a distance kernel build distance-
 # dependent, ring and grid topologies (with optional periodic boundaries) on the same SparseCSR
 # the engine consumes.
 @testset "spatial / structured connectivity" begin

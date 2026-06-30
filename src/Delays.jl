@@ -1,4 +1,4 @@
-# * Per-synapse conduction delays (M1b) --- a NEST-style ring buffer of postsynaptic
+# * Per-synapse conduction delays --- a NEST-style ring buffer of postsynaptic
 # accumulators. A spike scattered at step `now` along a synapse with integer delay `d` is
 # deposited into ring slot (now + d) mod L for its postsynaptic target, and delivered when
 # the clock reaches that step. Because the delay is read per synapse, arbitrarily distinct
@@ -7,7 +7,7 @@
 #
 # Layout is (N_post, L): a fixed column per time slot, so collecting the due increments is a
 # contiguous column read (coalescing-friendly on GPU). Deposit is a scatter-add into a
-# column --- a host loop here, a single Atomix.@atomic kernel in M1c.
+# column --- a host loop here, a single Atomix.@atomic kernel on the device.
 
 """
     DelayBuffer(arch, T, N, maxdelay)
@@ -42,7 +42,7 @@ maxdelay(buf::DelayBuffer) = buf.L - 1
 
 Add `value` to postsynaptic neuron `target`, to be delivered `delay` integer steps after
 the current step `now` (`delay` must be ≤ `maxdelay(buf)`). The fractional-offset hook for
-sub-`dt` spike timing rides on the same slot indexing; M1 always uses integer delays.
+sub-`dt` spike timing rides on the same slot indexing; the engine always uses integer delays.
 """
 @inline function deposit!(buf::DelayBuffer, now::Integer, target::Integer, value, delay::Integer)
     @inbounds buf.slots[target, _slotof(now + delay, buf.L)] += value

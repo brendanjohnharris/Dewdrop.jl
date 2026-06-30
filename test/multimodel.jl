@@ -3,7 +3,7 @@ using Test
 using Adapt
 using JLArrays
 
-# Multi-type populations (Phase B) --- `MultiModel` holds an ordered tuple of (model, range) groups
+# Multi-type populations --- `MultiModel` holds an ordered tuple of (model, range) groups
 # over one flat concatenated SoA, so a network can mix neuron model TYPES (e.g. AdEx excitatory +
 # LIF inhibitory) in one engine. State is a UNION SoA (columns = union of the groups' statevars; a
 # group ignores columns its model does not declare). A heterogeneous model routes through the fused

@@ -1,4 +1,4 @@
-# * Adaptation neurons (M5b) --- models that carry a spike-triggered adaptation current `w`
+# * Adaptation neurons --- models that carry a spike-triggered adaptation current `w`
 # alongside the membrane potential `V`. `AdaptLIF` is fully linear; `AdEx` adds the exponential
 # spike-initiation term. Both advance `(V, w)` by the "w-first" symplectic split --- `w` from the
 # OLD `V` (exact exponential relaxation), then `V` from the OLD V and the NEW `w` (the exact
@@ -85,7 +85,7 @@ end
     return ifelse(Vn ≥ m.Vpeak, m.Vpeak, Vn)                                     # clamp at the cutoff (no Inf)
 end
 
-# --- FNSNeuron: conductance-adaptation LIF (Treves-style; the WRCircuit neuron) ------------------
+# --- FNSNeuron: conductance-adaptation LIF (Treves-style) ------------------
 """
     FNSNeuron(; C, gL, VL, VK, Vθ, Vr, tref, τK, ΔgK)
 
@@ -94,7 +94,7 @@ Conductance-adaptation LIF: `C dV/dt = -gL(V - VL) - gK(V - VK) + I`, `τK dgK/d
 (whose `w` is a current), the adaptation here is a CONDUCTANCE with reversal `VK`, folded into the
 exact COBA propagator as an extra leak `gK` plus reversal drive `gK·VK`. `ΔgK = 0` gives a plain
 conductance-LIF (the inhibitory population). State: `V`, `refrac`, `w` (the generic aux column holds
-`gK`). Defaults follow the WRCircuit FNS neuron.
+`gK`). Defaults follow the Treves-style FNS neuron.
 """
 struct FNSNeuron{T} <: AbstractNeuronModel
     C::T; gL::T; VL::T; VK::T; Vθ::T; Vr::T; tref::T; τK::T; ΔgK::T
@@ -134,7 +134,7 @@ end
 # its prior code byte-for-byte. The carries-`w` value is `nothing` for V-only, a scalar otherwise.
 @inline _has_w(::Type{M}) where {M} = (:w in statevars(M))
 
-# --- per-neuron heterogeneity hooks (Phase 3; see Heterogeneous.jl). A scalar model resolves to
+# --- per-neuron heterogeneity hooks (see Heterogeneous.jl). A scalar model resolves to
 # itself per-neuron (bit-identical, zero-cost), is not heterogeneous, and rests at its leak reversal. ---
 @inline _resolve(m::AbstractNeuronModel, i) = m
 @inline _is_hetero(::AbstractNeuronModel) = false

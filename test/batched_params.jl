@@ -3,8 +3,7 @@ using Test
 
 # Generic per-member ("(N,B)") batched parameters --- the shared-connectome ensemble extended so a
 # parameter may carry a per-member batch axis, resolved at the EXISTING `_resolve(m,i,b)` /
-# `_bsyn_one(s,i,b)` seams (no new kernels). Built model-agnostically; WRCircuit is just consumer #1.
-# Phases:
+# `_bsyn_one(s,i,b)` seams (no new kernels). Built model-agnostically. Cases:
 #   (a) a single-group `Heterogeneous` model runs in the (N,B) batch (per-neuron resolve under the batch axis);
 #   (b) `BatchedModel` wraps ANY base + per-member (B) or per-(neuron,member) (N×B) overrides;
 #   (c) synapse scalar params may be per-member (length B).
@@ -17,7 +16,7 @@ _run(model, N; kw...) = solve(_net(model, N), FixedStep(0.1); progress = false, 
 @testset "batched per-member params" begin
     @testset "(a) Heterogeneous model runs in the (N,B) batch ≡ standalone" begin
         N = 8
-        # E/I adaptation pattern (the WRCircuit shape): first half adapt, second half do not.
+        # E/I adaptation pattern: first half adapt, second half do not.
         hm = Heterogeneous(_adex(); b = [i <= N ÷ 2 ? 80.0 : 0.0 for i in 1:N])
         s = _run(hm, N)
         @test sum(s.spike_count) > 0
@@ -75,7 +74,7 @@ _run(model, N; kw...) = solve(_net(model, N), FixedStep(0.1); progress = false, 
     end
 
     @testset "(d) PoissonSource streaming drive runs in the (N,B) batch ≡ standalone" begin
-        # the WRCircuit is sustained by streaming Poisson drives (a `PoissonSource` synapse); the batched
+        # a net sustained by streaming Poisson drives (a `PoissonSource` synapse); the batched
         # path must generate + scatter them per step into the (N,B) ring, SHARED across columns (same drive
         # realization), so each column reproduces the standalone solve. (Without it the batch is silent.)
         N = 8; B = 3
@@ -92,7 +91,7 @@ _run(model, N; kw...) = solve(_net(model, N), FixedStep(0.1); progress = false, 
     end
 
     @testset "(e) `model_overrides` kwarg wraps the model ≡ per-member standalone" begin
-        # the ergonomic entry point the WRCircuit uses: pass the per-(neuron,member) field array directly to
+        # the ergonomic entry point: pass the per-(neuron,member) field array directly to
         # `solve`, which wraps the network's model in a `BatchedModel` (no hand-built engine types).
         N = 8; B = 3
         isE = [i <= N ÷ 2 for i in 1:N]
@@ -107,7 +106,7 @@ _run(model, N; kw...) = solve(_net(model, N), FixedStep(0.1); progress = false, 
     end
 
     @testset "(f) batched :itot/:gtot recording ≡ scalar (materialised in-kernel)" begin
-        # the WRCircuit analyses the E INPUT current (`itot`); the batched kernel must materialise itot/gtot
+        # recording the E INPUT current (`itot`); the batched kernel must materialise itot/gtot
         # per (neuron, member) --- like the scalar fused path --- so each column's recorded trace equals the
         # standalone fused solve. (Previously rejected as kernel-local.)
         N = 8; B = 3

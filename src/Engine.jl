@@ -1,4 +1,4 @@
-# * Fixed-step engine (M1) behind the CommonSolve verb layer.
+# * Fixed-step engine behind the CommonSolve verb layer.
 #
 # SciML-faithful WITHOUT its container convention: we implement CommonSolve's
 # init/step!/solve!/solve over our OWN concrete types and SoA state, never a flat
@@ -14,8 +14,8 @@ export init, step!, solve!, solve
     Projection(synapse, conn)
 
 A synaptic projection: a synapse model applied over connectivity `conn`, which carries the
-per-synapse weights and (heterogeneous) delays. For M1 this is a recurrent projection within
-one population.
+per-synapse weights and (heterogeneous) delays. The projection acts within a single
+population.
 """
 struct Projection{SM <: AbstractSynapseModel, C <: AbstractConnectivity, PL}
     synapse::SM
@@ -192,7 +192,7 @@ mutable struct DewdropIntegrator{M, ST, In, A, S, T, B, C, SY, GT, MO, DR, CO, N
     const positions::PO          # per-neuron positions (host-side metadata; travels onto the solution)
     const progress::PG           # the `progress` kwarg spec (:auto/Bool/String/Int); host-side, read by solve!
 end
-# Device-movable (GPU-readiness contract): adapt the SoA state + buffers, leave the host-side
+# Device-movable: adapt the SoA state + buffers, leave the host-side
 # `subpops`/`positions` metadata (a custom rule keeps `positions` host-resident even on a GPU run).
 Adapt.adapt_structure(to, integ::DewdropIntegrator) = DewdropIntegrator(
     adapt(to, integ.model), adapt(to, integ.state), adapt(to, integ.input), integ.dt,
@@ -450,7 +450,7 @@ end
     return nothing
 end
 
-# SDE noise injection (M5a): add the exact-OU Gaussian increment to non-refractory neurons. The
+# SDE noise injection: add the exact-OU Gaussian increment to non-refractory neurons. The
 # `nothing` method compiles the diffusion away entirely (bit-identical to a deterministic run); the
 # `WhiteNoise` method draws one counter-based normal per neuron keyed by (seed, step, neuron).
 @inline _apply_noise!(::Nothing, integ, refrac, z) = nothing
@@ -563,7 +563,7 @@ Per-unit firing rate (`spike_count / duration`), in inverse units of `dt`.
 firing_rate(sol::DewdropSolution) = sol.spike_count ./ duration(sol)
 export firing_rate
 
-# --- Named-subpopulation reference API (Phase A) ---
+# --- Named-subpopulation reference API ---
 # A subpop is a contiguous range into the flat SoA, looked up in the solution's registry. `sol[:E]`
 # returns a lightweight view (no copy); `firing_rate(sol, :E)` / `raster(sol; of = :E)` restrict to it.
 

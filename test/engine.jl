@@ -1,10 +1,10 @@
 using Dewdrop
 using Test
 
-# M1a cycle 2 --- the fixed-step engine behind the CommonSolve verbs (init/step!/solve!/
+# The fixed-step engine behind the CommonSolve verbs (init/step!/solve!/
 # solve), driving a single LIF population. Validated in the SUBTHRESHOLD regime: with
 # constant sub-rheobase input the engine must reproduce the exact analytic trajectory
-# and never spike. (Spiking + f-I is cycle 3.)
+# and never spike.
 @testset "CommonSolve engine (subthreshold)" begin
     m = LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 100.0, tref = 2.0)
     N = 5
@@ -36,7 +36,7 @@ using Test
     Vfinal = V∞ + (-70.0 - V∞) * exp(-tend / m.τ)
     @test all(v -> isapprox(v, Vfinal; atol = 1e-6), sol.state.state.V)
 
-    # the schedule is the public, inspectable contract the engine executes
+    # the schedule is the public, inspectable guarantee the engine executes
     @test Dewdrop.phases(prob.schedule) == (:deliver, :integrate, :threshold, :reset, :propagate, :record)
 end
 

@@ -1,4 +1,4 @@
-# * Network builder (M2 + Phase A) --- a small, fluent, mutating helper for constructing networks
+# * Network builder --- a small, fluent, mutating helper for constructing networks
 # with named subpopulations. The builder accumulates an ordered list of populations
 # (`population!`), projections (`project!`), and an external drive (`drive!`), then `build`
 # assembles them into a flat `DewdropNetwork`: the populations are concatenated into one SoA in
@@ -6,7 +6,7 @@
 # models merged. Same-type groups that differ only in parameter values collapse to one
 # `Heterogeneous` model (block per-neuron arrays); a single shared model stays a bare model (the
 # homogeneous fast path, byte-identical to a hand-built `DewdropNetwork`). Different model TYPES per
-# group need the MultiModel engine (Phase B) and currently error.
+# group need the MultiModel engine and currently error.
 #
 # The accumulated populations/projections are heterogeneous (any model, any CUBA/COBA/delta
 # synapse), so `build` is the single dynamic boundary --- it materialises everything into concretely

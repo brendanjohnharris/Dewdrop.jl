@@ -1,7 +1,7 @@
 using Dewdrop
 using Test
 
-# M1b --- current-based (CUBA) exponential synapse: a delivered spike of weight `w` adds
+# Current-based (CUBA) exponential synapse: a delivered spike of weight `w` adds
 # `w` to the postsynaptic synaptic current, which decays with time constant `τ` and feeds
 # the neuron's input current directly.
 @testset "current synapse (CUBA): decay + PSC" begin

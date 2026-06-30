@@ -1,4 +1,4 @@
-# * Event-driven STDP (M5c) --- pair-based spike-timing-dependent plasticity with analytic
+# * Event-driven STDP --- pair-based spike-timing-dependent plasticity with analytic
 # between-spike trace decay. A plastic projection wraps a base synapse state (CUBA/COBA/delta ---
 # the transmission is orthogonal to the learning) and adds its OWN mutable per-edge weight array
 # (CSR-parallel), leaving the shared `SparseCSR` immutable (so the same connectome stays sharable,

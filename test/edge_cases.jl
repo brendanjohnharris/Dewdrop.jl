@@ -1,7 +1,7 @@
 using Dewdrop
 using Test
 
-# M2 robustness guards surfaced by the multi-axis review: an empty projection must be a no-op
+# Robustness guards: an empty projection must be a no-op
 # rather than crash; the clock-driven engine cannot deliver a same-step (delay 0) synapse; and
 # the Poisson drive must reject a per-step mean λ = rate*dt past the sampler's underflow cliff
 # (the units trap that 1000×-overdrove the canonical Brunel AI drive).

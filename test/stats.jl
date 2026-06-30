@@ -1,16 +1,16 @@
 using Dewdrop
 using Test
 
-# Statistical observables (WRCircuit stats.py ports). The spectral measures rest on the internal
-# FFT (FFT.jl), so the FFT is anchored against a direct DFT oracle for arbitrary lengths; the
+# Statistical observables. The spectral measures rest on the internal
+# FFT (FFT.jl), so the FFT is anchored against a direct DFT reference for arbitrary lengths; the
 # measures themselves are checked on hand-constructed rasters with known values, plus the sol-level
-# wrappers on a small recorded network. (Exact agreement with the real stats.py/numpy is the
-# separate cross-validation step in test/brainpy_comparison/.)
+# wrappers on a small recorded network. (Exact agreement with the reference stats.py/numpy is the
+# separate cross-validation step in test/simulator_comparisons/stats_validation/.)
 
 @testset "internal FFT ≡ direct DFT (radix-2 + Bluestein, any length)" begin
     for n in (1, 2, 3, 4, 5, 7, 8, 12, 16, 17, 31, 64)
         x = ComplexF64[cospi(0.3k) + im * sinpi(0.11k + 0.2) for k in 0:(n - 1)]
-        @test Dewdrop._fft(x) ≈ Dewdrop._dft(x, -1)             # forward matches the O(N²) oracle
+        @test Dewdrop._fft(x) ≈ Dewdrop._dft(x, -1)             # forward matches the O(N²) reference
         @test Dewdrop._ifft(Dewdrop._fft(x)) ≈ x               # round-trip
     end
     # real input, power of 2 and not

@@ -1,10 +1,10 @@
 using Dewdrop
 using Test
 
-# M0 contract (schedule) --- the within-step phase order is an explicit, inspectable,
+# The within-step phase order is an explicit, inspectable,
 # pinned object, not implicit control flow. For coupled conductance/adaptation models
 # the order changes spike timing, so the default order is regression-pinned here and
-# its *semantics* are validated against analytic results in M1/M2.
+# its *semantics* are validated against analytic results elsewhere.
 @testset "within-step schedule" begin
     s = Dewdrop.default_schedule()
 

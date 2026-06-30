@@ -7,7 +7,7 @@ set_theme!(fathom())
 
 # Scenario tests double as classical-figure reproductions: each saves its canonical plot to
 # test/plots/ (gitignored) for visual inspection, and asserts the artifact was produced. The
-# headline classical figures (Brunel regimes, Vogels-Abbott raster) arrive with M2.
+# headline classical figures (Brunel regimes, Vogels-Abbott raster) are included here.
 const PLOTDIR = joinpath(@__DIR__, "plots")
 isdir(PLOTDIR) || mkpath(PLOTDIR)
 

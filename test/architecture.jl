@@ -2,8 +2,8 @@ using Dewdrop
 using Test
 using Adapt
 
-# M0 contract 1 --- the architecture seam.
-# A single `AbstractArchitecture` trait with one allocation chokepoint, so the
+# The architecture seam.
+# A single `AbstractArchitecture` trait with a single allocation point, so the
 # whole simulation can be moved to a device via `Adapt`.
 @testset "architecture seam" begin
     @test Dewdrop.CPU() isa Dewdrop.AbstractArchitecture
@@ -20,7 +20,7 @@ using Adapt
     # scalars / non-array data pass through unchanged.
     @test Dewdrop.on_architecture(Dewdrop.CPU(), 3.0) === 3.0
 
-    # `allocate` is the single allocation chokepoint; it routes through the arch.
+    # `allocate` is the single allocation point; it routes through the arch.
     a = Dewdrop.allocate(Dewdrop.CPU(), Float32, 5)
     @test a isa Vector{Float32}
     @test length(a) == 5

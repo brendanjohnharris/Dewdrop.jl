@@ -58,7 +58,7 @@ using Test
 
     @testset "allocation-free Serial dense phases" begin
         # unconnected net → no sparse scatter (the threaded scatter allocates the @threads tasks at
-        # >1 thread regardless of backend); this isolates the Serial dense-phase alloc-free contract.
+        # >1 thread regardless of backend); this isolates the Serial dense-phase allocation-free guarantee.
         unconn = DewdropNetwork(m, N; input = 30.0, tspan = (0.0, 50.0))
         warm = init(unconn, FixedStep(0.1); backend = Serial())
         step!(warm)

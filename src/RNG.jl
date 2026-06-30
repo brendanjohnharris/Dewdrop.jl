@@ -1,8 +1,8 @@
-# * Counter-based RNG (M0 contract 4)
+# * Counter-based RNG
 # A pure, stateless, counter-based generator: a draw keyed by (seed, step, entity)
 # is a function of those values alone, so results are identical regardless of thread
-# count or iteration order. This is the numerics contract that makes seeded runs
-# reproducible and CPU/GPU-comparable; it must be fixed before any golden-seed test.
+# count or iteration order. This is the numerical rule that makes seeded runs
+# reproducible and CPU/GPU-comparable; it must be fixed before any fixed-seed test.
 # A counter-based RNG (Philox) is also the only RNG that parallelises cleanly across
 # GPU threads (no shared mutable state, no per-thread stream bookkeeping).
 

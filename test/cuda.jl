@@ -3,11 +3,11 @@ using Test
 using Statistics
 using CUDA
 
-# M6 --- the CUDA GPU backend. The architecture seam (`array_type(GPU()) = CuArray`) plus the
+# The CUDA GPU backend. The architecture seam (`array_type(GPU()) = CuArray`) plus the
 # Adapt-movable, KernelAbstractions-kernel engine means a network built with `arch = GPU()` runs
 # entirely on the device with no kernel changes. The arch-seam check runs anywhere CUDA loads;
 # the device-simulation checks are guarded by `CUDA.functional()` (they need a real GPU).
-@testset "CUDA GPU backend (M6)" begin
+@testset "CUDA GPU backend" begin
     @testset "architecture seam (no functional GPU required)" begin
         @test Dewdrop.array_type(Dewdrop.GPU()) === CuArray          # type-level; no device needed
     end
@@ -136,7 +136,7 @@ using CUDA
             @test tc < te                                                       # compaction wins here
         end
 
-        @testset "fused megakernel makes the GPU faster than the CPU at scale (M6 Tier-1)" begin
+        @testset "fused megakernel makes the GPU faster than the CPU at scale" begin
             # The fused dense step + pipelined (no per-step sync) device stream removes the
             # launch-bound tax: at N = 20k the GPU runs several × the CPU throughput. Assert a
             # conservative ≥ 1.5× (the measured margin is ~5×) so a shared host stays non-flaky.
@@ -152,11 +152,11 @@ using CUDA
             solve(netp(Dewdrop.CPU()), FixedStep(0.1); record = rec)
             tg = minimum(@elapsed(CUDA.@sync solve(netp(Dewdrop.GPU()), FixedStep(0.1); record = rec)) for _ in 1:3)
             tc = minimum(@elapsed(solve(netp(Dewdrop.CPU()), FixedStep(0.1); record = rec)) for _ in 1:3)
-            @info "M6 fused throughput" N gpu_s = tg cpu_s = tc speedup = tc / tg
+            @info "fused throughput" N gpu_s = tg cpu_s = tc speedup = tc / tg
             @test tc / tg ≥ 1.5
         end
 
-        @testset "ensemble batching on the GPU: bit-exact oracle + speedup vs sequential" begin
+        @testset "ensemble batching on the GPU: bit-exact reference + speedup vs sequential" begin
             # B independent instances sharing one CSR, varying only per-column input; with the
             # drive stream forced to 0 each column must match a scalar GPU solve bit-for-bit.
             N, B, T = 500, 8, 100.0

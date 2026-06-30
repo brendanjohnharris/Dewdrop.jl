@@ -1,4 +1,4 @@
-# * SDE noise (M5a) --- additive-voltage white noise on the membrane, integrated by the EXACT
+# * SDE noise --- additive-voltage white noise on the membrane, integrated by the EXACT
 # Ornstein--Uhlenbeck discretization (the stochastic analogue of the engine's exact drift
 # propagator). A `WhiteNoise` is attached to the network like a `PoissonDrive`; it is optional and
 # compiles away when absent (the `Nothing` strong-zero idiom shared with `drive`/`compaction`).
@@ -23,7 +23,7 @@ WhiteNoise(σ::Real; seed = 0) = WhiteNoise(float(σ), UInt64(seed))
 export WhiteNoise
 
 # The membrane time constant the model relaxes with --- the OU rate that sets the noise scaling.
-# Defined per model; the `@neuron` macro and the adaptation models (M5b) add their own methods.
+# Defined per model; the `@neuron` macro and the adaptation models add their own methods.
 @inline _tau(m::LIF) = m.τ
 
 # Exact-OU per-step noise scale. For a linear membrane advanced by the exact propagator

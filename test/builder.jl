@@ -1,7 +1,7 @@
 using Dewdrop
 using Test
 
-# M2 --- a fluent builder for E/I networks: one population of NE+NI neurons with named
+# A fluent builder for E/I networks: one population of NE+NI neurons with named
 # :E (1:NE) and :I (NE+1:end) subpopulations, projections added by `connect!`, an external
 # drive by `drive!`, assembled with `build`. Removes the manual fixed_prob / sources /
 # Projection boilerplate that Brunel and Vogels–Abbott otherwise need.
@@ -46,7 +46,7 @@ using Test
     @test build(nb2).subpops.I == 81:100
 end
 
-# Fluent multi-population builder (Phase A): `network(; tspan)` accumulates named populations via
+# Fluent multi-population builder: `network(; tspan)` accumulates named populations via
 # `population!`, projections via `project!(src => dst, …)`, an external drive by `drive!`, assembled
 # by `build` into a flat DewdropNetwork with a subpop registry. Same-type groups with differing
 # parameters are merged into one `Heterogeneous` model (block per-neuron arrays).

@@ -16,7 +16,7 @@ using ForwardDiff
         sum(s.spike_count) / (8 * duration(s))
     end
 
-    @testset "default eltype is unchanged (the bit-identical contract)" begin
+    @testset "default eltype is unchanged (the bit-identical guarantee)" begin
         s = solve(build(1.0), FixedStep(0.1))                  # default (Auto) backend
         @test eltype(s.spike_count) == Int                     # Bool/Int preserved for every non-Differentiable run
     end

@@ -75,7 +75,7 @@ end
     @test Array(gpu.state.state.V) ≈ cpu.state.state.V
 end
 
-@testset "frozen dual-exp: batched ≡ scalar oracle" begin
+@testset "frozen dual-exp: batched ≡ scalar reference" begin
     m = LIF(; τ = 20.0, EL = -65.0, Vθ = -50.0, Vr = -65.0, R = 1.0, tref = 2.0)
     conn = fixed_prob(Dewdrop.CPU(), 80, 80, 0.1; weight = 1.5, delay = steps(2), seed = UInt64(5))
     prob = DewdropNetwork(m, 80; input = 18.0, tspan = (0.0, 150.0),

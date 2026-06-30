@@ -5,7 +5,7 @@ using Adapt
 using JLArrays
 using GPUArrays
 
-# M4 --- the monitor (recording) framework. `record = (name = spec, ...)` materialises a
+# The monitor (recording) framework. `record = (name = spec, ...)` materialises a
 # NamedTuple of monitors that stage into arch-resident window buffers flushed to host stores;
 # `sol.record.<name>` holds the result. Specs: Trace (any state/synaptic/accumulator var),
 # Spikes (raster), Aggregate (a scalar reduction per step), Probe (an arbitrary function), each

@@ -6,7 +6,7 @@ using Statistics
 using Adapt: adapt
 
 # Ensemble (tensor) batching (src/Batch.jl): run B independent network instances at once, sharing
-# connectivity STRUCTURE. The correctness contract is a SCALAR ORACLE: with the per-column drive
+# connectivity STRUCTURE. The correctness check is a SCALAR REFERENCE: with the per-column drive
 # stream forced to 0 (the scalar default), batched column b must equal a scalar solve configured
 # with that column's input/v0 --- BIT-IDENTICALLY (delta synapses + counter RNG are exact). With
 # distinct streams the columns are independent realizations. No GPU is needed: KA kernels run on
@@ -37,7 +37,7 @@ _ncols_expected(T) = round(Int, T / 0.1)                                 # recor
               [Dewdrop.draw_poisson(2.0, UInt64(7), s, 3, 0) for s in 0:50]
     end
 
-    @testset "bit-exact scalar oracle (delta E/I + drive), input sweep" begin
+    @testset "bit-exact scalar reference (delta E/I + drive), input sweep" begin
         N, B = 100, 6
         inputs = [(b - 1) * 0.4 for b in 1:B]
         scal = [solve(_ei_delta(inputs[b]; N), FixedStep(0.1)).spike_count for b in 1:B]
@@ -47,9 +47,9 @@ _ncols_expected(T) = round(Int, T / 0.1)                                 # recor
         @test size(firing_rate(bs)) == (N, B)
     end
 
-    @testset "bit-exact oracle for COBA and CUBA synapses" begin
+    @testset "bit-exact reference for COBA and CUBA synapses" begin
         # Weights are exactly representable (multiples of powers of two), so the scatter's
-        # ring-slot accumulation is ORDER-INDEPENDENT --- the bit-exact oracle then holds even when
+        # ring-slot accumulation is ORDER-INDEPENDENT --- the bit-exact reference then holds even when
         # the scalar reference scatter runs multithreaded (its atomic path reorders the FP sum;
         # exact weights make any order give the same float). The batched scatter is deterministic
         # regardless (it threads over the disjoint batch axis with no atomics).
@@ -84,9 +84,9 @@ _ncols_expected(T) = round(Int, T / 0.1)                                 # recor
         @test all(bs.spike_count[:, b] != bs.spike_count[:, 1] for b in 2:B)
     end
 
-    @testset "per-column random v0: shared scalar oracle + independence" begin
+    @testset "per-column random v0: shared scalar reference + independence" begin
         N, B = 80, 5
-        # shared v0 scalar (no random) oracle, input sweep
+        # shared v0 scalar (no random) reference, input sweep
         inputs = [(b - 1) * 0.5 for b in 1:B]
         scal = [solve(_ei_delta(inputs[b]; N), FixedStep(0.1); v0 = 5.0).spike_count for b in 1:B]
         bs = solve(_ei_delta(0.0; N), FixedStep(0.1); batch = B, input = _colmat(inputs, N), streams = fill(0, B), v0 = 5.0)
@@ -133,11 +133,11 @@ _ncols_expected(T) = round(Int, T / 0.1)                                 # recor
         @test bs.record.spikes.data isa Array{Bool, 3}                   # store came back host-resident
     end
 
-    @testset "compacted scatter (scatter = :compacted) ≡ edge oracle, per column" begin
+    @testset "compacted scatter (scatter = :compacted) ≡ edge reference, per column" begin
         N, B = 120, 5
         inputs = [(b - 1) * 0.4 for b in 1:B]
         scal = [solve(_ei_delta(inputs[b]; N), FixedStep(0.1)).spike_count for b in 1:B]
-        # CPU (KA.CPU): batched compacted matches the scalar oracle bit-for-bit (exact delta weights)
+        # CPU (KA.CPU): batched compacted matches the scalar reference bit-for-bit (exact delta weights)
         bc = solve(_ei_delta(0.0; N), FixedStep(0.1); batch = B, input = _colmat(inputs, N), streams = fill(0, B), scatter = :compacted)
         @test all(bc.spike_count[:, b] == scal[b] for b in 1:B)
         # JLArrays under allowscalar(false): the per-column compaction (active (N,B), na (B,)) engages

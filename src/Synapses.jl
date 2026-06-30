@@ -1,4 +1,4 @@
-# * Synapse models (M1b). A synapse model defines how a delivered presynaptic spike affects
+# * Synapse models. A synapse model defines how a delivered presynaptic spike affects
 # the postsynaptic state and how that state decays between spikes. The exact exponential
 # decay is the linear propagator for the synaptic subsystem (same structure as the neuron's
 # subthreshold step), kept distinct from the spike-triggered jump (the delivered weight).
@@ -19,7 +19,7 @@ Base.Broadcast.broadcastable(s::AbstractSynapseModel) = Ref(s)
 Current-based (CUBA) exponential synapse: a delivered spike of weight `w` adds `w` to the
 postsynaptic synaptic current, which decays with time constant `τ` (`τ dI/dt = -I`) and
 feeds the neuron's input current directly. The simplest synapse; conductance-based (COBA)
-synapses, which couple to `V` via a reversal potential, arrive in M2.
+synapses, which couple to `V` via a reversal potential, are defined below.
 """
 struct CurrentSynapse{T} <: AbstractSynapseModel
     τ::T
@@ -68,7 +68,7 @@ export ConductanceSynapse
 """
     DualExpSynapse(; τr, τd, Erev)
 
-Conductance-based (COBA) dual-exponential synapse (the WRCircuit `DualExponV2` kinetic): a delivered
+Conductance-based (COBA) dual-exponential synapse: a delivered
 spike of weight `w` kicks two accumulators `g_rise`/`g_decay`, which decay with rise time `τr` and
 decay time `τd`; the conductance is `g(t) = a·(g_decay − g_rise)` --- a difference of exponentials
 (rise then decay) --- normalised by `a` so the peak conductance equals the delivered weight `w`. The

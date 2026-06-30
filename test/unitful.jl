@@ -4,7 +4,7 @@ using Unitful
 
 # The Unitful boundary extension. Physical-unit inputs are converted + stripped to Dewdrop's
 # coherent canonical float system (ms, mV, nS, pA, pF, GΩ, kHz) at construction, so the engine
-# state stays plain isbits floats (the GPU contract) while the API accepts real units.
+# state stays plain isbits floats (the GPU requirement) while the API accepts real units.
 @testset "Unitful boundary extension" begin
     @testset "neuron + synapse construction strips to canonical floats" begin
         mu = LIF(; τ = 20u"ms", EL = -60u"mV", Vθ = -50u"mV", Vr = -60u"mV", R = 0.1u"GΩ", tref = 5u"ms")

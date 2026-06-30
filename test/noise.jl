@@ -3,7 +3,7 @@ using Test
 using Adapt
 using JLArrays
 
-# M5a --- SDE noise: an additive-voltage white-noise source (`WhiteNoise`) attached to the
+# SDE noise: an additive-voltage white-noise source (`WhiteNoise`) attached to the
 # network, integrated by the EXACT Ornstein--Uhlenbeck discretization (the noise analogue of the
 # engine's exact drift propagator). Opt-in and compiling away when absent (the `Nothing`
 # strong-zero idiom). The increment is the counter-based Gaussian `draw_normal`, keyed by
@@ -113,14 +113,14 @@ end
     @test @allocated(step!(warm)) == 0
 end
 
-@testset "WhiteNoise: batched ≡ scalar oracle (per-column streams)" begin
+@testset "WhiteNoise: batched ≡ scalar reference (per-column streams)" begin
     m = LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 10.0, R = 1.0, tref = 2.0)
     dt = 0.1
     prob = DewdropNetwork(m, 32; input = 16.0, tspan = (0.0, 80.0),
         noise = WhiteNoise(2.0; seed = UInt64(5)))
     B = 4
     # streams all-zero -> every column shares the scalar (batch-0) noise draw, so each column
-    # equals the scalar solve (the bit-exact ensemble oracle, as for the Poisson drive).
+    # equals the scalar solve (the bit-exact ensemble reference, as for the Poisson drive).
     bsol = solve(prob, FixedStep(dt); batch = B, streams = zeros(Int, B))
     ssol = solve(prob, FixedStep(dt))
     for b in 1:B

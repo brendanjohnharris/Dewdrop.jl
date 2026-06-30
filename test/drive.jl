@@ -3,7 +3,7 @@ using Test
 using Adapt
 using JLArrays
 
-# M2 --- external Poisson drive: each step every neuron receives n ~ Poisson(rate·dt)
+# External Poisson drive: each step every neuron receives n ~ Poisson(rate·dt)
 # external spikes, each a voltage kick of `weight` (the Brunel external input). Drawn from
 # the counter-based RNG keyed by (seed, step, neuron) → reproducible, GPU-safe.
 @testset "Poisson external drive" begin

@@ -4,8 +4,8 @@ using Adapt
 using JLArrays
 using Statistics
 
-# WRCircuit Phase 2 --- dual-exponential COBA synapse (`DualExpSynapse`; the WRCircuit
-# `bp.dyn.DualExponV2` kinetic). Two per-target accumulators `g_rise`/`g_decay`, both kicked by a
+# Dual-exponential COBA synapse (`DualExpSynapse`).
+# Two per-target accumulators `g_rise`/`g_decay`, both kicked by a
 # delivered weight, decay with `exp(-dt/τr)` / `exp(-dt/τd)`; the conductance is
 # `g(t) = a·(g_decay − g_rise)` with `a = (τd/(τd−τr))·(τr/τd)^(τr/(τr−τd))` (peak normalised to the
 # kick). COBA output `g·(Erev − V)`. A difference-of-exponentials PSG (rise then decay), vs the
@@ -83,7 +83,7 @@ end
     @test Array(gpu.state.state.V) ≈ cpu.state.state.V
 end
 
-@testset "dual-exp COBA: batched ≡ scalar oracle" begin
+@testset "dual-exp COBA: batched ≡ scalar reference" begin
     m = LIF(; τ = 20.0, EL = -65.0, Vθ = -50.0, Vr = -65.0, R = 1.0, tref = 2.0)
     conn = fixed_prob(Dewdrop.CPU(), 80, 80, 0.1; weight = 1.5, delay = steps(2), seed = UInt64(5))
     prob = DewdropNetwork(m, 80; input = 18.0, tspan = (0.0, 150.0),

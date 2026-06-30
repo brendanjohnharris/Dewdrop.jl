@@ -7,7 +7,7 @@ include(joinpath(@__DIR__, "brunel_analysis.jl"))
 
 set_theme!(fathom())
 
-# M2 --- the Brunel (2000) sparse balanced E/I network, the canonical SNN-simulator benchmark,
+# The Brunel (2000) sparse balanced E/I network, the canonical SNN-simulator benchmark,
 # reproduced across its four classical dynamical regimes (Brunel Fig. 8): SR (synchronous
 # regular), AI (asynchronous irregular), SI-fast and SI-slow (synchronous irregular, fast/slow
 # global oscillation). Each is a scaled instance (N=2500-10000) of E+I LIF neurons with signed

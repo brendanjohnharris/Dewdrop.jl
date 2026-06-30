@@ -6,7 +6,7 @@ using Fathom
 
 set_theme!(fathom())
 
-# M2 --- the Vogels & Abbott (2005) conductance-based (COBA) balanced network, the canonical
+# The Vogels & Abbott (2005) conductance-based (COBA) balanced network, the canonical
 # COBA SNN benchmark. 4000 LIF neurons (3200 E / 800 I), 2% connectivity, conductance-based
 # E (Erev=0, τ=5ms) and I (Erev=−80, τ=10ms) synapses with the original 6 nS / 67 nS quanta
 # (here as g/g_L ratios with R=1), held in the asynchronous-irregular state by a weak

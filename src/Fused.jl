@@ -1,4 +1,4 @@
-# * Fused device step (M6 Tier-1) --- the launch-bound fix for the GPU hot path.
+# * Fused device step --- the launch-bound fix for the GPU hot path.
 #
 # At small/medium N the per-step cost is dominated by KERNEL LAUNCHES, not compute: the
 # broadcast-per-phase engine issues ~10 dense launches per step (deliver, drive, accumulate,
@@ -129,7 +129,7 @@ end
         itotarr[i] = itot
         gtotarr[i] = gtot
         v += _drive_kick(drive, n, i, dt)
-        # resolve the per-neuron model (Phase 3): `_resolve(m, i) = m` for a scalar model (bit-identical),
+        # resolve the per-neuron model: `_resolve(m, i) = m` for a scalar model (bit-identical),
         # the i-th override values for a Heterogeneous one.
         m_i = _resolve(m, i)
         # subthreshold (V, aux) advance + SDE noise (refractory clamps V to reset, no noise). For a

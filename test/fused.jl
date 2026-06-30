@@ -4,7 +4,7 @@ using JLArrays
 using GPUArrays
 using Adapt: adapt
 
-# M6 Tier-1 --- the fused device megakernel (src/Fused.jl). On a GPU backend the canonical
+# The fused device megakernel (src/Fused.jl). On a GPU backend the canonical
 # schedule's dense per-neuron phases (deliver + drive + accumulate + membrane + decay +
 # threshold + reset + count) collapse into ONE KernelAbstractions launch, the CPU path keeps
 # its broadcast phases. This suite pins the fused path to be NUMERICALLY IDENTICAL to the

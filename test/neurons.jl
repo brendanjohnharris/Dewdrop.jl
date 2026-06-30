@@ -1,7 +1,7 @@
 using Dewdrop
 using Test
 
-# M1a cycle 1 --- the LIF neuron model and its exact subthreshold propagator.
+# The LIF neuron model and its exact subthreshold propagator.
 # Units (plain floats, consistent): time ms, V mV, R MΩ, I nA (so R·I is mV).
 @testset "LIF model + exact subthreshold propagator" begin
     m = LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 100.0, tref = 2.0)

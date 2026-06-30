@@ -3,7 +3,7 @@ using Test
 using Statistics
 using TimeseriesBase
 
-# M4 --- the TimeseriesBase labeling extension: recorded monitors wrapped as ToolsArrays with
+# The TimeseriesBase labeling extension: recorded monitors wrapped as ToolsArrays with
 # meaningful `Time`/`Neuron` dimensions. Loading TimeseriesBase activates the ext and injects the
 # custom `Neuron`/`Synapse` dims into Dewdrop's namespace.
 @testset "TimeseriesBase labeled outputs" begin

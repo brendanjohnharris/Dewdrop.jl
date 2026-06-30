@@ -3,14 +3,14 @@ using Test
 using Adapt
 using JLArrays
 
-# M5c --- event-driven pair-based STDP. A plastic projection carries its OWN mutable per-edge
+# Event-driven pair-based STDP. A plastic projection carries its OWN mutable per-edge
 # weights (CSR-parallel, leaving the shared SparseCSR immutable) plus pre/post eligibility traces.
 # The weight update rides the existing edge-parallel scatter (per-edge, no atomics on the weight);
 # trace decay folds into :integrate and the bump into :propagate, so no new schedule phase is
 # needed and the decay→update→bump order falls out of the phase order. Plasticity uses ACTUAL
 # spike times (the conduction delay is transmission-only).
 
-# Minimal STDP harness: a single edge pre→post, spikes driven by hand at controlled steps, running
+# Minimal STDP setup: a single edge pre→post, spikes driven by hand at controlled steps, running
 # only the trace decay (:integrate's _decay_all!) and the plastic :propagate (scatter + bump). This
 # isolates the weight rule, so Δw vs Δt is analytically exact.
 function stdp_pair_dw(rule, Δt_steps; w0 = 5.0, d = 1, dt = 1.0, pre = 1, post = 2)

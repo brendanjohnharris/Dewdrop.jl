@@ -1,6 +1,6 @@
-# * Architecture seam (M0 contract 1)
+# * Architecture seam
 # A single trait selecting the execution device/memory, with one allocation
-# chokepoint, so an entire simulation can be moved to a device via `Adapt`.
+# point, so an entire simulation can be moved to a device via `Adapt`.
 
 """
     AbstractArchitecture
@@ -62,7 +62,7 @@ architecture(a::Base.PermutedDimsArray) = architecture(parent(a))
 """
     allocate(arch, T, dims...)
 
-The single allocation chokepoint (M0 contract 1): allocate an uninitialised array
+The single allocation point: allocate an uninitialised array
 of element type `T` with shape `dims` on `arch`. All core state allocation routes
 through here so the architecture controls the memory space.
 """

@@ -12,7 +12,7 @@
 #      synapses --- measured up to ~30× over edge-parallel at high degree + sparse firing.
 #
 # Cost: the launch needs the active count `na` on the HOST (to size the 2-level grid), i.e. one
-# device→host read per step. That reintroduces a per-step sync (which the M6 Tier-1 fusion removed)
+# device→host read per step. That reintroduces a per-step sync (which the fused device step removed)
 # --- negligible when the step is scatter-bound (the regime where compaction is used), but a net
 # loss in the launch-bound small-N regime, so this path is OPT-IN (`solve(...; scatter = :compacted)`)
 # and the performance advisor only suggests it when the regime fits.
