@@ -15,7 +15,7 @@ All notable changes to Dewdrop.jl are documented here.
   - **Propagation:** event-driven sparse scatter written once as a `KernelAbstractions`
     kernel (CPU and device), with `Atomix` atomic accumulation.
   - **Stochasticity:** counter-based (Philox) RNG, Poisson sampling, and external Poisson
-    drive --- reproducible and identical across threads and devices.
+    drive, all reproducible and identical across threads and devices.
   - **Interface:** the `CommonSolve` verbs (`init`/`step!`/`solve!`/`solve`) over the
     engine's own struct-of-arrays state; a compile-time, `Val`-dispatched within-step
     schedule; opt-in spike-raster and voltage-trace recording.

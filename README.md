@@ -5,13 +5,9 @@
 ![Experimental](https://img.shields.io/badge/%F0%9F%A7%AA_status-experimental-orange)
 ![AI-driven](https://img.shields.io/badge/%F0%9F%A4%96_development-AI--driven-8957e5)
 
-A generic, intuitive, GPU-aware spiking neural network simulator for Julia.
+A GPU-aware spiking neural network simulator for Julia.
 
-Dewdrop consolidates ideas from the gold-standard simulators (Brian2, NEST, BrainPy) into a
-fast, fixed-step, struct-of-arrays engine that is **CPU-first but GPU-ready by construction**:
-every hot path is written as a portable broadcast or `KernelAbstractions` kernel and runs
-unmodified on `Array` and on device arrays. It follows SciML conventions by implementing the
-`CommonSolve` interface over its own SoA types rather than the flat-vector container convention.
+Dewdrop ports and consolidates ideas from gold-standard simulators (Brian2, NEST, BrainPy) into a fast, fixed-step, struct-of-arrays engine that's fully Julia.
 
 ## Quick start
 
@@ -44,20 +40,20 @@ times, ids = raster(sol)
 
 Experimental, but broad. Implemented and tested:
 
-- **Neurons** --- LIF (exact subthreshold propagator), AdaptLIF, AdEx, FNSNeuron; per-neuron
+- **Neurons**: LIF (exact subthreshold propagator), AdaptLIF, AdEx, FNSNeuron; per-neuron
   `Heterogeneous` parameters and mixed-type `MultiModel` populations; custom models via the
   `@neuron` macro.
-- **Synapses** --- current-based (CUBA), delta (voltage-jump), conductance-based (COBA),
+- **Synapses**: current-based (CUBA), delta (voltage-jump), conductance-based (COBA),
   dual-exponential COBA, and a frozen-current COBA variant; per-synapse heterogeneous delays.
-- **Connectivity** --- fixed-probability and spatial (distance-kernel / top-k) connectomes over
+- **Connectivity**: fixed-probability and spatial (distance-kernel / top-k) connectomes over
   point positions, with periodic boundaries and narrow (Int32) index options.
-- **Drive & noise** --- counter-based (reproducible) RNG, per-neuron Poisson drive, streaming
+- **Drive & noise**: counter-based (reproducible) RNG, per-neuron Poisson drive, streaming
   Poisson sources, and an exact Ornstein--Uhlenbeck `WhiteNoise` SDE term.
-- **Plasticity** --- event-driven STDP (mutable weights + traces).
-- **Engine** --- fixed-step `CommonSolve` interface with pluggable execution backends
+- **Plasticity**: event-driven STDP (mutable weights + traces).
+- **Engine**: fixed-step `CommonSolve` interface with pluggable execution backends
   (`Serial`/`Fused`/`Turbo`/`Differentiable`, chosen by `Auto`), a CUDA GPU path via a fused
   megakernel, and ensemble + block-diagonal batching.
-- **Outputs** --- opt-in windowed monitors (`Trace`/`Spikes`/`Aggregate`/`Probe`), named
+- **Outputs**: opt-in windowed monitors (`Trace`/`Spikes`/`Aggregate`/`Probe`), named
   subpopulations with a fluent builder and addressor (`sol[:E]`), `Unitful` inputs, labelled
   `TimeseriesBase` outputs, and host-side statistical observables.
 
@@ -71,8 +67,8 @@ See the [documentation](https://brendanjohnharris.github.io/Dewdrop.jl/dev) for 
 ## Benchmarks
 
 On an identical recurrent E/I AdEx network (same connectome, verified statistics), Dewdrop's `Fused`
-backend is the **fastest CPU simulator at scale** --- 3.4× faster than Brian2's compiled C++ and 15.6×
-faster than NEST at N=512k --- and the **fastest on the GPU** (2.2× brian2cuda, 8× GeNN), while staying
+backend is the **fastest CPU simulator at scale** (3.4× faster than Brian2's compiled C++ and 15.6×
+faster than NEST at N=512k) and the **fastest on the GPU** (2.2× brian2cuda, 8× GeNN), while staying
 competitive with both at small sizes. Full methodology and tables are in the
 [benchmarks documentation](https://brendanjohnharris.github.io/Dewdrop.jl/dev/benchmarks).
 
