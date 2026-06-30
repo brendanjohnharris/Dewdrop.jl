@@ -97,16 +97,11 @@ const SIMCOLOR = Dict(
     "brainpy" => Fathom.qinghai, "nest" => Fathom.seohae, "genn" => Fathom.ianthina
 )
 _color(sim) = get(SIMCOLOR, sim, Fathom.ianthina)
-# backend → marker, so a simulator's several backends (e.g. dewdrop serial/fused/turbo) stay distinct
-const BACKEND_MARKER = Dict(
-    "serial" => :circle, "fused" => :rect, "turbo" => :utriangle, "nest" => :diamond,
-    "jax" => :star5, "cuda" => :xcross, "cpp_standalone" => :cross, "cuda_standalone" => :pentagon
-)
-_marker(backend) = get(BACKEND_MARKER, backend, :hexagon)
 
 # Apples-to-apples layout: legend across the top, CPU methods (time + memory) on row 2, GPU on row 3.
-# Within a row every series is the same device, so colour = simulator and marker = backend suffice
-# (no linestyle needed); CPU and GPU never share an axis, so their very different scales don't squash.
+# Within a row every series is the same device, so colour = simulator suffices (a sim's CPU/GPU lines
+# share its colour); dewdrop is drawn thicker/opaque to stand out, others thinner/translucent. CPU and
+# GPU never share an axis, so their very different scales don't squash.
 function plot_scaling(series)
     fig = SixPanel()
     cpu = filter(s -> s.device != "gpu", series)
@@ -125,11 +120,13 @@ function plot_scaling(series)
         for s in sort(ss; by = x -> (x.sim, x.backend))
             length(s.Ns) ≥ 1 || continue
             lbl = s.backend == s.sim ? s.sim : "$(s.sim) $(s.backend)"
-            c = _color(s.sim); mk = _marker(s.backend)
-            h = scatterlines!(axt, s.Ns, s.wall; color = c, marker = mk)
+            isdew = s.sim == "dewdrop"          # dewdrop emphasised: thicker, fully opaque
+            c = isdew ? _color(s.sim) : (_color(s.sim), 0.6)
+            lw = isdew ? 3.5 : 1.8
+            h = lines!(axt, s.Ns, s.wall; color = c, linewidth = lw)
             push!(handles, h); push!(labels, lbl)
             pos = s.mem .> 0
-            any(pos) && scatterlines!(axm, s.Ns[pos], s.mem[pos]; color = c, marker = mk)
+            any(pos) && lines!(axm, s.Ns[pos], s.mem[pos]; color = c, linewidth = lw)
         end
         return handles, labels
     end

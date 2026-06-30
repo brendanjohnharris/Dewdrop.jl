@@ -66,7 +66,7 @@ cross-checked spike-for-spike against Brian2/brian2cuda, NEST/NEST-GPU, GeNN, an
 design is CPU-first with GPU-readiness enforced in CI (via `JLArrays` + `allowscalar(false)`); the
 test suite is Aqua- and JET-clean.
 
-See the [documentation](https://brendanjohnharris.github.io/Dewdrop.jl/dev) for the full guide set.
+See the [documentation](https://brendanjohnharris.github.io/Dewdrop.jl/dev) for a full guide.
 
 ## Benchmarks
 
