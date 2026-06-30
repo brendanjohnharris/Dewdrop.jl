@@ -54,6 +54,19 @@ function _make_synstate(arch, syn::PoissonSource, conn, ::Type{T}, N, dt) where 
     return PoissonSourceState(inner, ext, conn, inner.buf, spiked, T(syn.rate * dt / 1000), syn.seed)
 end
 
+# Batched (N,B) drive state (see `BatchedPoissonSourceState` in src/Batch.jl): build the batched inner synapse
+# (its (N,B,L) ring receives the deposits), the (n_ext, B) firing mask, and the constant (n_ext, B) source-row
+# index that makes the per-step counter-RNG draw SHARED across the B columns --- same drive realization per
+# member, the right default for a parameter sweep at a fixed connectome.
+function _make_batched_synstate(arch, syn::PoissonSource, conn, ::Type{T}, N, B, dt) where {T}
+    ext = _resolve_delays(syn.extconn, dt)
+    inner = _make_batched_synstate(arch, syn.synapse, ext, T, N, B, dt)
+    next = npre(ext)
+    spiked = fill!(allocate(arch, Bool, next, Int(B)), false)
+    srcidx = on_architecture(arch, repeat(1:next, 1, Int(B)))
+    return BatchedPoissonSourceState(inner, ext, conn, inner.buf, spiked, srcidx, T(syn.rate * dt / 1000), syn.seed)
+end
+
 # Once-per-step: which virtual sources fire (counter RNG keyed by (seed, step, source)), then scatter their
 # events through `extconn` into the wrapped synapse's buffer --- the SAME `scatter!` that delivers network
 # spikes (so the CPU/device paths and per-edge delays are shared, not re-implemented).
@@ -61,7 +74,12 @@ end
     n = integ.n
     idx = eachindex(s.spiked)
     @. s.spiked = draw_uniform(Float64, s.seed, n, idx) < s.p_spike
-    scatter!(s.buf, s.extconn, s.spiked, n)
+    # `sync = false`: this scatter and the next read of `s.buf` (the fused step's inline deliver) run on the SAME
+    # device stream, so ordering already guarantees visibility --- no host sync needed. The `scatter!` default
+    # `sync = true` would `synchronize()` the device EVERY step (and twice over for a 2-drive net like WRCircuit),
+    # draining the pipeline the fused path builds (Fused.jl:197 passes `sync = false` for the same reason) and
+    # leaving the GPU step launch-bound / slower than CPU. Behaviour-identical; the buffer contents are the same.
+    scatter!(s.buf, s.extconn, s.spiked, n; sync = false)
     return nothing
 end
 

@@ -69,17 +69,68 @@ struct BatchedDelta{R, C} <: AbstractSynapseState
     conn::C
 end
 Adapt.@adapt_structure BatchedDelta
-struct BatchedDualExpCOBA{G, R, C, T} <: AbstractSynapseState
+struct BatchedDualExpCOBA{G, R, C, T, TA, TE} <: AbstractSynapseState
     g_rise::G
     g_decay::G
     buf::R
     conn::C
     decay_r::T
     decay_d::T
-    a::T
-    Erev::T
+    a::TA       # scalar, or a length-B per-member conductance scale (read via `_col`)
+    Erev::TE    # scalar, or a length-B per-member reversal potential
 end
 Adapt.@adapt_structure BatchedDualExpCOBA
+struct BatchedFrozenDualExpCOBA{G, R, C, T, TA, TE} <: AbstractSynapseState   # frozen-current variant (no shunt)
+    g_rise::G
+    g_decay::G
+    buf::R
+    conn::C
+    decay_r::T
+    decay_d::T
+    a::TA       # scalar, or a length-B per-member conductance scale (read via `_col`)
+    Erev::TE    # scalar, or a length-B per-member reversal potential
+end
+Adapt.@adapt_structure BatchedFrozenDualExpCOBA
+
+# Per-member scalar accessor: a shared scalar (the default --- bit-identical, zero-cost) or a length-B
+# vector read at the member column `b`. Lets ANY batched-synapse scalar param vary per member (e.g. a
+# per-member conductance scale `a` --- the generic `delta`-style gain), at the `_bsyn_one(s,i,b)` seam.
+@inline _col(x::Number, b) = x
+@inline _col(x::AbstractVector, b) = @inbounds x[b]
+
+# --- Batched streaming Poisson drive: the (N,B) analogue of `PoissonSourceState` (src/PoissonSource.jl).
+# Generates the `n_ext` virtual sources' Poisson events once per step --- SHARED across the B columns (`srcidx`
+# is the source row, so the counter-RNG draw ignores the column) --- and scatters them through `extconn` into
+# the wrapped synapse's (N,B,L) ring (all columns), so every member is driven by the SAME realization (the
+# right default for a parameter sweep at fixed connectome). The constructor (dispatching on `PoissonSource`)
+# lives in src/PoissonSource.jl, included after this file.
+struct BatchedPoissonSourceState{IS <: AbstractSynapseState, EC, CC, BUF, MV, IDX, T} <: AbstractSynapseState
+    inner::IS        # batched inner synapse state (its (N,B,L) ring is the deposit target)
+    extconn::EC      # n_ext virtual sources → post (per-edge weights + delays)
+    conn::CC         # empty outer CSR → the per-state network scatter is a no-op
+    buf::BUF         # === inner.buf (BatchedRing)
+    spiked::MV       # (n_ext, B) per-source firing mask
+    srcidx::IDX      # (n_ext, B) source-row index (constant) → the draw is shared across columns
+    p_spike::T
+    seed::UInt64
+end
+Adapt.@adapt_structure BatchedPoissonSourceState
+
+# Once per step: which virtual sources fire (counter RNG keyed by (seed, step, SOURCE) --- the same draw in
+# every column), then scatter their events through `extconn` into the wrapped synapse's (N,B,L) ring.
+@inline function _batched_synprestep!(s::BatchedPoissonSourceState, integ)
+    n = integ.n
+    @. s.spiked = draw_uniform(Float64, s.seed, n, s.srcidx) < s.p_spike   # shared across columns (srcidx = source row)
+    batched_scatter!(s.buf, s.extconn, s.spiked, n; sync = false)          # deposit into all B columns of the inner ring
+    return nothing
+end
+@inline _batched_synprestep!(::AbstractSynapseState, integ) = nothing       # non-drive synapses have no prestep
+@inline _batched_synprestep_all!(::Tuple{}, integ) = nothing
+@inline _batched_synprestep_all!(s::Tuple, integ) =
+    (_batched_synprestep!(first(s), integ); _batched_synprestep_all!(Base.tail(s), integ))
+
+# deliver/accumulate/decay delegate to the wrapped (batched) synapse, exactly like the scalar PoissonSource.
+@inline _bsyn_one(s::BatchedPoissonSourceState, i, b, n, v, gtot, itot) = _bsyn_one(s.inner, i, b, n, v, gtot, itot)
 
 function _make_batched_synstate(arch, syn::CurrentSynapse, conn, ::Type{T}, N, B, dt) where {T}
     Isyn = fill!(allocate(arch, T, Int(N), Int(B)), zero(T))
@@ -99,6 +150,32 @@ function _make_batched_synstate(arch, syn::DualExpSynapse, conn, ::Type{T}, N, B
         g_rise, g_decay, BatchedRing(arch, T, N, B, maximum(conn.delay; init = 0)),
         conn, T(exp(-dt / syn.τr)), T(exp(-dt / syn.τd)), T(_dualexp_a(syn.τr, syn.τd)), T(syn.Erev)
     )
+end
+function _make_batched_synstate(arch, syn::FrozenDualExpSynapse, conn, ::Type{T}, N, B, dt) where {T}
+    g_rise = fill!(allocate(arch, T, Int(N), Int(B)), zero(T))
+    g_decay = fill!(allocate(arch, T, Int(N), Int(B)), zero(T))
+    return BatchedFrozenDualExpCOBA(
+        g_rise, g_decay, BatchedRing(arch, T, N, B, maximum(conn.delay; init = 0)),
+        conn, T(exp(-dt / syn.τr)), T(exp(-dt / syn.τd)), T(_dualexp_a(syn.τr, syn.τd)), T(syn.Erev)
+    )
+end
+
+# Apply per-member synapse overrides (a NamedTuple like `(; a = avec)`) onto a freshly-built batched
+# synstate: rebuild it with the chosen scalar fields replaced by per-member (length-B) arrays. Only the
+# scalar-parametrised dual-exp COBA family supports this; others reject a non-empty override.
+@inline _with_member_params(st::AbstractSynapseState, over, arch, ::Type{T}) where {T} =
+    (isempty(over) || error("per-member synapse overrides not supported for $(nameof(typeof(st)))"); st)
+function _with_member_params(st::BatchedFrozenDualExpCOBA, over, arch, ::Type{T}) where {T}
+    isempty(over) && return st
+    a = haskey(over, :a) ? on_architecture(arch, collect(T, over.a)) : st.a
+    Erev = haskey(over, :Erev) ? on_architecture(arch, collect(T, over.Erev)) : st.Erev
+    return BatchedFrozenDualExpCOBA(st.g_rise, st.g_decay, st.buf, st.conn, st.decay_r, st.decay_d, a, Erev)
+end
+function _with_member_params(st::BatchedDualExpCOBA, over, arch, ::Type{T}) where {T}
+    isempty(over) && return st
+    a = haskey(over, :a) ? on_architecture(arch, collect(T, over.a)) : st.a
+    Erev = haskey(over, :Erev) ? on_architecture(arch, collect(T, over.Erev)) : st.Erev
+    return BatchedDualExpCOBA(st.g_rise, st.g_decay, st.buf, st.conn, st.decay_r, st.decay_d, a, Erev)
 end
 
 # Per-projection synaptic contribution for cell (i,b): deliver (read+clear the ring slot due at
@@ -140,9 +217,21 @@ end
     @inbounds s.buf.slots[i, b, slot] = zero(due)
     @inbounds gr = s.g_rise[i, b] + due
     @inbounds gd = s.g_decay[i, b] + due
-    g = s.a * (gd - gr)
+    g = _col(s.a, b) * (gd - gr)
     gtot += g
-    itot += g * s.Erev
+    itot += g * _col(s.Erev, b)
+    @inbounds s.g_rise[i, b] = gr * s.decay_r
+    @inbounds s.g_decay[i, b] = gd * s.decay_d
+    return (v, gtot, itot)
+end
+@inline function _bsyn_one(s::BatchedFrozenDualExpCOBA, i, b, n, v, gtot, itot)   # frozen current, no shunt
+    slot = mod(n, s.buf.L) + 1
+    @inbounds due = s.buf.slots[i, b, slot]
+    @inbounds s.buf.slots[i, b, slot] = zero(due)
+    @inbounds gr = s.g_rise[i, b] + due
+    @inbounds gd = s.g_decay[i, b] + due
+    g = _col(s.a, b) * (gd - gr)
+    itot += g * (_col(s.Erev, b) - v)                               # frozen current g·(Erev − V); gtot untouched
     @inbounds s.g_rise[i, b] = gr * s.decay_r
     @inbounds s.g_decay[i, b] = gd * s.decay_d
     return (v, gtot, itot)
@@ -186,23 +275,38 @@ float_type(bm::BatchedModel) = float_type(bm.base)
 _resting(bm::BatchedModel) = _resting(bm.base)
 @inline _is_hetero(::BatchedModel) = false                   # allowed in batched init; resolved per-column in the kernel
 
-# the per-column scalar model: rebuild `base` with the b-th value of each overridden field (`@generated` →
-# specialises per (base type, override keys), inlines to a plain isbits constructor; GPU-kernel-safe).
-@generated function _resolve_member(bm::BatchedModel{M, NT}, b) where {M, NT}
+# The leaf (scalar) model type under a `BatchedModel` base: a scalar model IS the leaf; a `Heterogeneous`
+# base resolves (per neuron) to its underlying scalar type --- `_resolve_member` rebuilds THIS type.
+_leaf_model(::Type{M}) where {M <: AbstractNeuronModel} = M
+_leaf_model(::Type{Heterogeneous{M, NT}}) where {M, NT} = M
+
+# The per-(neuron, member) scalar model. Start from the base's per-neuron model `_resolve(base, i)` (the
+# scalar model itself, or the neuron-`i` model of a `Heterogeneous` base), then override each swept field with
+# its per-member value: `params.f[b]` for a length-B override (per member), or `params.f[i, b]` for an N×B
+# override (per neuron AND member --- e.g. "Δg_K on E only", 0 on I). `@generated` → specialises per (base
+# type, override keys, override ranks); inlines to a plain isbits constructor, GPU-kernel-safe.
+@generated function _resolve_member(bm::BatchedModel{Base, NT}, i, b) where {Base, NT}
+    M = _leaf_model(Base)
     overkeys = NT.parameters[1]
+    overtypes = NT.parameters[2].parameters
     args = map(fieldnames(M)) do f
-        f in overkeys ? :(@inbounds(bm.params.$f[b])) : :(getfield(bm.base, $(QuoteNode(f))))
+        k = findfirst(==(f), overkeys)
+        k === nothing ? :(getfield(base_i, $(QuoteNode(f)))) :
+            (overtypes[k] <: AbstractMatrix ? :(@inbounds bm.params.$f[i, b]) : :(@inbounds bm.params.$f[b]))
     end
-    return :($(M)($(args...)))
+    return quote
+        base_i = _resolve(bm.base, i)
+        $(M)($(args...))
+    end
 end
-@inline _resolve(bm::BatchedModel, i, b) = _resolve_member(bm, b)
+@inline _resolve(bm::BatchedModel, i, b) = _resolve_member(bm, i, b)
 @inline _resolve(bm::BatchedModel, i) = bm.base
 # 3-arg seam: a scalar / per-neuron model ignores the batch column (bit-identical to the prior 2-arg path).
 @inline _resolve(m::AbstractNeuronModel, i, b) = _resolve(m, i)
 
 # The batched fused dense step: deliver + drive + accumulate + membrane + decay + threshold +
 # reset + count for every (neuron,batch), in one launch over a 2-D (N,B) ndrange.
-@kernel function _batched_fused_kernel!(V, refrac, spiked, spike_count, input, syns, m, dt, n, drive, streams, noise, aux)
+@kernel function _batched_fused_kernel!(V, refrac, spiked, spike_count, itotarr, gtotarr, input, syns, m, dt, n, drive, streams, noise, aux)
     I = @index(Global, Cartesian)
     i = I[1]
     b = I[2]
@@ -213,6 +317,8 @@ end
         gtot = zero(eltype(V))
         itot = oftype(gtot, _binputval(input, i, b))
         v, gtot, itot = _bsyn_contribute(syns, i, b, n, v, gtot, itot)
+        itotarr[i, b] = itot            # materialise the accumulators (one store each) so Trace(:itot)/:gtot
+        gtotarr[i, b] = gtot            # record real values under the batched path (bit-identical to scalar fused)
         v += _bdrive_kick(drive, n, i, b, dt, streams)
         m_i = _resolve(m, i, b)              # per-(neuron, member) model; `= m` for a scalar model
         # subthreshold (V, aux) advance + per-column SDE noise (refractory clamps V, no noise);
@@ -360,7 +466,7 @@ function _batched_propagate_step!(c::BatchedCompactionScratch, integ)
 end
 
 # --- Batched integrator (mutable cache; only n/t mutate) ---
-mutable struct BatchedIntegrator{M, ST, In, A, T, BL, C, SY, MO, DR, STR, CO, NO, PG}
+mutable struct BatchedIntegrator{M, ST, In, A, T, BL, C, IT, GT, SY, MO, DR, STR, CO, NO, PG}
     const model::M
     const state::ST
     const input::In
@@ -368,9 +474,12 @@ mutable struct BatchedIntegrator{M, ST, In, A, T, BL, C, SY, MO, DR, STR, CO, NO
     n::Int
     t::T
     const tend::T
+    const nsteps::Int            # fixed total step count: the loop bound (== monitor buffer width); see DewdropIntegrator
     const arch::A
     const spiked::BL
     const spike_count::C
+    const itot::IT               # (N,B) input-current accumulator, materialised in-kernel (records :itot)
+    const gtot::GT               # (N,B) conductance accumulator, materialised in-kernel (records :gtot)
     const syns::SY
     const monitors::MO
     const drive::DR
@@ -420,27 +529,45 @@ function _batched_init(
         prob::DewdropNetwork, alg::FixedStep, B::Int;
         record = nothing, v0 = nothing, v0_seed::Unsigned = 0x05eed00d % UInt64,
         input = nothing, streams = nothing, sync_every::Integer = _DEFAULT_WINDOW,
-        scatter::Symbol = :edge, progress = :auto
+        scatter::Symbol = :edge, progress = :auto, syn_overrides = nothing, model_overrides = nothing
     )
     arch = prob.arch
     T = float_type(prob.model)
     N = prob.n
     dt = T(alg.dt)
     _check_drive(prob.drive, dt)
-    # heterogeneous / multi-type models (Heterogeneous, MultiModel) resolve per-neuron in the fused
-    # megakernel and need per-group v0 / launches; the batched megakernel is single-model only, so
-    # reject them here (run separate per-member solves instead).
-    _is_hetero(prob.model) &&
-        throw(ArgumentError("heterogeneous / multi-type models (Heterogeneous, MultiModel) are not yet supported in batched runs; run separate solves per ensemble member"))
+    # A single-group `Heterogeneous` model resolves per-NEURON through the `_resolve(m,i,b)` seam the
+    # batched megakernel already calls per cell, so it runs in ONE (N,B) launch (the aux/`w` column and
+    # `_resolve` delegate through `Heterogeneous` unchanged). Only a `MultiModel` (several groups) needs the
+    # per-group launches the single-launch batched kernel cannot express --- reject just that.
+    prob.model isa MultiModel &&
+        throw(ArgumentError("MultiModel (multiple model groups) is not yet supported in batched runs; run separate solves per group, or use block-diagonal batching (`batch([nets…])`)"))
     # STDP in the ensemble batch needs per-column (nedges,B) weights + traces (a follow-on); the
     # shared-CSR batch deliberately keeps one immutable weight set, so reject plastic projections here.
     any(p -> p.plasticity !== nothing, prob.projections) &&
         throw(ArgumentError("STDP (plastic projections) are not yet supported in batched runs; run B sequential plastic solves instead"))
-    state = batched_population(arch, prob.model, N, B)
-    _init_batched_voltage!(state.state.V, T(_resting(prob.model)), v0, T, v0_seed)   # `_resting` handles BatchedModel (no `.EL`)
+    # `model_overrides` (a NamedTuple of per-member (B) or per-(neuron,member) (N×B) field arrays) wraps the
+    # model in a `BatchedModel`, so any neuron-model parameter can vary per member over the shared connectome.
+    # The override arrays MUST be uploaded to `arch` first --- exactly like `syn_overrides`, `input`, and
+    # `streams` below. `@adapt_structure BatchedModel` only rewraps already-device arrays at launch
+    # (CuArray → CuDeviceArray); it cannot upload a host array, so a host override would reach the GPU kernel
+    # as a non-bitstype argument and fail to compile (`on_architecture` is a no-op on CPU, hence CPU "worked").
+    model = (model_overrides === nothing || isempty(model_overrides)) ? prob.model :
+        BatchedModel(prob.model, map(a -> on_architecture(arch, a), model_overrides))
+    state = batched_population(arch, model, N, B)
+    _init_batched_voltage!(state.state.V, T(_resting(model)), v0, T, v0_seed)   # `_resting` handles BatchedModel (no `.EL`)
     spiked = fill!(allocate(arch, Bool, N, B), false)
     spike_count = fill!(allocate(arch, Int, N, B), 0)
-    syns = map(p -> _make_batched_synstate(arch, p.synapse, _resolve_delays(p.conn, dt), T, N, B, dt), prob.projections)
+    itot = fill!(allocate(arch, T, N, B), zero(T))      # materialised by the kernel so Trace(:itot)/:gtot
+    gtot = fill!(allocate(arch, T, N, B), zero(T))      # record real values per (neuron, member)
+    # per-projection batched synapse states; `syn_overrides[j]` (a NamedTuple like `(; a = avec)`) makes
+    # chosen scalar params of projection j vary per member (the generic synaptic sweep, e.g. WRCircuit `delta`).
+    ov(j) = syn_overrides === nothing ? (;) : get(syn_overrides, j, (;))
+    syns = ntuple(length(prob.projections)) do j
+        p = prob.projections[j]
+        st = _make_batched_synstate(arch, p.synapse, _resolve_delays(p.conn, dt), T, N, B, dt)
+        _with_member_params(st, ov(j), arch, T)
+    end
     inp = input === nothing ? prob.input : on_architecture(arch, to_current(input))
     str = on_architecture(arch, collect(Int, streams === nothing ? (0:(B - 1)) : streams))
     # guard the per-column data shapes against B (the kernel reads streams[b]/input[i,b] @inbounds)
@@ -448,22 +575,23 @@ function _batched_init(
     inp isa AbstractMatrix && size(inp) != (N, B) && throw(ArgumentError("input matrix $(size(inp)) ≠ (N, B) = ($N, $B)"))
     inp isa AbstractVector && length(inp) != N && throw(ArgumentError("input vector length $(length(inp)) ≠ N = $N"))
     nsteps = round(Int, (prob.tspan[2] - prob.tspan[1]) / dt)
-    monitors = _make_batched_monitors(record, arch, T, N, B, nsteps)
+    monitors = _make_batched_monitors(record, arch, T, N, B, nsteps, dt)
     compaction = scatter === :compacted ? BatchedCompactionScratch(arch, N, B) :
         scatter === :edge ? nothing :
         throw(ArgumentError("scatter must be :edge or :compacted (got :$scatter)"))
     return BatchedIntegrator(
-        prob.model, state, inp, dt, 0, prob.tspan[1], prob.tspan[2], arch,
-        spiked, spike_count, syns, monitors, prob.drive, str, B, Int(sync_every), compaction, prob.noise, progress,
+        model, state, inp, dt, 0, prob.tspan[1], prob.tspan[2], nsteps, arch,
+        spiked, spike_count, itot, gtot, syns, monitors, prob.drive, str, B, Int(sync_every), compaction, prob.noise, progress,
     )
 end
 
 function _batched_step!(integ::BatchedIntegrator)
+    _batched_synprestep_all!(integ.syns, integ)         # streaming drives → fill the (N,B) ring (shared across columns)
     st = integ.state.state
     V = st.V
     backend = get_backend(V)
     _batched_fused_kernel!(backend)(
-        V, st.refrac, integ.spiked, integ.spike_count, integ.input,
+        V, st.refrac, integ.spiked, integ.spike_count, integ.itot, integ.gtot, integ.input,
         integ.syns, integ.model, integ.dt, integ.n, integ.drive, integ.streams, integ.noise, _aux_col(st, integ.model);
         ndrange = size(V),
     )
@@ -483,7 +611,7 @@ end
 function CommonSolve.solve!(integ::BatchedIntegrator)
     rep = _progress_reporter(integ.progress, _progress_total(integ))   # nothing ⇒ every hook no-ops
     _progress_start!(rep)
-    while integ.t < integ.tend - integ.dt / 2
+    while integ.n < integ.nsteps               # integer count: exactly fills the monitor buffer (no float-time drift)
         step!(integ)
         _progress_step!(rep, integ.n)
     end
@@ -511,7 +639,8 @@ end
 function BatchedSolution(integ::BatchedIntegrator)
     return BatchedSolution(
         integ.state, integ.spike_count, integ.n, integ.dt,
-        (integ.t - integ.n * integ.dt, integ.t), integ.batch, map(_result, integ.monitors),
+        # tspan from the fixed window (tend, nsteps), NOT the drifted Float32 `integ.t` (see DewdropSolution).
+        (integ.tend - integ.nsteps * integ.dt, integ.tend), integ.batch, map(_result, integ.monitors),
     )
 end
 export BatchedSolution
@@ -618,31 +747,88 @@ end
     return nothing
 end
 
-# spec → batched monitor (mirrors scalar `_materialize`, reusing _srcof/_resolve_idx/_nsel/_ncols)
-function _bmaterialize(spec::Trace, arch, ::Type{T}, N, B, nsteps) where {T}
-    spec.var in (:gtot, :itot) && error("batched runs do not materialise the gtot/itot accumulators (they are kernel-local); trace :V/:refrac or a synaptic var instead")
-    idx = _resolve_idx(arch, spec.of)
+# spec → batched monitor (mirrors scalar `_materialize`, reusing _srcof/_resolve_idx/_nsel/_ncols). `dt`
+# (the solve step, ms) is threaded so time-aware monitors (Welch) can resolve a sampling rate; the
+# per-unit/aggregate monitors ignore it.
+function _bmaterialize(spec::Trace, arch, ::Type{T}, N, B, nsteps, dt) where {T}
+    idx = _resolve_idx(arch, spec.of)   # :itot/:gtot now materialised per (neuron, member) in the batched kernel
     buf = BatchedWindow(arch, T, (_nsel(N, idx), Int(B)), _ncols(nsteps, spec.every))
     return BatchedPerUnit(_srcof(spec), idx, buf, spec.every)
 end
-function _bmaterialize(spec::Spikes, arch, ::Type{T}, N, B, nsteps) where {T}
+function _bmaterialize(spec::Spikes, arch, ::Type{T}, N, B, nsteps, dt) where {T}
     idx = _resolve_idx(arch, spec.of)
     buf = BatchedWindow(arch, Bool, (_nsel(N, idx), Int(B)), _ncols(nsteps, spec.every))
     return BatchedPerUnit(SpikeSrc(), idx, buf, spec.every)
 end
-function _bmaterialize(spec::Aggregate, arch, ::Type{T}, N, B, nsteps) where {T}
+function _bmaterialize(spec::Aggregate, arch, ::Type{T}, N, B, nsteps, dt) where {T}
     idx = _resolve_idx(arch, spec.inner.of)
     buf = BatchedWindow(arch, T, (Int(B),), _ncols(nsteps, spec.every))
     src = spec.inner isa Spikes ? SpikeSrc() : _srcof(spec.inner)
     return BatchedAgg{typeof(src), typeof(idx), typeof(buf), spec.reducer}(src, idx, buf, spec.every, _nsel(N, idx))
 end
-_bmaterialize(::Probe, arch, ::Type{T}, N, B, nsteps) where {T} =
+_bmaterialize(::Probe, arch, ::Type{T}, N, B, nsteps, dt) where {T} =
     error("Probe is not yet supported in batched runs (needs an (n,B) batch contract); use Trace/Spikes/Aggregate")
 
 _result(m::BatchedPerUnit{<:SpikeSrc}) = RecordResult(m.buf.store, m.idx, m.every, :spikes)
 _result(m::BatchedPerUnit) = RecordResult(m.buf.store, m.idx, m.every, :trace)
 _result(m::BatchedAgg) = RecordResult(m.buf.store, nothing, m.every, :aggregate)
 
-_make_batched_monitors(::Nothing, arch, ::Type{T}, N, B, nsteps) where {T} = (;)
-_make_batched_monitors(record::NamedTuple, arch, ::Type{T}, N, B, nsteps) where {T} =
-    map(spec -> _bmaterialize(spec, arch, T, N, B, nsteps), record)
+# --- Batched streaming temporal monitors (MADev / Welch). Fold each step's selected (n_out, B) slice into a
+# streaming reducer (TemporalReducers.jl): no window/store, so memory is O(maxlag)/O(nfft), not O(nsteps).
+# Skip the first `start` recorded steps (transient), then record every `every`-th step, indexing recorded
+# samples 1, 2, …. `update!`/`result` run host-orchestrated (kernel launch / batched rfft + broadcasts), so
+# the monitor is never passed into a kernel; its reducer arrays are already arch-resident (adapt is identity).
+_srcof_var(var::Symbol) = var in (:gtot, :itot) ? AccumSrc{var}() : StateSrc{var}()
+
+mutable struct BatchedTemporalMonitor{R, S, I}
+    reducer::R
+    src::S
+    idx::I
+    start::Int       # transient: ignore steps with integ.n ≤ start
+    every::Int
+    k::Int           # recorded-sample counter (1-based index handed to the reducer)
+    kind::Symbol     # :madev | :welch
+end
+
+function _bmaterialize(spec::MADev, arch, ::Type{T}, N, B, nsteps, dt) where {T}
+    idx = _resolve_idx(arch, spec.of)
+    red = StreamingMADev(arch, T, _nsel(N, idx), Int(B), spec.lags)
+    return BatchedTemporalMonitor(red, _srcof_var(spec.var), idx, spec.transient, spec.every, 0, :madev)
+end
+function _bmaterialize(spec::Welch, arch, ::Type{T}, N, B, nsteps, dt) where {T}
+    idx = _resolve_idx(arch, spec.of)
+    fs = 1 / (float(dt) * spec.every)        # recorded sampling rate
+    red = StreamingWelch(arch, T, _nsel(N, idx), Int(B), fs, spec.f_min)
+    return BatchedTemporalMonitor(red, _srcof_var(spec.var), idx, spec.transient, spec.every, 0, :welch)
+end
+# SpikeRate / Fano consume the (N,B) spike mask (`SpikeSrc`); their recorded rate is fs = 1/(every·dt).
+function _bmaterialize(spec::SpikeRate, arch, ::Type{T}, N, B, nsteps, dt) where {T}
+    idx = _resolve_idx(arch, spec.of)
+    red = StreamingRate(arch, T, _nsel(N, idx), Int(B), float(dt) * spec.every)
+    return BatchedTemporalMonitor(red, SpikeSrc(), idx, spec.transient, spec.every, 0, :rate)
+end
+function _bmaterialize(spec::Fano, arch, ::Type{T}, N, B, nsteps, dt) where {T}
+    idx = _resolve_idx(arch, spec.of)
+    red = StreamingFano(arch, T, _nsel(N, idx), Int(B), spec.taus, float(dt) * spec.every)
+    return BatchedTemporalMonitor(red, SpikeSrc(), idx, spec.transient, spec.every, 0, :fano)
+end
+
+@inline function record!(m::BatchedTemporalMonitor, integ)
+    # `integ.n` is 0-based here (incremented after `_record_all!`), matching the Trace monitor's `_bdue`:
+    # record n = start, start+every, … (`start` = transient samples skipped; start = 0 records every sample).
+    (integ.n >= m.start && (integ.n - m.start) % m.every == 0) || return nothing
+    m.k += 1
+    update!(m.reducer, _bselect(_read(m.src, integ), m.idx), m.k)
+    return nothing
+end
+@inline _finalize!(::BatchedTemporalMonitor) = nothing      # streaming reducer: nothing to flush
+
+function _result(m::BatchedTemporalMonitor)
+    r = result(m.reducer, m.k)
+    data = m.kind === :welch ? permutedims(r, (2, 3, 1)) : r   # welch (nfreq,n_out,B) → (n_out,B,nfreq); madev already (n_out,B,nlags)
+    return RecordResult(data, m.idx, m.every, m.kind)
+end
+
+_make_batched_monitors(::Nothing, arch, ::Type{T}, N, B, nsteps, dt) where {T} = (;)
+_make_batched_monitors(record::NamedTuple, arch, ::Type{T}, N, B, nsteps, dt) where {T} =
+    map(spec -> _bmaterialize(spec, arch, T, N, B, nsteps, dt), record)

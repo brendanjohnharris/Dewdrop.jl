@@ -157,7 +157,9 @@ end
 
 @inline _finalize_all!(ms::NamedTuple) = _fin_tuple!(values(ms))
 @inline _fin_tuple!(::Tuple{}) = nothing
-@inline _fin_tuple!(ms::Tuple) = (flush!(first(ms).buf); _fin_tuple!(Base.tail(ms)))
+@inline _fin_tuple!(ms::Tuple) = (_finalize!(first(ms)); _fin_tuple!(Base.tail(ms)))
+# Default finalize: flush the monitor's windowed store. Streaming reducers (no window) override to a no-op.
+@inline _finalize!(m) = (flush!(m.buf); nothing)
 
 # --- Specs (user-facing) → materialised at `init` into runtime monitors ---
 """

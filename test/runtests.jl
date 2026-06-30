@@ -20,6 +20,7 @@ Dewdrop.set_advice!(false)   # silence the perf advisor during the suite; test/a
     include("fns.jl")               # WRCircuit Phase 1 FNSNeuron (conductance-adaptation LIF)
     include("synapses.jl")
     include("dualexp.jl")           # WRCircuit Phase 2 dual-exponential COBA synapse (DualExpSynapse)
+    include("frozendualexp.jl")     # frozen-current variant (FrozenDualExpSynapse): no membrane shunt
     include("engine.jl")
     include("fi_curve.jl")
     include("behavior.jl")
@@ -58,7 +59,4 @@ Dewdrop.set_advice!(false)   # silence the perf advisor during the suite; test/a
     include("plots.jl")
     include("brunel.jl")
     include("vogels_abbott.jl")
-    include("wrcircuit.jl")         # WRCircuit end-to-end: spatial FNS E/I + dual-exp + fixed-count distance conn
-    include("spatialfns.jl")        # native spatial FNS constructor (BrainPy `Spatial` re-expressed; no Python)
-    include("spatial_builder.jl")   # WRCircuit-class circuit built from first-class builder components (no custom constructor)
 end

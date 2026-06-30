@@ -149,10 +149,15 @@ CSR --- materialised at [`build`](@ref) once `target`'s global range is known. `
 [`correlate_weights`](@ref)) optionally rescales the external weights.
 """
 function drive!(nb::NetworkBuilder, target::Symbol, synapse::AbstractSynapseModel;
-        rate, n_ext::Integer, p::Real, weight = 1.0, delay = 1.0, seed = 0x9e3779b97f4a7c15, adjust = nothing)
+        rate, n_ext::Integer, p::Real, weight = 1.0, delay = 1.0, seed = 0x9e3779b97f4a7c15,
+        fire_seed = nothing, adjust = nothing, index_type::Type = Int)
+    # `seed` keys the wiring (source→target connectome). `fire_seed` keys the per-step Poisson firing; default
+    # `nothing` → reuse `seed` (so a lone drive is unchanged). Give two drives the SAME `fire_seed` with
+    # DIFFERENT `seed` to make them a shared common-mode source (the same external spikes, independent fan-out).
     push!(nb.projspecs, _ProjSpec(:__poisson__, target, synapse,
         (; rate = rate, n_ext = Int(n_ext), p = p, weight = weight, delay = delay,
-            seed = seed % UInt64, adjust = adjust), nothing))
+            seed = seed % UInt64, fire_seed = fire_seed === nothing ? nothing : (fire_seed % UInt64),
+            adjust = adjust, index_type = index_type), nothing))
     return nb
 end
 export drive!
@@ -162,9 +167,9 @@ export drive!
 # identical model, stays a bare model (homogeneous fast path). Same-type groups that differ in some
 # field values collapse to a `Heterogeneous` whose overridden fields are block per-neuron arrays.
 # Different model TYPES become a `MultiModel` (per-group launches over the union SoA).
-function _combine_models(models::Vector, sizes::Vector{Int})
+function _combine_models(models::Vector, sizes::Vector{Int}, arch::AbstractArchitecture)
     M = typeof(first(models))
-    all(m -> typeof(m) === M, models) || return MultiModel(models, sizes)   # different TYPES → MultiModel engine
+    all(m -> typeof(m) === M, models) || return on_architecture(arch, MultiModel(models, sizes))   # different TYPES → MultiModel
     length(models) == 1 && return first(models)
     overrides = Pair{Symbol, Any}[]
     for f in fieldnames(M)
@@ -174,7 +179,9 @@ function _combine_models(models::Vector, sizes::Vector{Int})
         push!(overrides, f => arr)
     end
     isempty(overrides) && return first(models)                  # all fields identical → homogeneous
-    return Heterogeneous(first(models); NamedTuple(overrides)...)
+    # the per-neuron override arrays are read on-device by the fused kernel, so move the assembled model onto
+    # `arch` (`Heterogeneous` is `@adapt_structure`d → override arrays become device arrays; a no-op on CPU).
+    return on_architecture(arch, Heterogeneous(first(models); NamedTuple(overrides)...))
 end
 
 # --- input merge ------------------------------------------------------------------------------
@@ -205,22 +212,26 @@ function _build_projection(spec::_ProjSpec, reg::NamedTuple, positions, arch, N:
     sources = _subrange(reg, spec.src)
     targets = _subrange(reg, spec.dst)
     kw = spec.kw
+    it = get(kw, :index_type, Int)   # opt-in narrow connectome indices (e.g. Int32 halves the scatter bandwidth)
+    # Build the connectome on the HOST (the top-k heap is host-side regardless of `arch`), run any `adjust`
+    # weight hook host-side, then move the finished CSR onto `arch` at the end (the Projection below) --- so
+    # adjusters like `correlate_weights` never touch a device array, with no host↔device round-trip.
     conn = if haskey(kw, :connectivity) && kw.connectivity !== nothing
         kw.connectivity
     elseif haskey(kw, :kernel) && kw.kernel !== nothing
         positions === nothing && error("distance-kernel projection :$(spec.src)=>:$(spec.dst) needs population `positions`")
         if haskey(kw, :count) && kw.count !== nothing
-            distance_fixed_count(arch, positions; kernel = kw.kernel, count = kw.count, weight = kw.weight,
+            distance_fixed_count(CPU(), positions; kernel = kw.kernel, count = kw.count, weight = kw.weight,
                 delay = kw.delay, seed = kw.seed, allow_self = get(kw, :allow_self, false),
-                period = get(kw, :period, nothing), sources = sources, targets = targets)
+                period = get(kw, :period, nothing), sources = sources, targets = targets, index_type = it)
         else
-            distance_prob(arch, positions; kernel = kw.kernel, weight = kw.weight, delay = kw.delay,
+            distance_prob(CPU(), positions; kernel = kw.kernel, weight = kw.weight, delay = kw.delay,
                 seed = kw.seed, allow_self = get(kw, :allow_self, false),
-                period = get(kw, :period, nothing), sources = sources, targets = targets)
+                period = get(kw, :period, nothing), sources = sources, targets = targets, index_type = it)
         end
     else
-        fixed_prob(arch, N, N, kw.p; weight = kw.weight, delay = kw.delay, seed = kw.seed,
-            allow_self = get(kw, :allow_self, false), sources = sources, targets = targets)
+        fixed_prob(CPU(), N, N, kw.p; weight = kw.weight, delay = kw.delay, seed = kw.seed,
+            allow_self = get(kw, :allow_self, false), sources = sources, targets = targets, index_type = it)
     end
     # optional post-build hook: `project!(…; adjust = conn -> …)` runs over the materialised connectivity
     # (e.g. in-degree-scaled / spatially-correlated weights). A 2-arg adjuster `(conn, ctx)` additionally
@@ -228,7 +239,7 @@ function _build_projection(spec::_ProjSpec, reg::NamedTuple, positions, arch, N:
     # normalises the in-degree over the destination sub-population.
     adj = get(kw, :adjust, nothing)
     adj === nothing || _apply_adjust(adj, conn, sources, targets)
-    return Projection(spec.synapse, conn; plasticity = spec.plasticity)
+    return Projection(spec.synapse, on_architecture(arch, conn); plasticity = spec.plasticity)   # host → device
 end
 
 # Materialise a targeted Poisson drive spec (`drive!(nb, target, synapse; …)`, marked `src = :__poisson__`)
@@ -239,10 +250,12 @@ function _build_drive(spec::_ProjSpec, reg::NamedTuple, arch, N::Int)
     rng = _subrange(reg, spec.dst)
     kw = spec.kw
     wseed = kw.seed ⊻ 0x243f6a8885a308d3     # wiring stream, independent of the per-step firing stream
-    extconn = fixed_prob(arch, kw.n_ext, N, kw.p; weight = kw.weight, delay = kw.delay,
-        seed = wseed, sources = 1:(kw.n_ext), targets = rng)
-    kw.adjust === nothing || _apply_adjust(kw.adjust, extconn, 1:(kw.n_ext), rng)
-    return Projection(PoissonSource(spec.synapse, extconn; rate = kw.rate, seed = kw.seed), _empty_csr(arch, N))
+    extconn = fixed_prob(CPU(), kw.n_ext, N, kw.p; weight = kw.weight, delay = kw.delay,   # build host-side
+        seed = wseed, sources = 1:(kw.n_ext), targets = rng, index_type = get(kw, :index_type, Int))
+    kw.adjust === nothing || _apply_adjust(kw.adjust, extconn, 1:(kw.n_ext), rng)           # adjust host-side
+    extconn = on_architecture(arch, extconn)                                                # then move onto the device
+    fseed = kw.fire_seed === nothing ? kw.seed : kw.fire_seed                               # firing stream (shareable)
+    return Projection(PoissonSource(spec.synapse, extconn; rate = kw.rate, seed = fseed), _empty_csr(arch, N))
 end
 
 # Apply the post-build `adjust` hook, accepting either a 2-arg `(conn, ctx)` adjuster (given the resolved
@@ -266,7 +279,7 @@ function _build_network(arch, tspan, names, models, sizes, inputs, positions_in,
     isempty(names) && error("network has no populations --- add them with `population!`")
     N = sum(sizes)
     reg = merge((all = 1:N,), _registry(names, sizes))   # include the implicit :all so projections can target it
-    model = _combine_models(models, sizes)
+    model = _combine_models(models, sizes, arch)
     T = float_type(model)
     in_ = input === nothing ? _combine_inputs(inputs, sizes, T) : input
     positions = _combine_positions(positions_in, sizes)

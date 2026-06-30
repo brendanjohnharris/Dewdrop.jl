@@ -89,3 +89,25 @@ export DualExpSynapse
 # peak-normalising coefficient: `a·(e^{-t/τd} − e^{-t/τr})` has continuous peak 1, so the delivered
 # weight is the peak conductance change (BrainPy's default `A`).
 @inline _dualexp_a(τr, τd) = (τd / (τd - τr)) * (τr / τd)^(τr / (τr - τd))
+
+"""
+    FrozenDualExpSynapse(; τr, τd, Erev)
+
+Frozen-current variant of [`DualExpSynapse`](@ref): identical dual-exponential conductance kinetics
+`g(t) = a·(g_decay − g_rise)`, but the synaptic current `g·(Erev − V)` is evaluated with `V` FROZEN at
+its pre-update value and injected as an ordinary current --- it does NOT enter the effective leak, so it
+does not shunt the membrane time constant. This reproduces the BrainPy `sum_current_inputs`/`COBA`
+integration. Exact COBA ([`DualExpSynapse`](@ref)) is the more accurate scheme (the conductance shunts);
+use this only to reproduce frozen-current dynamics. A drop-in for `DualExpSynapse`. Requires `τr ≠ τd`.
+"""
+struct FrozenDualExpSynapse{T} <: AbstractSynapseModel
+    τr::T
+    τd::T
+    Erev::T
+end
+function FrozenDualExpSynapse(; τr, τd, Erev)
+    r, d, e = promote(to_time(τr), to_time(τd), to_voltage(Erev))
+    r == d && throw(ArgumentError("FrozenDualExpSynapse requires τr ≠ τd (got τr = τd = $r); use an alpha synapse for equal time constants"))
+    return FrozenDualExpSynapse(r, d, e)
+end
+export FrozenDualExpSynapse

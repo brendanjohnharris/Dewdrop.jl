@@ -9,7 +9,7 @@ using Logging
 #
 # Contract under test:
 #   `:auto` (default) → on, but auto-SUPPRESSED until the run has run ~0.3 s wall-clock (so trivial
-#                       runs never flash a bar); the update stride is CALIBRATED to ~10 Hz.
+#                       runs never flash a bar); the update stride is CALIBRATED to ~2 Hz.
 #   `true`            → force on from the start (visible during the calibration window too).
 #   `false`           → off (no records at all).
 #   "label"::String   → force on, custom bar name.

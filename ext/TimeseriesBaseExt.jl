@@ -63,16 +63,20 @@ The named recorded monitor as a labeled `Timeseries`: a per-unit `Trace`/`Probe`
 series. `of` (a subpopulation symbol, e.g. `:E`) restricts the `Neuron` axis to that subpopulation.
 Use [`spiketrain`](@ref) for a `Spikes` monitor.
 """
-function Timeseries(sol::Dewdrop.DewdropSolution, name::Symbol = :V; of = :all)
+function Timeseries(sol::Dewdrop.DewdropSolution, name::Symbol = :V; of = :all, lazy::Bool = false)
     res = sol.record[name]
     if res.kind === :aggregate
         of === :all || error("aggregate monitors have no neuron axis to restrict with `of`")
         return ToolsArray(vec(res.data), 𝑡(_times(res, sol)); name = name)
     end
     rows, neurons = _sub_rows(sol, res, of)
-    data = rows === Colon() ? res.data : res.data[rows, :]
-    # per-unit: stored (unit, time); transpose to time-first so it is a proper Timeseries
-    return ToolsArray(permutedims(data), (𝑡(_times(res, sol)), Neuron(neurons)); name = name)
+    data = rows === Colon() ? res.data : (lazy ? view(res.data, rows, :) : res.data[rows, :])
+    # per-unit: stored (unit, time); transpose to time-first so it is a proper Timeseries. `lazy = true`
+    # keeps the transpose a `PermutedDimsArray` VIEW (no copy of the whole trace) --- e.g. for `bpformat`
+    # over a large population × long run, where an eager `permutedims` would double the (already large)
+    # recorded data. The default stays an eager copy (a contiguous, standalone array).
+    mat = lazy ? PermutedDimsArray(data, (2, 1)) : permutedims(data)
+    return ToolsArray(mat, (𝑡(_times(res, sol)), Neuron(neurons)); name = name)
 end
 
 """

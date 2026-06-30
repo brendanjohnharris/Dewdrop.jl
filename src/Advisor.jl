@@ -66,16 +66,17 @@ function _advise_static(prob::DewdropNetwork)
     return nothing
 end
 
-# Runtime suggestions (regime-dependent): need the measured firing fraction.
-function _advise_runtime(prob::DewdropNetwork, frac::Real)
+# Runtime suggestions (regime-dependent): need the measured firing fraction. `scatter` is the run's REQUESTED
+# scatter (`:auto` if unset), resolved to the actual choice --- so we don't re-suggest compaction to a run
+# that already opted into it.
+function _advise_runtime(prob::DewdropNetwork, frac::Real, scatter::Symbol = :auto)
     _is_gpu(prob) || return nothing
     ne = _total_edges(prob)
     md = _mean_degree(prob)
     pct = round(frac * 100; digits = 2)
-    # only suggest compaction if the default `scatter = :auto` did NOT already select it for this network
-    # (past the L2-spill crossover it is automatic, so the hint would be redundant); below that crossover
-    # the connectome is L2-resident and the edge scatter's no-sync launch is the right pick.
-    if ne > 1_000_000 && frac < 0.02 && _resolve_scatter(:auto, prob.arch, prob.projections) === :edge
+    # only suggest compaction if this run's ACTUAL scatter is the edge scatter (not when it already resolved
+    # to compacted --- whether via `:auto` past the L2-spill crossover, or an explicit `scatter = :compacted`).
+    if ne > 1_000_000 && frac < 0.02 && _resolve_scatter(scatter, prob.arch, prob.projections) === :edge
         _emit(:compaction,
             "sparse firing ($(pct)% of neurons per step) over a large network " *
             "(nedges = $ne): the scatter wastes most of its threads on silent synapses. The " *
@@ -115,14 +116,14 @@ function _advise_cpu(prob::DewdropNetwork)
     return nothing
 end
 
-# Entry point: called by `solve` with the problem and its solution.
-function _run_advisor(prob::DewdropNetwork, sol)
+# Entry point: called by `solve` with the problem, its solution, and the run's requested `scatter`.
+function _run_advisor(prob::DewdropNetwork, sol, scatter::Symbol = :auto)
     _ADVISE[] || return nothing
     if _is_gpu(prob)
         _advise_static(prob)                             # GPU precision/index advice (free)
         if !_RUNTIME_DONE[]                              # GPU firing-rate advice: one device reduction per session
             _RUNTIME_DONE[] = true
-            _advise_runtime(prob, _firing_fraction(sol))
+            _advise_runtime(prob, _firing_fraction(sol), scatter)
         end
     else
         _advise_cpu(prob)                                # CPU step-strategy advice (free)
@@ -135,6 +136,6 @@ end
 # runtime device reduction); `kwargs` (record/v0/batch/…) flow to `init`.
 function CommonSolve.solve(prob::DewdropNetwork, alg::FixedStep; advise::Bool = true, kwargs...)
     sol = solve!(init(prob, alg; kwargs...))
-    advise && _run_advisor(prob, sol)
+    advise && _run_advisor(prob, sol, get(kwargs, :scatter, :auto))   # honour the run's actual scatter in the advice
     return sol
 end

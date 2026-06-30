@@ -56,8 +56,8 @@ end
     defer(f; kw...) -> DeferredNetwork
 
 Capture a network constructor `f` and its construction `kw...` as a deferred [`AbstractNetworkSpec`](@ref),
-materialised at solve time by calling `f(; kw..., tspan = …, dt = …)`. Makes any constructor (e.g.
-`spatial_fns`) a reusable, `tspan`-free spec with no refactor. `f` must accept `tspan` and `dt` keywords
+materialised at solve time by calling `f(; kw..., tspan = …, dt = …)`. Makes any constructor (e.g. a
+parametric network builder) a reusable, `tspan`-free spec with no refactor. `f` must accept `tspan` and `dt` keywords
 (it may ignore `dt`); do NOT put `tspan`/`dt` in `kw` (they are injected at materialise time). `seed`/`arch`
 belong in `kw` (they are part of the model's identity --- vary them by constructing a new spec).
 """
@@ -90,9 +90,28 @@ end
 CommonSolve.init(spec::AbstractNetworkSpec, alg::FixedStep; tspan = nothing, kwargs...) =
     init(materialize(spec, alg; tspan = tspan), alg; kwargs...)
 
-# reuse the advisor-wrapped network `solve` (Advisor.jl) on the materialised network.
-CommonSolve.solve(spec::AbstractNetworkSpec, alg::FixedStep; tspan = nothing, advise::Bool = true, kwargs...) =
-    solve(materialize(spec, alg; tspan = tspan), alg; advise = advise, kwargs...)
+# reuse the advisor-wrapped network `solve` (Advisor.jl) on the materialised network. The connectome build
+# (`materialize`) can be slow and runs BEFORE the solve loop's progress bar, so announce it (see below).
+function CommonSolve.solve(spec::AbstractNetworkSpec, alg::FixedStep; tspan = nothing, advise::Bool = true,
+        progress = :auto, kwargs...)
+    net = _materialize_announced(spec, alg; tspan = tspan, progress = progress)
+    return solve(net, alg; advise = advise, progress = progress, kwargs...)
+end
+
+# Materialise the spec, announcing "Building network" while the (possibly slow) connectome build runs. It
+# happens BEFORE the solve loop's bar, so without this the UI sits dead during the build. Emits an
+# indeterminate ProgressLogging record (`progress = nothing`) on the SAME level/convention as the solve bar,
+# under its own id, and clears it (`progress = "done"`) when the build finishes --- so a terminal/VSCode
+# progress logger renders a "Building network…" spinner that gives way to the solve bar. `progress = false`
+# suppresses it (matching the solve bar).
+function _materialize_announced(spec::AbstractNetworkSpec, alg::FixedStep; tspan, progress)
+    progress === false && return materialize(spec, alg; tspan = tspan)
+    id = UUIDs.uuid4()
+    @logmsg _PROGRESS_LEVEL "Building network" progress = nothing _id = id
+    net = materialize(spec, alg; tspan = tspan)
+    @logmsg _PROGRESS_LEVEL "Building network" progress = "done" _id = id
+    return net
+end
 
 """
     build(spec::AbstractNetworkSpec; dt, tspan = nothing) -> DewdropNetwork

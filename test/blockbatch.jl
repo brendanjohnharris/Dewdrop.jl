@@ -26,6 +26,27 @@ _solve(net) = solve(net, FixedStep(0.1); progress = false)
         @test sum(_solve(n1).spike_count) != sum(_solve(n2).spike_count)   # the members really differ
     end
 
+    @testset "block-diagonal carries EACH member's streaming drive (not just member 1's)" begin
+        # Distinct-topology members that DEPEND on an external Poisson drive (input = 0): block-stacking must
+        # offset every member's `PoissonSource` into its own block. Reusing member 1's drive (the bug) leaves
+        # members 2..B undriven → silent. Each member's batched result must equal its standalone, bit-for-bit.
+        mkd(; cseed, dseed) = (nb = network(; tspan = (0.0, 50.0));
+            population!(nb, :E, _lif(), 8; input = 0.0);
+            project!(nb, :E => :E, DeltaSynapse(); p = 0.3, weight = 0.5, delay = steps(2),
+                seed = UInt64(cseed), allow_self = false);
+            drive!(nb, :E, DeltaSynapse(); rate = 150.0, n_ext = 10, p = 0.5, weight = 1.2,
+                delay = steps(1), seed = UInt64(dseed));
+            build(nb))
+        n1, n2 = mkd(cseed = 1, dseed = 101), mkd(cseed = 2, dseed = 202)
+        s1, s2 = _solve(n1).spike_count, _solve(n2).spike_count
+        @test sum(s2) > 0                       # member 2 is active standalone (its drive sustains it)
+        @test s1 != s2                          # the members really differ
+        bs = solve(batch([n1, n2]), FixedStep(0.1); progress = false)
+        @test bs.mode == :block
+        @test bs[1] == s1                       # member 1 was already correct
+        @test bs[2] == s2                       # the fix: member 2 driven by ITS OWN source, not member 1's
+    end
+
     @testset "batch input forms + per-member addressing (sol[b])" begin
         bs = solve(batch([_mk(0.3), _mk(0.5)]), FixedStep(0.1); progress = false)
         @test nmembers(bs) == 2

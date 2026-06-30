@@ -77,6 +77,19 @@ end
     @inbounds s.g_decay[i] = gd * s.decay_d
     return (v, gtot, itot)
 end
+@inline function _syn_one(s::FrozenDualExpCOBAState, i, n, v, gtot, itot)   # dual-exp frozen-current (no shunt)
+    L = s.buf.L
+    slot = mod(n, L) + 1
+    @inbounds due = s.buf.slots[i, slot]
+    @inbounds s.buf.slots[i, slot] = zero(due)
+    @inbounds gr = s.g_rise[i] + due                                  # deliver (both accumulators)
+    @inbounds gd = s.g_decay[i] + due
+    g = s.a * (gd - gr)                                               # conductance
+    itot += g * (s.Erev - v)                                         # frozen current g·(Erev − V); gtot untouched
+    @inbounds s.g_rise[i] = gr * s.decay_r                           # decay
+    @inbounds s.g_decay[i] = gd * s.decay_d
+    return (v, gtot, itot)
+end
 
 # External input current for neuron `i` (scalar constant, or a per-unit array).
 @inline _inputval(input::Number, i) = input

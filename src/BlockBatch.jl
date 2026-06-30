@@ -99,6 +99,32 @@ function _offset_edges(conn::SparseCSR, off::Int)
     return [(Int(src[e]) + off, Int(post[e]) + off, w[e], d[e]) for e in 1:nedges(conn)]
 end
 
+# --- per-member stateful-synapse offset (so block-stacking carries EVERY member's drive) ----------------
+# A synapse is block-MERGEABLE when its behaviour is fully captured by its edge list + shared scalar params,
+# so the B members' projections share ONE synapse over a concatenated, offset connectome (the default ---
+# FrozenDualExpSynapse, DualExpSynapse, CUBA/COBA, delta). A synapse that carries its OWN internal per-member
+# wiring is NOT mergeable: a streaming `PoissonSource` drive holds an `extconn` targeting member-local indices
+# `1:N`, so reusing member 1's would leave members 2..B undriven. Those get one projection PER MEMBER, each
+# offset into its block (see `_block_diagonal`).
+_block_mergeable(::AbstractSynapseModel) = true
+_block_mergeable(::PoissonSource) = false
+
+# Shift a synapse's INTERNAL wiring into member b's block: targets += `off`, post-dimension grows to `Ntot`.
+# Edge-defined synapses carry none → identity. A `PoissonSource` offsets its `extconn`'s POST (targets) only
+# --- sources, weights, delays and `seed` are untouched, so the member's per-source Poisson draw is
+# bit-identical to its standalone solve; only the deposit lands in the member's block.
+_offset_synapse(syn::AbstractSynapseModel, off::Int, Ntot::Int, arch) = syn
+_offset_synapse(p::PoissonSource, off::Int, Ntot::Int, arch) =
+    PoissonSource(p.synapse, _shift_post(p.extconn, off, Ntot, arch), p.rate, p.seed)
+
+# A CSR with every post index shifted by `off` and the post dimension grown to `Ntot` (sources / weights /
+# delays unchanged), rebuilt on `arch`. Mirrors `_offset_edges` but shifts ONLY the target index.
+function _shift_post(conn::SparseCSR, off::Int, Ntot::Int, arch)
+    src, post, w, d = conn.src, conn.post, conn.weight, conn.delay
+    edges = [(Int(src[e]), Int(post[e]) + off, w[e], d[e]) for e in 1:nedges(conn)]
+    return SparseCSR(arch, edges; npre = npre(conn), npost = Ntot)
+end
+
 """
     _block_diagonal(nets) -> DewdropNetwork
 
@@ -120,11 +146,25 @@ function _block_diagonal(nets::AbstractVector{<:DewdropNetwork})
     Ntot = sum(Ns)
     model = B == 1 ? first(nets).model : MultiModel([net.model for net in nets], Ns)
     input = reduce(vcat, [_expand_input(net.input, net.n) for net in nets])
-    projs = ntuple(nproj) do j
+    # Stacked projections: a block-mergeable synapse shares ONE projection over the members' concatenated,
+    # offset edges; a non-mergeable one (a streaming drive) gets ONE projection per member, offset into its
+    # block, so every member is driven by ITS OWN source rather than member 1's (otherwise members 2..B are
+    # silently undriven --- their `extconn` would still point at member 1's block).
+    projlist = Projection[]
+    for j in 1:nproj
         syn = first(nets).projections[j].synapse
-        edges = reduce(vcat, [_offset_edges(nets[b].projections[j].conn, offs[b]) for b in 1:B])
-        Projection(syn, SparseCSR(arch, edges; npre = Ntot, npost = Ntot))
+        if _block_mergeable(syn)
+            edges = reduce(vcat, [_offset_edges(nets[b].projections[j].conn, offs[b]) for b in 1:B])
+            push!(projlist, Projection(syn, SparseCSR(arch, edges; npre = Ntot, npost = Ntot)))
+        else
+            for b in 1:B
+                synb = _offset_synapse(nets[b].projections[j].synapse, offs[b], Ntot, arch)
+                edgesb = _offset_edges(nets[b].projections[j].conn, offs[b])
+                push!(projlist, Projection(synb, SparseCSR(arch, edgesb; npre = Ntot, npost = Ntot)))
+            end
+        end
     end
+    projs = Tuple(projlist)
     subpops = NamedTuple(Symbol("member", b) => (offs[b] + 1):(offs[b] + Ns[b]) for b in 1:B)
     return DewdropNetwork(model, Ntot; input = input, tspan = first(nets).tspan, arch = arch,
         projections = projs, drive = first(nets).drive, subpops = subpops)

@@ -5,8 +5,8 @@ using Test
 # with a once-per-step Poisson event generator, scattering events through the SAME `scatter!` + delay-buffer
 # + `_deliver!` pipeline the network uses for real spikes --- so the postsynaptic kinetics are exactly `S`'s.
 # Attachment to a postsynaptic population = the extconn's post indices fall in that population's global range.
-# The generic replacement for the bespoke `PoissonDualExpDrive` (now used by `spatial_fns(external=:streaming)`),
-# plus the targeted `drive!` builder verb.
+# The generic streaming external drive (replacing bespoke per-model drive synapses), plus the targeted
+# `drive!` builder verb.
 
 _lif() = LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 100.0, tref = 2.0)
 

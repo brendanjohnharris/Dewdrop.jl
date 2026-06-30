@@ -31,6 +31,7 @@ include("Heterogeneous.jl")
 include("MultiModel.jl")
 include("Synapses.jl")
 include("Monitors.jl")
+include("TemporalReducers.jl")  # streaming on-device temporal statistics (madev / Welch); fused into recording
 include("Noise.jl")
 include("Backends.jl")          # execution backends (Auto/Serial/Fused/Turbo) — types before the integrator
 include("Progress.jl")          # host-side progress reporting (ProgressLogging convention) for solve!
@@ -47,9 +48,7 @@ include("PoissonSource.jl")     # generic streaming Poisson drive: PoissonSource
 include("NetworkSpec.jl")       # deferred network spec: specify a network without building the connectome
 include("BlockBatch.jl")        # batching: run B members together (block-diagonal general path; batch(...) forms)
 include("FFT.jl")               # self-contained DFT/FFT for the spectral observables
-include("Stats.jl")             # statistical observables (WRCircuit stats.py ports; host-side analysis)
-include("WRCircuit.jl")         # WRCircuit reproduction: frozen-COBA + prescribed synapses + native builder
-include("SpatialFNS.jl")        # native spatial FNS "working-regime" constructor (BrainPy `Spatial`, no Python)
+include("Stats.jl")             # statistical observables (host-side spatial-network analysis)
 include("Show.jl")              # beautiful hierarchical REPL rendering (Base.show); last — renders every type above
 
 end # module Dewdrop

@@ -88,7 +88,7 @@ distance-kernel, ring and grid topologies.
 """
 function distance_prob(arch::AbstractArchitecture, positions; kernel, weight, delay,
         seed::Unsigned, allow_self::Bool = false, period = nothing,
-        sources = eachindex(positions), targets = eachindex(positions))
+        sources = eachindex(positions), targets = eachindex(positions), index_type::Type = Int)
     npost = length(positions)
     wtype = typeof(to_weight(weight isa Function ? weight(1) : weight))
     dtype = typeof(_delayval(delay isa Function ? delay(1) : delay))   # Int (steps) or Float (ms)
@@ -103,7 +103,7 @@ function distance_prob(arch::AbstractArchitecture, positions; kernel, weight, de
             push!(edges, (Int(pre), Int(post), w, d))
         end
     end
-    return SparseCSR(arch, edges; npre = npost, npost = npost)
+    return SparseCSR(arch, edges; npre = npost, npost = npost, index_type = index_type)
 end
 export distance_prob
 
@@ -184,7 +184,7 @@ with zero kernel probability are never selected. O(|sources|·|targets|) time, O
 """
 function distance_fixed_count(arch::AbstractArchitecture, positions; kernel, count, weight, delay,
         seed::Unsigned, allow_self::Bool = false, period = nothing,
-        sources = eachindex(positions), targets = eachindex(positions))
+        sources = eachindex(positions), targets = eachindex(positions), index_type::Type = Int)
     cnt = Int(count)
     cnt ≥ 0 || throw(ArgumentError("count must be ≥ 0 (got $cnt)"))
     h = _TopK(cnt)
@@ -210,6 +210,6 @@ function distance_fixed_count(arch::AbstractArchitecture, positions; kernel, cou
     end
     sort!(edges; by = e -> (e[1], e[2]))                      # CSR order (by source, then target)
     npost = length(positions)
-    return SparseCSR(arch, edges; npre = npost, npost = npost)
+    return SparseCSR(arch, edges; npre = npost, npost = npost, index_type = index_type)
 end
 export distance_fixed_count

@@ -53,20 +53,19 @@ end
         sources = 1:1, targets = 2:2)
     prob = DewdropNetwork(m, 2; input = [20.0, 0.0], tspan = (0.0, 300.0),
         projection = Projection(DualExpSynapse(; τr = 1.0, τd = 5.0, Erev = 0.0), edge))
-    # record the dual-exp conductance from the SYNAPSE STATE (`g_decay`), materialised on every backend,
-    # rather than the `:gtot` membrane accumulator (only Serial/Turbo write `integ.gtot`; the default
-    # fused/GPU step computes it per-neuron in-kernel, so recording `:gtot` there would silently return
-    # zeros — now a clear error, mirroring the batched path).
+    # record the dual-exp conductance from the SYNAPSE STATE (`g_decay`, the raw conductance) and V.
     sol = solve(prob, FixedStep(dt); record = (V = Trace(:V), g = Trace(:g_decay; projection = 1)))
     @test sum(sol.spike_count) > 0                  # neuron 1 fires, drives neuron 2
     @test maximum(sol.record.g.data[2, :]) > 0      # dual-exp conductance delivered to neuron 2
     @test mean(sol.record.V.data[2, :]) > m.EL      # neuron 2 depolarised above rest by excitation
 
-    # the `:gtot` membrane accumulator is kernel-local on the default fused backend → rejected with a
-    # clear pointer; it works on the Serial broadcast path (which materialises `integ.gtot`).
-    @test_throws ArgumentError solve(prob, FixedStep(dt); record = (g = Trace(:gtot),))
+    # the `:gtot` membrane accumulator is materialised on every SCALAR backend --- the fused step writes
+    # it per-neuron in-kernel (Fused.jl), matching the Serial broadcast path --- so recording it works and
+    # agrees across backends. (Only the (N,B) batched path leaves it kernel-local; rejected there, see batch.jl.)
+    solF = solve(prob, FixedStep(dt); backend = Fused(), record = (g = Trace(:gtot),))
     solS = solve(prob, FixedStep(dt); backend = Serial(), record = (g = Trace(:gtot),))
-    @test maximum(solS.record.g.data[2, :]) > 0
+    @test maximum(solF.record.g.data[2, :]) > 0     # :gtot materialised on the fused path (not zeros)
+    @test solF.record.g.data ≈ solS.record.g.data   # fused ≡ Serial accumulator
 end
 
 @testset "dual-exp COBA: CPU broadcast ≡ JLArray fused" begin

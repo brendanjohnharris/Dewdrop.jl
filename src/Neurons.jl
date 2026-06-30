@@ -57,6 +57,29 @@ export LIF
 statevars(::Type{<:LIF}) = (:V, :refrac)
 float_type(::LIF{T}) where {T} = T
 
+"""
+    convertfloat(T, x)
+
+Recursively rebuild `x` with every `AbstractFloat` leaf converted to the float type `T`, recursing through
+structs, `Tuple`s, `NamedTuple`s and arrays. Integers, booleans, symbols, strings, ranges, and **functions**
+(distance kernels, weight adjusters --- they produce the right element type downstream) pass through
+unchanged. So a whole neuron/synapse model, a `NetworkBuilder`, or a network spec switches precision in one
+call: `convertfloat(Float32, build(...))`. Lets a model be written in convenient `Float64` literals and
+converted to `Float32` afterwards (halving the state / recorded-trace / connectome footprint), instead of
+wrapping every parameter by hand. Reconstructs each struct via its positional constructor (no extra deps).
+"""
+convertfloat(::Type{T}, x::AbstractFloat) where {T <: AbstractFloat} = T(x)
+convertfloat(::Type{<:AbstractFloat}, x::Real) = x                      # Integer / Bool / Unsigned: unchanged
+convertfloat(::Type{<:AbstractFloat}, x::Union{Symbol, AbstractString, Function, Type, AbstractRange}) = x
+convertfloat(::Type{T}, x::Tuple) where {T <: AbstractFloat} = map(e -> convertfloat(T, e), x)
+convertfloat(::Type{T}, x::NamedTuple) where {T <: AbstractFloat} = map(e -> convertfloat(T, e), x)
+convertfloat(::Type{T}, x::AbstractArray) where {T <: AbstractFloat} = map(e -> convertfloat(T, e), x)
+function convertfloat(::Type{T}, x) where {T <: AbstractFloat}
+    (isstructtype(typeof(x)) && !isempty(fieldnames(typeof(x)))) || return x
+    return typeof(x).name.wrapper(map(f -> convertfloat(T, getfield(x, f)), fieldnames(typeof(x)))...)
+end
+export convertfloat
+
 # --- Linear subsystem: the EXACT propagator (exact for LIF over dt at constant input) ---
 """
     asymptote(model, I) -> V∞

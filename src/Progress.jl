@@ -9,7 +9,7 @@
 #
 # The user-facing `progress` kwarg on `solve` / `init`:
 #   :auto (default) → on, but SUPPRESSED until ~`_PROGRESS_CALIBRATE` s of wall-clock have elapsed
-#                     (so trivial runs never flash a bar); the update stride is calibrated to ~10 Hz.
+#                     (so trivial runs never flash a bar); the update stride is calibrated to ~2 Hz.
 #   true            → force on from the start (also renders during the calibration window).
 #   false           → off (no reporter is built; every loop hook compiles to a no-op).
 #   name::String    → force on with a custom bar name.
@@ -22,7 +22,7 @@ import UUIDs
 using Logging: LogLevel, @logmsg
 
 const _PROGRESS_LEVEL = LogLevel(-1)      # the ProgressLogging level (a progress record sits below Info)
-const _PROGRESS_HZ = 10                   # target update rate (Hz) the calibrated stride aims for
+const _PROGRESS_HZ = 2                    # target update rate (Hz) the calibrated stride aims for
 const _PROGRESS_CALIBRATE = 0.3           # calibration window == :auto suppression window (s)
 const _PROGRESS_NAME = "Simulating"       # default bar name
 
@@ -71,7 +71,7 @@ end
 
 # The per-step hook: its ONLY cost on the common path is the `n >= rep.next_emit` compare (a single,
 # well-predicted branch). `time()` and `@logmsg` are touched only at emit points --- O(log n) during
-# calibration (probes at powers of two) and ~10 Hz thereafter.
+# calibration (probes at powers of two) and ~2 Hz thereafter.
 @inline _progress_step!(::Nothing, ::Integer) = nothing
 function _progress_step!(rep::ProgressReporter, n::Integer)
     n >= rep.next_emit || return nothing
@@ -108,6 +108,6 @@ end
     return nothing
 end
 
-# Total steps for a (possibly resumed) integrator: round((tend - tstart)/dt), with tstart = t - n·dt.
-# Both `DewdropIntegrator` and `BatchedIntegrator` expose `t`, `n`, `dt`, `tend`.
-@inline _progress_total(integ) = round(Int, (integ.tend - (integ.t - integ.n * integ.dt)) / integ.dt)
+# Total steps for the run: the integrator's fixed step count (the loop bound). Both `DewdropIntegrator`
+# and `BatchedIntegrator` store `nsteps`; reading it avoids recomputing from a drifted Float32 `t`.
+@inline _progress_total(integ) = integ.nsteps

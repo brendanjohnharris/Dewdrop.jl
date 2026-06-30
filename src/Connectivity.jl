@@ -158,59 +158,68 @@ event-driven scatter touches only a spiking neuron's own row.
 end
 
 """
-    correlate_weights!(conn, J; targets = 1:npost(conn), jitter = 0.05, seed) -> conn
+    correlate_weights!(conn, J; targets = 1:npost(conn), jitter = 0.05, seed, count_empty = true) -> conn
 
 Rescale a connectome's weights in place to **in-degree-normalised** values --- the standard
 balanced-network `1/√k` scaling. Each edge into post-neuron `p` gets mean weight `wₘ = J_rec / √k[p]`
 (with `k[p]` the in-degree of `p` over `targets`), plus a relative Gaussian jitter `N(0,1)·jitter·wₘ`
 drawn reproducibly from the counter RNG keyed by edge index and `seed`. The recurrent scale is
 
-    J_rec = J · Σ k[p] / Σ √k[p]      (both sums over connected targets, k[p] ≥ 1)
+    J_rec = J · Σ k[p] / Σ √max(k[p], 1)      (`count_empty = true`, the default --- BrainPy's convention)
 
-so a uniformly-connected target population (all `k[p] = k`) gives every weight ≈ `J`. A zero-in-degree
-target receives no recurrent input and contributes nothing to the scale, so `J_rec` is set by the
-connected sub-population alone --- unaffected by isolated neurons. (BrainPy's vectorised `√max(k,1)`
-instead adds 1 per empty target, shrinking every weight; that matters only for sparse graphs and is a
-no-op when every target is wired, as in `spatial_fns`.) `targets` is the post sub-population the
-in-degrees are counted over (a contiguous global-index range), so a projection into a sub-population
-normalises against that sub-population. Mutates `conn.weight` host-side; reproducible from the seed.
+so a uniformly-connected target population (all `k[p] = k`) gives every weight ≈ `J`. With the default
+`count_empty = true` a zero-in-degree target contributes `√1 = 1` to the denominator, exactly reproducing
+BrainPy's vectorised `√max(k,1)` (it avoids a NaN and slightly shrinks every weight). With
+`count_empty = false` the denominator sums `√k[p]` over **connected** targets only (`k[p] ≥ 1`), so isolated
+neurons don't affect the scale --- the more principled form; the two agree when every target is wired (a
+dense spatial sheet). `targets` is the post sub-population the in-degrees are counted over (a contiguous
+global-index range), so a projection into a sub-population normalises against that sub-population.
+Reproducible from the seed. The in-degree count and per-edge weight assignment are inherently serial, so
+they run on a host copy of the post indices --- a no-op for a CPU connectome, a single bulk device→host copy
+for a GPU one --- and the result is written back in one bulk `copyto!`, so it works on a GPU connectome too.
 """
 function correlate_weights!(conn::SparseCSR, J::Real; targets = 1:npost(conn),
-        jitter::Real = 0.05, seed::Unsigned)
+        jitter::Real = 0.05, seed::Unsigned, count_empty::Bool = true)
     lo = first(targets)
     n = length(targets)
+    post = Array(conn.post)          # host copy (no scalar device indexing); bulk on GPU, no-op-ish on CPU
     k = zeros(Int, n)
-    @inbounds for p in conn.post
+    @inbounds for p in post
         k[Int(p) - lo + 1] += 1
     end
     sum_k = 0.0
     sum_sqrt = 0.0
     @inbounds for kk in k
-        if kk > 0                    # empty target (k=0) receives no recurrent input → contributes nothing
+        if kk > 0
             sum_k += kk
             sum_sqrt += sqrt(kk)
-        end
+        elseif count_empty           # BrainPy √max(k,1): a zero-in-degree target contributes √1 = 1
+            sum_sqrt += 1.0
+        end                          # count_empty = false → empty targets excluded (the principled form)
     end
     J_rec = sum_sqrt > 0 ? J * sum_k / sum_sqrt : 0.0
-    w = conn.weight
-    T = eltype(w)
-    @inbounds for e in eachindex(conn.post)
-        wm = J_rec / sqrt(k[Int(conn.post[e]) - lo + 1])
+    T = eltype(conn.weight)
+    w = Vector{T}(undef, length(post))
+    @inbounds for e in eachindex(post)
+        wm = J_rec / sqrt(k[Int(post[e]) - lo + 1])
         w[e] = T(wm + draw_normal(Float64, seed, e, 0) * jitter * wm)
     end
+    copyto!(conn.weight, w)          # single bulk host→device write-back
     return conn
 end
 export correlate_weights!
 
 """
-    correlate_weights(J; jitter = 0.05, seed) -> adjuster
+    correlate_weights(J; jitter = 0.05, seed, count_empty = true) -> adjuster
 
 Curried [`correlate_weights!`](@ref) for the builder's `adjust` hook:
 `project!(…; adjust = correlate_weights(J; seed))`. The hook supplies the projection's resolved
 destination range, so the in-degree normalisation is taken over the actual post sub-population.
+`count_empty` selects the zero-in-degree convention (default `true` = BrainPy's `√max(k,1)`; see
+[`correlate_weights!`](@ref)).
 """
-correlate_weights(J::Real; jitter::Real = 0.05, seed::Unsigned) =
-    (conn, ctx) -> correlate_weights!(conn, J; targets = ctx.targets, jitter = jitter, seed = seed)
+correlate_weights(J::Real; jitter::Real = 0.05, seed::Unsigned, count_empty::Bool = true) =
+    (conn, ctx) -> correlate_weights!(conn, J; targets = ctx.targets, jitter = jitter, seed = seed, count_empty = count_empty)
 export correlate_weights
 
 """

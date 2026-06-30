@@ -87,7 +87,7 @@ end
 end
 
 # correlate_weights!: in-degree-normalised (1/√k) weights with relative Gaussian jitter, reproducible from
-# the seed --- the generic primitive WRCircuit/spatial_fns consume. See networkspec.jl for the curried
+# the seed --- the generic primitive spatial E/I models consume. See networkspec.jl for the curried
 # `correlate_weights` used through the builder's `adjust` hook.
 @testset "correlate_weights! (in-degree normalisation)" begin
     arch = Dewdrop.CPU()
@@ -109,10 +109,36 @@ end
     correlate_weights!(c2, 0.1; seed = UInt64(7))
     @test c.weight == c2.weight                          # reproducible from the seed
 
-    # principled 'empty → 0': an isolated (zero-in-degree) target does not change the scale on the others
-    c3 = Dewdrop.SparseCSR(arch, [(1, 1, 1.0, 1), (1, 2, 1.0, 1)]; npre = 1, npost = 3)  # target 3 unwired
-    correlate_weights!(c3, 0.2; targets = 1:3, seed = UInt64(3))
-    c2t = Dewdrop.SparseCSR(arch, [(1, 1, 1.0, 1), (1, 2, 1.0, 1)]; npre = 1, npost = 2) # no empty target
-    correlate_weights!(c2t, 0.2; targets = 1:2, seed = UInt64(3))
-    @test c3.weight == c2t.weight                        # the empty target is irrelevant to J_rec
+    # zero-in-degree convention. c3 has an isolated target (3); c2 is the same wiring with no empty target.
+    mkc3() = Dewdrop.SparseCSR(arch, [(1, 1, 1.0, 1), (1, 2, 1.0, 1)]; npre = 1, npost = 3)  # target 3 unwired
+    mkc2() = Dewdrop.SparseCSR(arch, [(1, 1, 1.0, 1), (1, 2, 1.0, 1)]; npre = 1, npost = 2)  # no empty target
+    # default count_empty=true (BrainPy √max(k,1)): the empty target adds √1=1 to the denominator, so
+    # Σ√max(k,1) = √1+√1+√1 = 3 vs √1+√1 = 2 → J_rec (and every weight) scales by 2/3.
+    c3b = mkc3(); correlate_weights!(c3b, 0.2; targets = 1:3, seed = UInt64(3))
+    c2b = mkc2(); correlate_weights!(c2b, 0.2; targets = 1:2, seed = UInt64(3))
+    @test c3b.weight ≈ c2b.weight .* (2 / 3)
+    # count_empty=false (principled): the empty target is irrelevant to the scale
+    c3p = mkc3(); correlate_weights!(c3p, 0.2; targets = 1:3, seed = UInt64(3), count_empty = false)
+    c2p = mkc2(); correlate_weights!(c2p, 0.2; targets = 1:2, seed = UInt64(3), count_empty = false)
+    @test c3p.weight == c2p.weight
+    @test c2b.weight == c2p.weight                        # no empty target → the two conventions agree
+end
+
+# correlate_weights! on a DEVICE connectome (GPU build path): the in-degree count + per-edge weight
+# assignment are serial, so they run on a host copy of `post` with a single bulk write-back --- never
+# scalar-indexing the device array. A JLArray connectome (which bans scalar indexing, like CUDA) exercises
+# this; the result must be identical to the host path.
+@testset "correlate_weights! on a device connectome (no scalar indexing)" begin
+    c = fixed_prob(Dewdrop.CPU(), 64, 64, 0.3; weight = 1.0, delay = steps(1), seed = UInt64(11))
+    cdev = adapt(JLArray, c)
+    correlate_weights!(cdev, 0.1; seed = UInt64(7))      # would scalar-index a device array if not host-staged
+    correlate_weights!(c, 0.1; seed = UInt64(7))         # host reference (same edges + seed)
+    @test cdev.weight isa JLArray
+    @test Array(cdev.weight) == c.weight                 # bit-identical to the host path
+    # sub-population target range on device, too
+    cs = fixed_prob(Dewdrop.CPU(), 64, 64, 0.3; weight = 1.0, delay = steps(1), seed = UInt64(12), targets = 10:40)
+    csdev = adapt(JLArray, cs)
+    correlate_weights!(csdev, 0.2; targets = 10:40, seed = UInt64(8))
+    correlate_weights!(cs, 0.2; targets = 10:40, seed = UInt64(8))
+    @test Array(csdev.weight) == cs.weight
 end

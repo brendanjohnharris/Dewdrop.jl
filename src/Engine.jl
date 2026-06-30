@@ -58,9 +58,12 @@ end
 Adapt.@adapt_structure DeltaSynapseState
 
 # Dual-exponential COBA: two per-target conductance accumulators (`g_rise`, `g_decay`), each kicked
-# by the delivered weight and decaying with its own coefficient; the conductance is
-# `a·(g_decay − g_rise)`, contributing to the effective leak (`gtot`) and reversal drive (`itot`).
-struct DualExpCOBAState{G, B, C, T} <: AbstractSynapseState
+# by the delivered weight and decaying with its own coefficient; the conductance is `a·(g_decay − g_rise)`.
+# Two integration variants share kinetics (deliver/decay) but differ only in how the conductance enters
+# the membrane (see `_accumulate!`): `DualExpCOBAState` is EXACT COBA (g shunts via `gtot`);
+# `FrozenDualExpCOBAState` is FROZEN-CURRENT (g·(Erev−V) injected as current, no shunt). Same fields.
+abstract type AbstractDualExpState <: AbstractSynapseState end
+struct DualExpCOBAState{G, B, C, T} <: AbstractDualExpState
     g_rise::G
     g_decay::G
     buf::B
@@ -71,6 +74,17 @@ struct DualExpCOBAState{G, B, C, T} <: AbstractSynapseState
     Erev::T
 end
 Adapt.@adapt_structure DualExpCOBAState
+struct FrozenDualExpCOBAState{G, B, C, T} <: AbstractDualExpState
+    g_rise::G
+    g_decay::G
+    buf::B
+    conn::C
+    decay_r::T
+    decay_d::T
+    a::T
+    Erev::T
+end
+Adapt.@adapt_structure FrozenDualExpCOBAState
 
 """
     PoissonDrive(; rate, weight, seed=0)
@@ -158,6 +172,9 @@ mutable struct DewdropIntegrator{M, ST, In, A, S, T, B, C, SY, GT, MO, DR, CO, N
     n::Int
     t::T
     const tend::T
+    const nsteps::Int            # fixed total step count: the loop bound (== monitor buffer width). A
+                                 # FixedStep run iterates this integer, never an accumulated-float time
+                                 # comparison (which drifts under a Float32 `t` and truncates the run).
     const arch::A
     const schedule::S
     const spiked::B
@@ -179,7 +196,7 @@ end
 # `subpops`/`positions` metadata (a custom rule keeps `positions` host-resident even on a GPU run).
 Adapt.adapt_structure(to, integ::DewdropIntegrator) = DewdropIntegrator(
     adapt(to, integ.model), adapt(to, integ.state), adapt(to, integ.input), integ.dt,
-    integ.n, integ.t, integ.tend, integ.arch, integ.schedule, adapt(to, integ.spiked),
+    integ.n, integ.t, integ.tend, integ.nsteps, integ.arch, integ.schedule, adapt(to, integ.spiked),
     adapt(to, integ.spike_count), adapt(to, integ.syns), adapt(to, integ.gtot), adapt(to, integ.itot),
     adapt(to, integ.monitors), adapt(to, integ.drive), integ.sync_every, adapt(to, integ.compaction),
     adapt(to, integ.noise), integ.backend, integ.subpops, integ.positions, integ.progress,
@@ -189,7 +206,7 @@ function CommonSolve.init(prob::DewdropNetwork, alg::FixedStep;
         record = nothing, v0 = nothing, v0_seed::Unsigned = 0x5eed00d % UInt64,
         batch = nothing, input = nothing, streams = nothing, sync_every::Integer = _DEFAULT_WINDOW,
         scatter::Symbol = :auto, backend::SimBackend = Auto(), step::Union{Nothing, Symbol} = nothing,
-        progress = :auto)
+        progress = :auto, syn_overrides = nothing, model_overrides = nothing)
     # `scatter = :auto` (default): on the GPU pick edge-parallel vs compacted from the connectome size
     # (the L2-spill crossover, see `_resolve_scatter`); CPU / plastic projections → always `:edge`.
     # Resolved BEFORE the batched dispatch so both the scalar and batched paths receive a concrete mode.
@@ -198,7 +215,7 @@ function CommonSolve.init(prob::DewdropNetwork, alg::FixedStep;
     # path below is unchanged (batch defaults to `nothing`), so existing runs are bit-identical.
     # (the batched path is always the fused megakernel, so the backend does not apply there.)
     batch === nothing || return _batched_init(prob, alg, Int(batch);
-        record, v0, v0_seed, input, streams, sync_every, scatter, progress)
+        record, v0, v0_seed, input, streams, sync_every, scatter, progress, syn_overrides, model_overrides)
     # the execution backend (Auto/Serial/Fused/Turbo; see Backends.jl). `Auto` resolves to the best
     # available for this problem; the deprecated `step::Symbol` (:auto/:fused/…) maps onto a backend.
     bk = _resolve_backend(step === nothing ? backend : _step_to_backend(step), prob)
@@ -239,7 +256,7 @@ function CommonSolve.init(prob::DewdropNetwork, alg::FixedStep;
     compaction = _make_compaction(scatter, arch, N)
     return DewdropIntegrator(
         prob.model, state, prob.input, dt,
-        0, prob.tspan[1], prob.tspan[2], arch, prob.schedule, spiked, spike_count, syns,
+        0, prob.tspan[1], prob.tspan[2], nsteps, arch, prob.schedule, spiked, spike_count, syns,
         gtot, itot, monitors, prob.drive, Int(sync_every), compaction, prob.noise, bk,
         prob.subpops, prob.positions, progress,
     )
@@ -325,6 +342,13 @@ function _make_synstate(arch, syn::DualExpSynapse, conn, ::Type{T}, N, dt) where
     return DualExpCOBAState(g_rise, g_decay, buf, conn,
         T(exp(-dt / syn.τr)), T(exp(-dt / syn.τd)), T(_dualexp_a(syn.τr, syn.τd)), T(syn.Erev))
 end
+function _make_synstate(arch, syn::FrozenDualExpSynapse, conn, ::Type{T}, N, dt) where {T}
+    g_rise = fill!(allocate(arch, T, N), zero(T))
+    g_decay = fill!(allocate(arch, T, N), zero(T))
+    buf = DelayBuffer(arch, T, N, maximum(conn.delay; init = 0))   # empty projection → L=1 no-op
+    return FrozenDualExpCOBAState(g_rise, g_decay, buf, conn,
+        T(exp(-dt / syn.τr)), T(exp(-dt / syn.τd)), T(_dualexp_a(syn.τr, syn.τd)), T(syn.Erev))
+end
 
 # --- Within-step phases. Synapse work iterates the projection tuple, dispatching each
 # operation on the per-projection synaptic-state type (compile-time unrolled), so a
@@ -335,15 +359,19 @@ end
 @inline _deliver!(syn::SynapseState, integ) = (deliver_due!(syn.Isyn, syn.buf, integ.n); nothing)
 @inline _deliver!(syn::COBAState, integ) = (deliver_due!(syn.g, syn.buf, integ.n); nothing)
 @inline _deliver!(syn::DeltaSynapseState, integ) = (deliver_due!(integ.state.state.V, syn.buf, integ.n); nothing)
-@inline _deliver!(syn::DualExpCOBAState, integ) = (deliver_due_dual!(syn.g_rise, syn.g_decay, syn.buf, integ.n); nothing)
+@inline _deliver!(syn::AbstractDualExpState, integ) = (deliver_due_dual!(syn.g_rise, syn.g_decay, syn.buf, integ.n); nothing)
 
 # Per-projection: accumulate the input current (itot) and conductance (gtot) for this step.
 @inline _accumulate!(syn::SynapseState, gtot, itot, V) = (@. itot += syn.Isyn; nothing)
 @inline _accumulate!(syn::COBAState, gtot, itot, V) = (@. gtot += syn.g; @. itot += syn.g * syn.Erev; nothing)
 @inline _accumulate!(syn::DeltaSynapseState, gtot, itot, V) = nothing  # applied directly to V at deliver
-@inline function _accumulate!(syn::DualExpCOBAState, gtot, itot, V)    # conductance g = a·(g_decay − g_rise)
+@inline function _accumulate!(syn::DualExpCOBAState, gtot, itot, V)    # exact COBA: g = a·(g_decay − g_rise) shunts
     @. gtot += syn.a * (syn.g_decay - syn.g_rise)
     @. itot += syn.a * (syn.g_decay - syn.g_rise) * syn.Erev
+    return nothing
+end
+@inline function _accumulate!(syn::FrozenDualExpCOBAState, gtot, itot, V)   # frozen current g·(Erev − V), no shunt
+    @. itot += syn.a * (syn.g_decay - syn.g_rise) * (syn.Erev - V)
     return nothing
 end
 
@@ -351,7 +379,7 @@ end
 @inline _decay!(syn::SynapseState) = (@. syn.Isyn *= syn.decay; nothing)
 @inline _decay!(syn::COBAState) = (@. syn.g *= syn.decay; nothing)
 @inline _decay!(syn::DeltaSynapseState) = nothing
-@inline _decay!(syn::DualExpCOBAState) = (@. syn.g_rise *= syn.decay_r; @. syn.g_decay *= syn.decay_d; nothing)
+@inline _decay!(syn::AbstractDualExpState) = (@. syn.g_rise *= syn.decay_r; @. syn.g_decay *= syn.decay_d; nothing)
 
 # Compile-time tuple unrolls (dispatch on each element's concrete type → no runtime dispatch).
 @inline _deliver_all!(::Tuple{}, integ) = nothing
@@ -484,7 +512,7 @@ end
 function CommonSolve.solve!(integ::DewdropIntegrator)
     rep = _progress_reporter(integ.progress, _progress_total(integ))   # nothing ⇒ every hook no-ops
     _progress_start!(rep)
-    while integ.t < integ.tend - integ.dt / 2
+    while integ.n < integ.nsteps               # integer count: exactly fills the monitor buffer (no float-time drift)
         step!(integ)
         _progress_step!(rep, integ.n)
     end
@@ -513,7 +541,9 @@ end
 function DewdropSolution(integ::DewdropIntegrator)
     return DewdropSolution(
         integ.state, integ.spike_count, integ.n, integ.dt,
-        (integ.t - integ.n * integ.dt, integ.t), map(_result, integ.monitors), integ.subpops, integ.positions,
+        # tspan from the fixed window (tend, nsteps), NOT the accumulated `integ.t`: under a Float32 `t`
+        # the running sum drifts past `tend`, so `integ.t` would report a spurious nonzero start.
+        (integ.tend - integ.nsteps * integ.dt, integ.tend), map(_result, integ.monitors), integ.subpops, integ.positions,
     )
 end
 export DewdropSolution

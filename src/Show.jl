@@ -78,6 +78,7 @@ _field_dims(::Type{<:FNSNeuron}) = (C = :capacitance, gL = :conductance, VL = :v
 _field_dims(::Type{<:CurrentSynapse}) = (τ = :time,)
 _field_dims(::Type{<:ConductanceSynapse}) = (τ = :time, Erev = :voltage)
 _field_dims(::Type{<:DualExpSynapse}) = (τr = :time, τd = :time, Erev = :voltage)
+_field_dims(::Type{<:FrozenDualExpSynapse}) = (τr = :time, τd = :time, Erev = :voltage)
 
 # the aligned `name = value unit` parameter block (shared by neuron + synapse leaves). Each line is
 # newline-prefixed so the block appends after a header with no trailing newline.
@@ -129,6 +130,29 @@ function _print_tree(io::IO, children::AbstractVector; prefix::String = "")
     return nothing
 end
 
+# --- leaf-parameter expansion for the network / builder / spec tree --------------------------------------
+# The tree expands each leaf's parameters by DEFAULT (`:detail => :full`); `IOContext(io, :detail => :compact)`
+# gives the one-line-per-node type-level summary. (`:compact` --- the Julia inline hint --- still yields the
+# bare one-liner via the 2-arg `show`.)
+@inline _expand(io::IO) = get(io, :detail, :full) !== :compact
+
+# a leaf model's parameters as aligned `name = value unit` tree child rows --- shared by population neuron
+# models and projection synapses (reuses the `_field_dims`/`_unit_for` unit table).
+function _param_children(m)
+    fns = fieldnames(typeof(m))
+    isempty(fns) && return Any[]
+    dims = _field_dims(typeof(m))
+    namew = maximum(f -> length(string(f)), fns)
+    return Any[let u = _unit_for(dims, f)
+            (string(rpad(string(f), namew), " = ", _fmt(getfield(m, f)), u === nothing ? "" : " " * u), Any[])
+        end for f in fns]
+end
+
+# population sub-tree: a simple neuron model expands to its parameters; a merged model (Heterogeneous /
+# multi-type) stays type-level --- its parameters are per-neuron, so there is no single sheet to show.
+_pop_param_children(model::AbstractNeuronModel, r) = _param_children(model)
+_pop_param_children(model, r) = Any[]
+
 # === neuron model leaves (LIF / AdaptLIF / AdEx / FNSNeuron / @neuron) ===
 function Base.show(io::IO, ::MIME"text/plain", m::AbstractNeuronModel)
     get(io, :compact, false) && return show(io, m)
@@ -149,6 +173,7 @@ end
 _synkind(::CurrentSynapse) = "CUBA"
 _synkind(::ConductanceSynapse) = "COBA"
 _synkind(::DualExpSynapse) = "COBA"
+_synkind(::FrozenDualExpSynapse) = "COBA (frozen)"
 _synkind(::DeltaSynapse) = "delta"
 function Base.show(io::IO, ::MIME"text/plain", s::AbstractSynapseModel)
     get(io, :compact, false) && return show(io, s)
@@ -302,11 +327,13 @@ function Base.show(io::IO, ::MIME"text/plain", net::DewdropNetwork)
     nw = maximum(p -> length(p[1]), pops; init = 0)
     rngs = String["[$(first(r)):$(last(r))]" for (_, r) in pops]
     rw = maximum(length, rngs; init = 0)
-    popkids = Any[(string(rpad(pops[i][1], nw), "  ", rpad(rngs[i], rw), "  ", _pop_model_str(net.model, pops[i][2])), Any[])
-                  for i in eachindex(pops)]
+    full = _expand(io)
+    popkids = Any[(string(rpad(pops[i][1], nw), "  ", rpad(rngs[i], rw), "  ", _pop_model_str(net.model, pops[i][2])),
+                   full ? _pop_param_children(net.model, pops[i][2]) : Any[]) for i in eachindex(pops)]
     isempty(popkids) || push!(children, ("populations ($(length(popkids)))", popkids))
     if !isempty(net.projections)
-        projkids = Any[(_proj_head(net, i), Any[]) for i in eachindex(net.projections)]
+        projkids = Any[(_proj_head(net, i), full ? _param_children(net.projections[i].synapse) : Any[])
+                       for i in eachindex(net.projections)]
         push!(children, ("projections ($(length(projkids)))", projkids))
     end
     net.drive === nothing || push!(children, ("drive  " * _oneline(net.drive), Any[]))
@@ -318,8 +345,16 @@ Base.show(io::IO, net::DewdropNetwork) =
     print(io, "DewdropNetwork(N=", net.n, ", ", _npops(net.subpops), " pops, ", length(net.projections), " projs)")
 
 # === NetworkBuilder: the exact, unbuilt named hierarchy ===
+# projection sub-tree (builder/spec, `:full`): the synapse's parameters + the fixed-count edge budget. The
+# distance kernel and weight `adjust` are anonymous closures (no clean render), so they stay in the head/kw.
+function _proj_param_children(s::_ProjSpec)
+    rows = _param_children(s.synapse)
+    (haskey(s.kw, :count) && s.kw.count !== nothing) && push!(rows, (string("count = ", _fmt(s.kw.count)), Any[]))
+    return rows
+end
 function _builder_proj_head(s::_ProjSpec)
-    head = string(s.src, " → ", s.dst, "  ", nameof(typeof(s.synapse)))
+    src = s.src === :__poisson__ ? :poisson : s.src    # prettify the `drive!` external-source sentinel
+    head = string(src, " → ", s.dst, "  ", nameof(typeof(s.synapse)))
     kw = s.kw
     parts = String[]
     (haskey(kw, :p) && kw.p isa Number) && push!(parts, "p=$(_fmt(kw.p))")
@@ -332,10 +367,12 @@ end
 function _show_builder(io::IO, arch, tspan, names, models, sizes, projspecs, drive; head::String, tag::String)
     print(io, head, " · ", nameof(typeof(arch)), " · t∈[", _fmt(tspan[1]), ",", _fmt(tspan[2]), "] ms · ")
     _styled(io, tag, :dim)
+    full = _expand(io)
     children = Any[]
-    popkids = Any[(string(names[i], "  ", sizes[i], "  ", typeof(models[i])), Any[]) for i in eachindex(names)]
+    popkids = Any[(string(names[i], "  ", sizes[i], "  ", full ? nameof(typeof(models[i])) : typeof(models[i])),
+                   full ? _param_children(models[i]) : Any[]) for i in eachindex(names)]
     isempty(popkids) || push!(children, ("populations ($(length(popkids)))", popkids))
-    projkids = Any[(_builder_proj_head(s), Any[]) for s in projspecs]
+    projkids = Any[(_builder_proj_head(s), full ? _proj_param_children(s) : Any[]) for s in projspecs]
     isempty(projkids) || push!(children, ("projections ($(length(projkids)))", projkids))
     drive === nothing || push!(children, ("drive  " * _oneline(drive), Any[]))
     _print_tree(io, children)
