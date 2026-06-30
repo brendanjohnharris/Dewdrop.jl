@@ -92,13 +92,16 @@ function verify(vals)
 end
 
 # --- (2) plot scaling: wall time + memory vs N, log-log, CPU & GPU ---
-const SIMCOLOR = Dict("dewdrop" => Fathom.baikal, "brian" => Fathom.bermejo,
-    "brainpy" => Fathom.qinghai, "nest" => Fathom.seohae, "genn" => Fathom.ianthina)
+const SIMCOLOR = Dict(
+    "dewdrop" => Fathom.baikal, "brian" => Fathom.bermejo,
+    "brainpy" => Fathom.qinghai, "nest" => Fathom.seohae, "genn" => Fathom.ianthina
+)
 _color(sim) = get(SIMCOLOR, sim, Fathom.ianthina)
 # backend → marker, so a simulator's several backends (e.g. dewdrop serial/fused/turbo) stay distinct
 const BACKEND_MARKER = Dict(
     "serial" => :circle, "fused" => :rect, "turbo" => :utriangle, "nest" => :diamond,
-    "jax" => :star5, "cuda" => :xcross, "cpp_standalone" => :cross, "cuda_standalone" => :pentagon)
+    "jax" => :star5, "cuda" => :xcross, "cpp_standalone" => :cross, "cuda_standalone" => :pentagon
+)
 _marker(backend) = get(BACKEND_MARKER, backend, :hexagon)
 
 # Apples-to-apples layout: legend across the top, CPU methods (time + memory) on row 2, GPU on row 3.
@@ -109,12 +112,14 @@ function plot_scaling(series)
     cpu = filter(s -> s.device != "gpu", series)
     gpu = filter(s -> s.device == "gpu", series)
     # row 1: CPU legend, row 2: CPU plots, row 3: GPU legend, row 4: GPU plots
-    mkaxis(r, c, title, ylab) = Axis(fig[r, c]; xlabel = "Network size (N)", ylabel = ylab,
-        xscale = log10, yscale = log10, title = title)
-    axct = mkaxis(2, 1, "CPU --- simulation time", "Simulation time (s)")
-    axcm = mkaxis(2, 2, "CPU --- peak memory", "Peak memory (MB)")
-    axgt = mkaxis(4, 1, "GPU --- simulation time", "Simulation time (s)")
-    axgm = mkaxis(4, 2, "GPU --- peak memory", "Peak memory (MB)")
+    mkaxis(r, c, title, ylab) = Axis(
+        fig[r, c]; xlabel = "Network size (N)", ylabel = ylab,
+        xscale = log10, yscale = log10, title = title
+    )
+    axct = mkaxis(2, 1, "CPU: simulation time", "Simulation time (s)")
+    axcm = mkaxis(2, 2, "CPU: peak memory", "Peak memory (MB)")
+    axgt = mkaxis(4, 1, "GPU: simulation time", "Simulation time (s)")
+    axgm = mkaxis(4, 2, "GPU: peak memory", "Peak memory (MB)")
     function draw!(axt, axm, ss)               # returns (handles, labels) for the legend
         handles, labels = Any[], String[]
         for s in sort(ss; by = x -> (x.sim, x.backend))
