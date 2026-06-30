@@ -1,7 +1,11 @@
 # Dewdrop
 
+[![Build Status](https://github.com/brendanjohnharris/Dewdrop.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/brendanjohnharris/Dewdrop.jl/actions/workflows/CI.yml?query=branch%3Amain)
+[![Coverage](https://codecov.io/gh/brendanjohnharris/Dewdrop.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/brendanjohnharris/Dewdrop.jl)
+
 [![Aqua QA](https://raw.githubusercontent.com/JuliaTesting/Aqua.jl/master/badge.svg)](https://github.com/JuliaTesting/Aqua.jl)
 [![](https://img.shields.io/badge/%F0%9F%9B%A9%EF%B8%8F_tested_with-JET.jl-233f9a)](https://github.com/aviatesk/JET.jl)
+
 ![Experimental](https://img.shields.io/badge/%F0%9F%A7%AA_status-experimental-orange)
 ![AI-driven](https://img.shields.io/badge/%F0%9F%A4%96_development-AI--driven-8957e5)
 
@@ -14,7 +18,7 @@ Dewdrop ports and consolidates ideas from gold-standard simulators (Brian2, NEST
 ```julia
 using Dewdrop
 
-# a leaky integrate-and-fire model (parameters are plain code)
+# a leaky integrate-and-fire model
 m = LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 100.0, tref = 2.0)
 
 # 64 units driven by a constant current
@@ -54,10 +58,10 @@ Experimental, but broad. Implemented and tested:
   (`Serial`/`Fused`/`Turbo`/`Differentiable`, chosen by `Auto`), a CUDA GPU path via a fused
   megakernel, and ensemble + block-diagonal batching.
 - **Outputs**: opt-in windowed monitors (`Trace`/`Spikes`/`Aggregate`/`Probe`), named
-  subpopulations with a fluent builder and addressor (`sol[:E]`), `Unitful` inputs, labelled
+  subpopulations (`sol[:E]`), `Unitful` inputs, labelled
   `TimeseriesBase` outputs, and host-side statistical observables.
 
-Validated against the analytic LIF f-I curve and the Brunel (2000) and Vogels--Abbott regimes, and
+Currently validated against the analytic LIF f-I curve and the Brunel (2000) and Vogels--Abbott regimes, and
 cross-checked spike-for-spike against Brian2/brian2cuda, NEST/NEST-GPU, GeNN, and BrainPy. The
 design is CPU-first with GPU-readiness enforced in CI (via `JLArrays` + `allowscalar(false)`); the
 test suite is Aqua- and JET-clean.
