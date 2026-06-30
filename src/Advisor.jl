@@ -34,10 +34,6 @@ end
 _is_gpu(prob::DewdropNetwork) = prob.arch isa GPU
 _conns(prob::DewdropNetwork) = (p.conn for p in prob.projections)
 _total_edges(prob::DewdropNetwork) = sum(nedges, _conns(prob); init = 0)
-function _mean_degree(prob::DewdropNetwork)
-    ne = _total_edges(prob)
-    return ne == 0 ? 0.0 : ne / prob.n
-end
 
 # --- solution-side firing fraction per step (one device reduction; gated behind `advise`) ---
 # Duck-typed over DewdropSolution / BatchedSolution (both carry `spike_count` + `nsteps`); for the
@@ -72,7 +68,7 @@ end
 function _advise_runtime(prob::DewdropNetwork, frac::Real, scatter::Symbol = :auto)
     _is_gpu(prob) || return nothing
     ne = _total_edges(prob)
-    md = _mean_degree(prob)
+    md = ne == 0 ? 0.0 : ne / prob.n   # reuse ne; avoids a second edge-count walk
     pct = round(frac * 100; digits = 2)
     # only suggest compaction if this run's ACTUAL scatter is the edge scatter (not when it already resolved
     # to compacted --- whether via `:auto` past the L2-spill crossover, or an explicit `scatter = :compacted`).

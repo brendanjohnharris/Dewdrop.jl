@@ -12,6 +12,10 @@ import Random123: philox
 # that adjacent entities draw from well-separated streams.
 const _RNG_MIX = 0x9e3779b97f4a7c15
 
+# The Philox key for a draw: fold the entity index into the seed via the golden-ratio mix. Single
+# source of truth so the uniform and normal streams can never drift apart.
+@inline _rng_key(seed, entity) = (seed % UInt64) ⊻ ((entity % UInt64) * _RNG_MIX)
+
 """
     draw_uniform(T, seed, step, entity) -> T
 
@@ -44,7 +48,7 @@ by `(seed, step, entity, batch)` on CPU and GPU. `batch = 0` reproduces the 4-ar
 @inline function draw_uniform(
         ::Type{T}, seed::Unsigned, step::Integer, entity::Integer, batch::Integer
     ) where {T <: AbstractFloat}
-    key = (seed % UInt64) ⊻ ((entity % UInt64) * _RNG_MIX)
+    key = _rng_key(seed, entity)
     x1, _ = philox((key,), (step % UInt64, batch % UInt64), Val(10))
     return _uniform(T, x1)
 end
@@ -122,7 +126,7 @@ bits exactly.
 @inline function draw_normal(
         ::Type{T}, seed::Unsigned, step::Integer, entity::Integer, batch::Integer
     ) where {T <: AbstractFloat}
-    key = (seed % UInt64) ⊻ ((entity % UInt64) * _RNG_MIX)
+    key = _rng_key(seed, entity)
     x1, x2 = philox((key,), (step % UInt64, batch % UInt64), Val(10))   # BOTH words (x2 unused by draw_uniform)
     u1 = _uniform(T, x1)
     u2 = _uniform(T, x2)

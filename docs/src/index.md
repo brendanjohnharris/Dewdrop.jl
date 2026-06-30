@@ -8,8 +8,11 @@ hero:
   tagline: "Fixed-step, struct-of-arrays, CPU & GPU from one source."
   actions:
     - theme: brand
-      text: Choosing a backend
-      link: /guide/backends
+      text: Get started
+      link: /guide/getting-started
+    - theme: alt
+      text: Benchmarks
+      link: /benchmarks
     - theme: alt
       text: View on GitHub
       link: https://github.com/brendanjohnharris/Dewdrop.jl
@@ -55,3 +58,12 @@ extra dependency, and it never perturbs the simulation (a `progress` run is bit-
 See **[Choosing a backend](guide/backends.md)** for when to use each, and **[Turbo & model
 specialization](guide/turbo.md)** for the SIMD backend and how to add a Turbo specialization to a
 model.
+
+## Performance
+
+On an identical recurrent E/I [`AdEx`](@ref) network, Dewdrop's [`Fused`](@ref) backend is the fastest
+CPU simulator measured at scale (3.4× Brian2's compiled C++, 15.6× NEST at N=512k) and the fastest on
+the GPU (2.2× brian2cuda, 8× GeNN), while staying competitive with both at small sizes. See the full
+cross-simulator comparison in **[Benchmarks](benchmarks.md)**.
+
+![Simulation time and peak memory vs network size, across simulators.](assets/comparison.png)

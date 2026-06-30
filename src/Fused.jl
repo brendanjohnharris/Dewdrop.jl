@@ -34,21 +34,24 @@ using KernelAbstractions: @kernel, @index
     return _syn_contribute(Base.tail(syns), i, n, v, gtot, itot)
 end
 
+# Read and clear neuron `i`'s due ring-buffer slot at step `n` (the per-projection "deliver"); shared
+# by every `_syn_one` below. `_slotof` (Delays.jl) is the same 1-based slot math the scatter uses.
+@inline function _ring_take!(buf, i, n)
+    slot = _slotof(n, buf.L)
+    @inbounds due = buf.slots[i, slot]
+    @inbounds buf.slots[i, slot] = zero(due)
+    return due
+end
+
 @inline function _syn_one(s::SynapseState, i, n, v, gtot, itot)        # CUBA (current)
-    L = s.buf.L
-    slot = mod(n, L) + 1
-    @inbounds due = s.buf.slots[i, slot]
-    @inbounds s.buf.slots[i, slot] = zero(due)
+    due = _ring_take!(s.buf, i, n)
     @inbounds isyn = s.Isyn[i] + due                                  # deliver
     itot += isyn                                                      # accumulate
     @inbounds s.Isyn[i] = isyn * s.decay                             # decay
     return (v, gtot, itot)
 end
 @inline function _syn_one(s::COBAState, i, n, v, gtot, itot)           # COBA (conductance)
-    L = s.buf.L
-    slot = mod(n, L) + 1
-    @inbounds due = s.buf.slots[i, slot]
-    @inbounds s.buf.slots[i, slot] = zero(due)
+    due = _ring_take!(s.buf, i, n)
     @inbounds g = s.g[i] + due                                        # deliver
     gtot += g                                                         # effective leak
     itot += g * s.Erev                                               # reversal drive
@@ -56,18 +59,12 @@ end
     return (v, gtot, itot)
 end
 @inline function _syn_one(s::DeltaSynapseState, i, n, v, gtot, itot)   # delta (voltage jump)
-    L = s.buf.L
-    slot = mod(n, L) + 1
-    @inbounds due = s.buf.slots[i, slot]
-    @inbounds s.buf.slots[i, slot] = zero(due)
+    due = _ring_take!(s.buf, i, n)
     v += due
     return (v, gtot, itot)
 end
 @inline function _syn_one(s::DualExpCOBAState, i, n, v, gtot, itot)    # dual-exp COBA (rise + decay)
-    L = s.buf.L
-    slot = mod(n, L) + 1
-    @inbounds due = s.buf.slots[i, slot]
-    @inbounds s.buf.slots[i, slot] = zero(due)
+    due = _ring_take!(s.buf, i, n)
     @inbounds gr = s.g_rise[i] + due                                  # deliver (both accumulators)
     @inbounds gd = s.g_decay[i] + due
     g = s.a * (gd - gr)                                               # conductance
@@ -78,10 +75,7 @@ end
     return (v, gtot, itot)
 end
 @inline function _syn_one(s::FrozenDualExpCOBAState, i, n, v, gtot, itot)   # dual-exp frozen-current (no shunt)
-    L = s.buf.L
-    slot = mod(n, L) + 1
-    @inbounds due = s.buf.slots[i, slot]
-    @inbounds s.buf.slots[i, slot] = zero(due)
+    due = _ring_take!(s.buf, i, n)
     @inbounds gr = s.g_rise[i] + due                                  # deliver (both accumulators)
     @inbounds gd = s.g_decay[i] + due
     g = s.a * (gd - gr)                                               # conductance
@@ -263,10 +257,7 @@ end
 function _turbo_step!(integ::DewdropIntegrator)
     run_phase!(Val(:deliver), integ)                       # ring → synaptic accumulators / V (delta), drive → V
     st = integ.state.state
-    itot, gtot = integ.itot, integ.gtot
-    itot .= integ.input                                    # base input (scalar or per-unit)
-    fill!(gtot, zero(eltype(gtot)))
-    _accum_all!(integ.syns, gtot, itot, st.V)              # per-neuron conductance + current
+    _accum_base!(integ, st.V)                              # itot ← input, gtot ← 0, + per-projection accumulate
     turbo_kernel(typeof(integ.model))(integ)               # the SIMD dense membrane/threshold/reset/count kernel
     _decay_all!(integ.syns)                                # advance each projection's synaptic state
     _propagate_step!(integ.compaction, integ)              # sparse scatter (scalar / threaded as usual)

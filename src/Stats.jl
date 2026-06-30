@@ -141,7 +141,7 @@ function grand_distribution(X, nbins::Integer)
         idx = bw == 0 ? 1 : clamp(floor(Int, (x - lo) / bw) + 1, 1, nbins)
         counts[idx] += 1
     end
-    return counts, collect(centers)
+    return counts, centers   # `centers` is already a Vector from the comprehension
 end
 export grand_distribution
 

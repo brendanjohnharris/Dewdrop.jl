@@ -1,78 +1,100 @@
-# Reproducing the WRCircuit (BrainPy)
+```@meta
+CurrentModule = Dewdrop
+```
 
-The WRCircuit is a spatial excitatory/inhibitory network of conductance-adaptation FNS neurons with
-dual-exponential COBA synapses on four distance-dependent recurrent paths and an external Poisson drive --
-the "working-regime" circuit from `WRCircuit.jl`, originally simulated in [BrainPy](https://brainpy.tech).
-Dewdrop re-expresses it in native syntax and reproduces the reference dynamics **bit-for-bit up to numerical
-error**: on a small seeded network the firing rates are identical, the mean membrane error is ~0.002 mV, and
-the great majority of spikes match to the exact time step (all within one step). The residual is chaotic
-amplification of floating-point ordering differences between JAX and Julia, not a scheme difference.
+# Case study: the WRCircuit
 
-The full cross-simulator pipeline (export, ingest, compare, benchmark) lives in
-`test/simulator_comparisons/wrcircuit/`; this page documents the two reusable building blocks and the
-`wrcircuit` builder.
+The WRCircuit is a spatial excitatory/inhibitory network of conductance-adaptation neurons with
+dual-exponential conductance synapses on four distance-dependent recurrent paths and an external
+Poisson drive --- a "working-regime" cortical circuit of the kind written in Brian or BrainPy. This
+page shows how to express that style of model in Dewdrop using only the public API: the
+conductance-adaptation neuron [`FNSNeuron`](@ref), the frozen-current synapse
+[`FrozenDualExpSynapse`](@ref), spatial connectivity ([`random_positions`](@ref),
+[`gaussian_kernel`](@ref), [`distance_fixed_count`](@ref)), and the fluent builder
+([`network`](@ref) / [`population!`](@ref) / [`project!`](@ref) / [`drive!`](@ref)). No bespoke
+circuit constructor is needed; the generic builder assembles it.
 
-## Why exact reproduction needs an export
+## Frozen-current vs exact COBA
 
-The connectome (a JAX Gumbel-top-k sample), the per-edge weights, the initial membrane potentials, and the
-external Poisson spike train are all JAX-PRNG outputs. No independent RNG can regenerate them, so the
-*structure* is exported from a seeded BrainPy run and ingested by Dewdrop; only the deterministic
-integration is then verified. The integration scheme, by contrast, **is** reproduced from first principles.
+A conductance synapse contributes a voltage-dependent current `g·(Erev − V)`. There are two ways to
+integrate it over a step, and the choice lives in the *synapse*, not the neuron:
 
-## Frozen-current COBA
+- [`DualExpSynapse`](@ref) is the exact-COBA propagator: the conductance `g` is folded into the
+  membrane's effective leak `gtot` (it shunts the time constant), and the reversal drive `g·Erev`
+  enters the input current. This is the more accurate scheme.
+- [`FrozenDualExpSynapse`](@ref) has the *identical* dual-exponential kinetics
+  `g(t) = a·(g_decay − g_rise)`, but injects `g·(Erev − V)` as an ordinary current with `V` frozen at
+  its pre-update value, and adds nothing to `gtot` --- the conductance never shunts the leak. This
+  reproduces the integration that Brian and BrainPy use for COBA synapses (their
+  `sum_current_inputs`).
 
-BrainPy (like Brian) evaluates a conductance synapse's current `g·(Erev − V)` at the **pre-step** `V` and
-holds it constant over the step (`sum_current_inputs`), rather than folding the synaptic conductance into
-the membrane leak (Dewdrop's default exact-COBA propagator). [`FrozenDualExpSynapse`](@ref) reproduces that
-scheme -- it has the same dual-exponential conductance kinetics as [`DualExpSynapse`](@ref), but contributes
-the frozen current to the input current `itot` and **nothing** to the effective leak `gtot`:
+The two diverge once `g` is appreciable relative to the leak. You can see the distinction directly in
+`_accumulate!` (`src/Engine.jl`): `DualExpCOBAState` writes both `gtot` and `itot`, while
+`FrozenDualExpCOBAState` writes only `itot`, using the frozen `V`. For new models prefer
+[`DualExpSynapse`](@ref); reach for [`FrozenDualExpSynapse`](@ref) only when you need to match a
+frozen-current simulator. It is otherwise a drop-in replacement.
+
+The neuron is unchanged either way. [`FNSNeuron`](@ref) carries its own adaptation conductance `gK`
+(reversal `VK`), folded into the same exact COBA propagator; setting `ΔgK = 0` gives a plain
+conductance-LIF (the inhibitory population), while `ΔgK > 0` makes the excitatory population adapt.
+
+## A spatial FNS E/I network
+
+The example below places E and I populations at random positions in the unit square, wires four
+recurrent paths with a fixed total edge count drawn `∝ kernel(distance)`
+([`distance_fixed_count`](@ref), the Gumbel-max top-k sampler), drives the whole network with a
+streaming Poisson source, and records the E membrane traces and all spikes. Because `E` and `I` are
+both [`FNSNeuron`](@ref) differing only in `ΔgK`, the builder merges them into a single per-neuron
+[`Heterogeneous`](@ref) model automatically.
 
 ```julia
-exc = FrozenDualExpSynapse(; τr = 1.0, τd = 5.0, Erev = 0.0)    # excitatory
-inh = FrozenDualExpSynapse(; τr = 2.0, τd = 4.5, Erev = -80.0)  # inhibitory
+using Dewdrop
+
+NE, NI = 1600, 400
+domain = (1.0, 1.0)                                   # unit square
+posE = random_positions(NE, domain; seed = 0x01 % UInt64)
+posI = random_positions(NI, domain; seed = 0x02 % UInt64)
+
+base = (; C = 0.25, gL = 0.0167, VL = -70.0, VK = -85.0, Vθ = -50.0, Vr = -60.0, tref = 4.0, τK = 80.0)
+E = FNSNeuron(; base..., ΔgK = 0.02)                  # excitatory: adapts
+I = FNSNeuron(; base..., ΔgK = 0.0)                   # inhibitory: no adaptation
+
+exc = FrozenDualExpSynapse(; τr = 1.0, τd = 5.0, Erev = 0.0)     # excitatory, frozen current
+inh = FrozenDualExpSynapse(; τr = 2.0, τd = 4.5, Erev = -80.0)   # inhibitory, frozen current
+
+nb = network(; tspan = (0.0, 1000.0))
+population!(nb, :E, E, NE; positions = posE)
+population!(nb, :I, I, NI; positions = posI)
+
+# four recurrent paths; `kernel` + `count` routes to distance_fixed_count (fixed total edge count).
+# `delay` is a physical time in ms, resolved to integer steps at the solve dt.
+project!(nb, :E => :E, exc; kernel = gaussian_kernel(0.10), count = NE * 80, weight = 0.6, delay = 1.5, seed = 0x11 % UInt64)
+project!(nb, :E => :I, exc; kernel = gaussian_kernel(0.10), count = NI * 80, weight = 0.6, delay = 1.5, seed = 0x12 % UInt64)
+project!(nb, :I => :E, inh; kernel = gaussian_kernel(0.20), count = NE * 20, weight = 3.0, delay = 1.0, seed = 0x13 % UInt64)
+project!(nb, :I => :I, inh; kernel = gaussian_kernel(0.20), count = NI * 20, weight = 3.0, delay = 1.0, seed = 0x14 % UInt64)
+
+# external excitatory drive: 1000 virtual Poisson sources wired to every neuron by fixed_prob(p)
+drive!(nb, :all, exc; rate = 3.0, n_ext = 1000, p = 0.02, weight = 0.6, delay = 1.0, seed = 0x21 % UInt64)
+
+prob = build(nb)
+sol = solve(prob, FixedStep(0.1); record = (V = Trace(:V; of = :E), spikes = Spikes()))
+
+firing_rate(sol, :E)        # per-subpop observables; positions travel onto the solution as sol[:E].positions
 ```
 
-Because the synaptic conductance never reaches the leak, the unmodified [`FNSNeuron`](@ref) step
-(`denom = 1 + R·gK`, carrying only its own adaptation conductance) reproduces BrainPy's membrane coefficient
-`A = −(gL + gK)/C` exactly. The explicit-vs-implicit choice lives in the *synapse*, not the neuron. For new
-models prefer `DualExpSynapse` (the exact propagator); use `FrozenDualExpSynapse` only to match a BrainPy or
-Brian COBA network.
+See [neuron and synapse models](models.md) for the model zoo, [connectivity and spatial
+networks](connectivity.md) for the kernels and connectome builders, and [building
+networks](networks.md) for the builder verbs and the homogeneous/`Heterogeneous` merge.
 
-## Replayed external drive
+## Matching another simulator
 
-The external Poisson population is replayed as a [`PrescribedCOBA`](@ref): a per-target conductance
-trajectory `g[:, n]` (precomputed from the exported external spike raster by running the same dual-exp
-filter) injected each step as the frozen current `g[:, n]·(Erev − V)`. This avoids instantiating a
-spike-source population for a drive whose spikes are already known.
-
-## The `wrcircuit` builder
-
-[`wrcircuit`](@ref) assembles the spatial FNS E/I network. `E` and `I` are `FNSNeuron` models (merged into a
-per-neuron [`Heterogeneous`](@ref) model when they differ -- e.g. E adapts and I does not); `projections` is
-a vector of recurrent [`Projection`](@ref)s over the flat `1:NE+NI` index space; `gext` is the optional
-external conductance matrix. The `:E`/`:I` subpopulations are registered for `sol[:E]`, `firing_rate(sol, :I)`:
-
-```julia
-prob = wrcircuit(; NE, NI, E, I, projections, gext, positions, tspan)
-sol  = solve(prob, FixedStep(0.1); v0 = v0, record = (v = Trace(:V), spikes = Spikes()))
-```
-
-## Delay convention
-
-The one calibration when matching BrainPy is a `−1`-step delay adjustment: BrainPy's delay `D` onsets the
-postsynaptic conductance at `spike + D`, whereas Dewdrop's ring buffer plus the dual-exponential's
-deliver-then-decay onsets it at `spike + D + 1`. The reproduction subtracts one step from every synaptic
-delay; a native Dewdrop model would simply use the intended delay.
-
-## Performance
-
-On the identical small network the Dewdrop solve is about **2× faster than BrainPy on CPU** (e.g. 0.35 s vs
-0.69 s at N = 180, 0.54 s vs 1.07 s at N = 1280), and reproduces the same dynamics.
-
-## API
-
-```@docs
-wrcircuit
-FrozenDualExpSynapse
-PrescribedCOBA
-```
+Choosing [`FrozenDualExpSynapse`](@ref) matches the other simulator's *integration scheme*, but a
+bit-for-bit comparison needs the same *inputs* too: the connectome, per-edge weights, initial
+membrane potentials, and the external spike train. These come from the reference simulator's own RNG,
+so an independent run cannot regenerate them --- reproducing a specific run means exporting that
+structure and ingesting it (e.g. building each [`Projection`](@ref) from a prebuilt connectivity and
+passing `v0`), then verifying only the deterministic integration. Mind also the delay/onset
+conventions: simulators differ in when a delivered spike first affects the postsynaptic state
+relative to the nominal delay, so an alignment of one step may be required when comparing rasters.
+None of this changes how you build a *new* model --- use the intended delays and let Dewdrop draw the
+connectome and drive.

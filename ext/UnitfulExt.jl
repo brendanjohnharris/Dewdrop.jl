@@ -20,6 +20,7 @@ using Unitful: Unitful, Quantity, ustrip, dimension, @u_str
 @inline Dewdrop.to_current(x::Quantity)     = float(ustrip(u"pA", x))
 @inline Dewdrop.to_conductance(x::Quantity) = float(ustrip(u"nS", x))
 @inline Dewdrop.to_resistance(x::Quantity)  = float(ustrip(u"GΩ", x))
+@inline Dewdrop.to_capacitance(x::Quantity) = float(ustrip(u"pF", x))
 @inline Dewdrop.to_rate(x::Quantity)        = float(ustrip(u"kHz", x))
 
 # Per-neuron input may be a unitful array.

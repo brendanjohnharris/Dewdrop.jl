@@ -40,12 +40,8 @@ float_type(::AdaptLIF{T}) where {T} = T
 @inline _tau(m::AdaptLIF) = m.τ
 @inline spike_increment(m::AdaptLIF) = m.b
 
-# `w` from the old `V` (exact relaxation toward a·(V−EL)); `V` from the old V and new w (`-w` is an
-# outward current folded into `itot`, so conductance synapses via `gtot` still work).
-@inline function _step_w(m::AdaptLIF, V, w, dt)
-    w∞ = m.a * (V - m.EL)
-    return w∞ + (w - w∞) * exp(-dt / m.τw)
-end
+# `V` from the old V and the new w (`-w` is an outward current folded into `itot`, so conductance
+# synapses via `gtot` still work); `w` itself uses the shared `_step_w` below (defined after AdEx).
 @inline _step_V(m::AdaptLIF, V, w, gtot, itot, dt) = _coba_step(V, m.EL, m.R, m.τ, gtot, itot - w, dt)
 
 # --- AdEx: adaptive exponential integrate-and-fire (Brette & Gerstner 2005) ----------------------
@@ -63,7 +59,7 @@ struct AdEx{T} <: AbstractNeuronModel
     a::T; b::T; τw::T; tref::T
 end
 AdEx(; C, gL, EL, VT, ΔT, Vr, Vpeak, a, b, τw, tref = 0.0) = AdEx(promote(
-    float(C), to_conductance(gL), to_voltage(EL), to_voltage(VT), to_voltage(ΔT),
+    to_capacitance(C), to_conductance(gL), to_voltage(EL), to_voltage(VT), to_voltage(ΔT),
     to_voltage(Vr), to_voltage(Vpeak), to_conductance(a), to_current(b), to_time(τw), to_time(tref))...)
 export AdEx
 
@@ -75,7 +71,9 @@ float_type(::AdEx{T}) where {T} = T
 @inline _tau(m::AdEx) = m.C / m.gL
 @inline spike_increment(m::AdEx) = m.b
 
-@inline function _step_w(m::AdEx, V, w, dt)
+# Shared adaptation-current relaxation (AdaptLIF & AdEx): exact exponential decay of `w` toward its
+# fixpoint a·(V−EL) over τw, at the OLD V (the w-first split). FNSNeuron's gK uses its own `_step_w`.
+@inline function _step_w(m::Union{AdaptLIF, AdEx}, V, w, dt)
     w∞ = m.a * (V - m.EL)
     return w∞ + (w - w∞) * exp(-dt / m.τw)
 end
@@ -101,7 +99,7 @@ struct FNSNeuron{T} <: AbstractNeuronModel
 end
 FNSNeuron(; C = 0.25, gL = 0.0167, VL = -70.0, VK = -85.0, Vθ = -50.0, Vr = -60.0,
         tref = 4.0, τK = 80.0, ΔgK = 0.01) = FNSNeuron(promote(
-    float(C), to_conductance(gL), to_voltage(VL), to_voltage(VK), to_voltage(Vθ), to_voltage(Vr),
+    to_capacitance(C), to_conductance(gL), to_voltage(VL), to_voltage(VK), to_voltage(Vθ), to_voltage(Vr),
     to_time(tref), to_time(τK), to_conductance(ΔgK))...)
 export FNSNeuron
 

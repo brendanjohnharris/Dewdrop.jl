@@ -17,6 +17,16 @@
 # then delegate to the existing network `init`/`solve` --- so every kwarg (record/v0/backend/BATCH/progress/…)
 # and the shared-CSR ensemble (`batch=B`) work through a spec on day one.
 
+"""
+    AbstractNetworkSpec
+
+A deferred, run-parameter-free description of a network that materialises into a [`DewdropNetwork`](@ref)
+only at solve time (when `dt`/`tspan` are known). Lets a network be specified without building its
+connectome up front --- making parameter sweeps cheap and serialisable, and supporting constructors whose
+assembly genuinely needs `dt`/`tspan`. Two concrete forms: a structured [`freeze`](@ref) of a
+`NetworkBuilder`, or an opaque [`defer`](@ref)red constructor thunk; both are consumed by
+[`materialize`](@ref) (and work directly with `solve`/`init`).
+"""
 abstract type AbstractNetworkSpec end
 export AbstractNetworkSpec
 

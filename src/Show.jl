@@ -36,7 +36,6 @@ function _typehead(io::IO, x)
 end
 
 # clean float/number formatting (shortest round-trip; ASCII minus → copy-pasteable).
-_fmt(x::Real) = string(x)
 _fmt(x) = string(x)
 
 # thousands separators for edge counts etc.
@@ -318,15 +317,22 @@ function _proj_head(net::DewdropNetwork, i::Int)
 end
 _npops(subpops) = count(!=(:all), keys(subpops))
 
+# Population rows shared by the network/solution show methods: the (name, range) pairs (excluding the
+# implicit :all), the name-column width, the formatted range strings, and the range-column width.
+function _pop_rows(subpops)
+    pops = [(string(name), r) for (name, r) in pairs(subpops) if name !== :all]
+    nw = maximum(p -> length(p[1]), pops; init = 0)
+    rngs = String["[$(first(r)):$(last(r))]" for (_, r) in pops]
+    rw = maximum(length, rngs; init = 0)
+    return pops, nw, rngs, rw
+end
+
 function Base.show(io::IO, ::MIME"text/plain", net::DewdropNetwork)
     get(io, :compact, false) && return show(io, net)
     print(io, "DewdropNetwork · N=", net.n, " · t∈[", _fmt(net.tspan[1]), ",", _fmt(net.tspan[2]), "] ms · ",
         nameof(typeof(net.arch)))
     children = Any[]
-    pops = [(string(name), r) for (name, r) in pairs(net.subpops) if name !== :all]
-    nw = maximum(p -> length(p[1]), pops; init = 0)
-    rngs = String["[$(first(r)):$(last(r))]" for (_, r) in pops]
-    rw = maximum(length, rngs; init = 0)
+    pops, nw, rngs, rw = _pop_rows(net.subpops)
     full = _expand(io)
     popkids = Any[(string(rpad(pops[i][1], nw), "  ", rpad(rngs[i], rw), "  ", _pop_model_str(net.model, pops[i][2])),
                    full ? _pop_param_children(net.model, pops[i][2]) : Any[]) for i in eachindex(pops)]
@@ -442,10 +448,7 @@ function Base.show(io::IO, ::MIME"text/plain", sol::DewdropSolution)
     print(io, "DewdropSolution · N=", length(sol.spike_count), " · ", sol.nsteps, " steps × dt=", _fmt(sol.dt),
         " ms = ", _fmt(dur), " ms")
     children = Any[]
-    pops = [(string(name), r) for (name, r) in pairs(sol.subpops) if name !== :all]
-    nw = maximum(p -> length(p[1]), pops; init = 0)
-    rngs = String["[$(first(r)):$(last(r))]" for (_, r) in pops]
-    rw = maximum(length, rngs; init = 0)
+    pops, nw, rngs, rw = _pop_rows(sol.subpops)
     popkids = Any[(string(rpad(pops[i][1], nw), "  ", rpad(rngs[i], rw)), Any[]) for i in eachindex(pops)]
     isempty(popkids) || push!(children, ("populations ($(length(popkids)))", popkids))
     isempty(sol.record) ||

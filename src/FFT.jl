@@ -3,18 +3,10 @@
 # (numpy / `jnp.fft` convention) via recursive radix-2 Cooley--Tukey for power-of-2 lengths and
 # Bluestein's chirp-z transform for arbitrary lengths, so the spectral observables (`power_spectrum`,
 # `radial_autocorrelation` in Stats.jl) match a numpy reference for ANY length. A direct O(N²) `_dft`
-# is kept as the correctness reference (the tests cross-check `_fft` against it). Self-contained because
-# the test environment cannot add a binary FFT dependency (FFTW); these run on the host at analysis
-# time, not in the hot loop, so the O(N log N) pure-Julia transform is more than adequate.
-
-@inline _ispow2(n::Integer) = n > 0 && (n & (n - 1)) == 0
-function _nextpow2(n::Integer)
-    m = 1
-    while m < n
-        m <<= 1
-    end
-    return m
-end
+# is kept as the correctness reference (the tests cross-check `_fft` against it). This is a deliberately
+# self-contained, dependency-free transform; it runs on the host at analysis time, not in the hot loop,
+# so the O(N log N) pure-Julia implementation is more than adequate. (FFTW is a package dependency and
+# could back these instead --- see the breaking-change report for the trade-offs.)
 
 # Direct DFT / inverse DFT (the O(N²) reference). `sign = -1` forward, `+1` inverse (unnormalised).
 function _dft(x::AbstractVector{<:Number}, sign::Int = -1)
@@ -38,7 +30,7 @@ Forward DFT of `x` (numpy convention), radix-2 for power-of-2 length, Bluestein 
 function _fft(x::AbstractVector{<:Number})
     n = length(x)
     n ≤ 1 && return ComplexF64.(collect(x))
-    return _ispow2(n) ? _fft_radix2(ComplexF64.(collect(x))) : _bluestein(ComplexF64.(collect(x)))
+    return ispow2(n) ? _fft_radix2(ComplexF64.(collect(x))) : _bluestein(ComplexF64.(collect(x)))
 end
 
 # Inverse DFT (normalised): `ifft(x) = conj(fft(conj(x))) / N`.
@@ -64,7 +56,7 @@ end
 # The chirp angle uses `k² mod 2n` so it stays exact for large `k` (the angle is 2π-periodic).
 function _bluestein(x::Vector{ComplexF64})
     n = length(x)
-    m = _nextpow2(2n - 1)
+    m = nextpow(2, 2n - 1)
     w = ComplexF64[cis(-π * mod(k * k, 2n) / n) for k in 0:(n - 1)]   # chirp
     a = zeros(ComplexF64, m)
     @inbounds for k in 0:(n - 1)

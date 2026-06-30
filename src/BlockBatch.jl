@@ -142,7 +142,7 @@ function _block_diagonal(nets::AbstractVector{<:DewdropNetwork})
         error("block batch: every member must have the same number of projections (got $(unique([length(net.projections) for net in nets])))")
 
     Ns = [net.n for net in nets]
-    offs = [sum(@view Ns[1:(b - 1)]) for b in 1:B]
+    offs = [0; cumsum(Ns)[1:(end - 1)]]   # exclusive prefix sum of member sizes (member b's base offset)
     Ntot = sum(Ns)
     model = B == 1 ? first(nets).model : MultiModel([net.model for net in nets], Ns)
     input = reduce(vcat, [_expand_input(net.input, net.n) for net in nets])
@@ -268,7 +268,7 @@ end
 function _solve_block(nets, alg; kwargs...)
     sol = solve(_block_diagonal(nets), alg; kwargs...)
     Ns = [net.n for net in nets]
-    offs = [sum(@view Ns[1:(b - 1)]) for b in eachindex(nets)]
+    offs = [0; cumsum(Ns)[1:(end - 1)]]   # exclusive prefix sum of member sizes (member b's base offset)
     return BatchSolution([sol.spike_count[(offs[b] + 1):(offs[b] + Ns[b])] for b in eachindex(nets)],
         duration(sol), :block, sol)
 end

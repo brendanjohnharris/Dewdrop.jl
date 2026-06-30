@@ -335,20 +335,20 @@ function _make_synstate(arch, ::DeltaSynapse, conn, ::Type{T}, N, dt) where {T}
     buf = DelayBuffer(arch, T, N, maximum(conn.delay; init = 0))   # empty projection → L=1 no-op
     return DeltaSynapseState(buf, conn)
 end
-function _make_synstate(arch, syn::DualExpSynapse, conn, ::Type{T}, N, dt) where {T}
+# Both dual-exp synapses share kinetics (g_rise/g_decay + dual decay) and differ only in which state
+# type carries them (exact-COBA shunt vs frozen current; see `_accumulate!`). `State` is the concrete
+# constructor, passed as a value → each call specialises, so the built type/values are unchanged.
+function _make_dualexp_state(State, arch, syn, conn, ::Type{T}, N, dt) where {T}
     g_rise = fill!(allocate(arch, T, N), zero(T))
     g_decay = fill!(allocate(arch, T, N), zero(T))
     buf = DelayBuffer(arch, T, N, maximum(conn.delay; init = 0))   # empty projection → L=1 no-op
-    return DualExpCOBAState(g_rise, g_decay, buf, conn,
+    return State(g_rise, g_decay, buf, conn,
         T(exp(-dt / syn.τr)), T(exp(-dt / syn.τd)), T(_dualexp_a(syn.τr, syn.τd)), T(syn.Erev))
 end
-function _make_synstate(arch, syn::FrozenDualExpSynapse, conn, ::Type{T}, N, dt) where {T}
-    g_rise = fill!(allocate(arch, T, N), zero(T))
-    g_decay = fill!(allocate(arch, T, N), zero(T))
-    buf = DelayBuffer(arch, T, N, maximum(conn.delay; init = 0))   # empty projection → L=1 no-op
-    return FrozenDualExpCOBAState(g_rise, g_decay, buf, conn,
-        T(exp(-dt / syn.τr)), T(exp(-dt / syn.τd)), T(_dualexp_a(syn.τr, syn.τd)), T(syn.Erev))
-end
+_make_synstate(arch, syn::DualExpSynapse, conn, ::Type{T}, N, dt) where {T} =
+    _make_dualexp_state(DualExpCOBAState, arch, syn, conn, T, N, dt)
+_make_synstate(arch, syn::FrozenDualExpSynapse, conn, ::Type{T}, N, dt) where {T} =
+    _make_dualexp_state(FrozenDualExpCOBAState, arch, syn, conn, T, N, dt)
 
 # --- Within-step phases. Synapse work iterates the projection tuple, dispatching each
 # operation on the per-projection synaptic-state type (compile-time unrolled), so a
@@ -429,6 +429,16 @@ end
 # by providing its own method. LIF uses the COBA-capable exact propagator above.
 @inline membrane_step(m::LIF, V, gtot, itot, dt) = _coba_step(V, m.EL, m.R, m.τ, gtot, itot, dt)
 
+# Reset the accumulators to the external-input base (itot ← input, gtot ← 0) then fold in every
+# projection's conductance/current. Shared by the broadcast `:integrate` phase and the Turbo step
+# (Fused.jl) so the two paths can't drift; writes through to `integ.itot`/`integ.gtot`.
+@inline function _accum_base!(integ, V)
+    integ.itot .= integ.input
+    fill!(integ.gtot, zero(eltype(integ.gtot)))
+    _accum_all!(integ.syns, integ.gtot, integ.itot, V)
+    return nothing
+end
+
 @inline function run_phase!(::Val{:integrate}, integ::DewdropIntegrator)
     st = integ.state.state
     V, refrac = st.V, st.refrac
@@ -436,9 +446,7 @@ end
     dt = integ.dt
     gtot, itot = integ.gtot, integ.itot
     # per-neuron conductance + input current from external input and every projection
-    itot .= integ.input                                    # base: external input (scalar or per-unit)
-    fill!(gtot, zero(eltype(gtot)))
-    _accum_all!(integ.syns, gtot, itot, V)
+    _accum_base!(integ, V)                                 # itot ← input, gtot ← 0, + per-projection accumulate
     Vr = reset_value(m)
     z = zero(eltype(refrac))
     # subthreshold membrane step, dispatched on the model's state shape: V-only models (LIF, every

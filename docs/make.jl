@@ -51,12 +51,26 @@ modules = TURBO_EXT === nothing ? [Dewdrop] : [Dewdrop, TURBO_EXT]
 
 pages = [
     "Home" => "index.md",
-    "Guide" => [
-        "Choosing a backend" => "guide/backends.md",
-        "Turbo & model specialization" => "guide/turbo.md",
-        "Differentiable simulation & training" => "guide/training.md",
-        "Reproducing the WRCircuit (BrainPy)" => "guide/wrcircuit.md",
+    "Getting started" => "guide/getting-started.md",
+    "Guides" => [
+        "Building networks" => "guide/networks.md",
+        "Neuron & synapse models" => "guide/models.md",
+        "Custom models (@neuron)" => "guide/neuron-macro.md",
+        "Connectivity & space" => "guide/connectivity.md",
+        "Recording & outputs" => "guide/recording.md",
+        "Units" => "guide/units.md",
+        "Batching & ensembles" => "guide/batching.md",
+        "Plasticity (STDP)" => "guide/plasticity.md",
+        "Analysis & observables" => "guide/analysis.md",
     ],
+    "Performance" => [
+        "Choosing a backend" => "guide/backends.md",
+        "Running on the GPU" => "guide/gpu.md",
+        "Turbo & model specialization" => "guide/turbo.md",
+        "Benchmarks" => "benchmarks.md",
+    ],
+    "Differentiable simulation & training" => "guide/training.md",
+    "Case study: the WRCircuit" => "guide/wrcircuit.md",
     "Reference" => "reference.md",
 ]
 
@@ -65,7 +79,7 @@ makedocs(;
     sitename = "Dewdrop",
     format,
     remotes = Dict(pkgdir(Dewdrop) => (GitHub("brendanjohnharris", "Dewdrop.jl"), "main")),
-    doctest = false,
+    doctest = true,
     warnonly = [:cross_references, :missing_docs, :docs_block, :example_block],
     modules,
     pages,

@@ -100,5 +100,6 @@ function _init_voltage_model!(V, mm::MultiModel, ::Nothing, ::Type{T}, seed) whe
     end
     return V
 end
-@inline _init_voltage_model!(V, mm::MultiModel, v0, ::Type{T}, seed) where {T} =
-    _init_voltage!(V, T(_resting(first(mm.models))), v0, T, seed)
+# An explicit v0 (scalar / (lo,hi) / vector) applies over the whole flat population via the generic
+# `_init_voltage_model!(::AbstractNeuronModel, ...)` method above --- `_resting(::MultiModel)` already
+# returns `_resting(first(models))`, so no MultiModel-specific method is needed here.

@@ -14,5 +14,6 @@
 @inline to_current(x) = x
 @inline to_conductance(x) = x
 @inline to_resistance(x) = x
+@inline to_capacitance(x) = float(x)   # canonical pF; floats plain numbers (capacitance is continuous)
 @inline to_rate(x) = x
 @inline to_weight(x) = x        # dimension inferred by the ext (voltage / current / conductance)
