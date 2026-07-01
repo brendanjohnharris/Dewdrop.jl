@@ -12,7 +12,7 @@
 
 A GPU-aware spiking neural network simulator for Julia.
 
-Dewdrop ports and consolidates ideas from gold-standard simulators (Brian2, NEST, BrainPy) into a fast, fixed-step, struct-of-arrays engine that's fully Julia.
+Dewdrop ports and consolidates ideas from gold-standard simulators ([Brian2](https://github.com/brian-team/brian2), [NEST](https://github.com/nest/nest-simulator), [BrainPy](https://github.com/brainpy/BrainPy)) into a fast, fixed-step, struct-of-arrays engine that's fully Julia.
 
 ## Quick start
 
