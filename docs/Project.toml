@@ -7,4 +7,4 @@ LoopVectorization = "bdcacae8-1622-11e9-2a5c-532679323890"
 YAML = "ddb6d928-2868-570f-bddf-ab3f9cf99eb6"
 
 [sources]
-Dewdrop = {path = ".."}
+Dewdrop = {path = "/import/taiji1/bhar9988/code/Dewdrop.jl"}

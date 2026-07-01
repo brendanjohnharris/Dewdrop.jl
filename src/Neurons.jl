@@ -115,8 +115,26 @@ One exact linear-propagator update toward the fixed point `V∞`:
 end
 
 # --- Threshold / reset / refractory ---
+"""
+    threshold(model, V) -> Bool
+
+Whether membrane potential `V` crosses `model`'s spike threshold. Part of the neuron-model interface
+(provided directly or via [`@neuron`](@ref)).
+"""
 @inline threshold(m::LIF, V) = V ≥ m.Vθ
+
+"""
+    reset_value(model)
+
+The post-spike reset potential for `model`. Part of the neuron-model interface.
+"""
 @inline reset_value(m::LIF) = m.Vr
+
+"""
+    refractory(model)
+
+The absolute refractory duration for `model`. Part of the neuron-model interface.
+"""
 @inline refractory(m::LIF) = m.tref
 
 # Type-stable state allocation: a SoA `Population` with one zero-initialised column per

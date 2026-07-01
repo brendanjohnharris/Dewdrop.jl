@@ -16,6 +16,7 @@ specialization](guide/turbo.md).
 ```@docs
 CPU
 GPU
+array_type
 ```
 
 ## Building & solving
@@ -84,6 +85,9 @@ float_type
 asymptote
 propagator_decay
 subthreshold_step
+threshold
+reset_value
+refractory
 ```
 
 ## Synapses

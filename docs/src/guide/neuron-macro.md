@@ -48,7 +48,7 @@ required; omitting one errors at macro expansion.
 ## A worked example
 
 A leaky integrator with a constant bias current folded into the resting drive. The bias shifts the
-fixed point but not its slope, so [`@resistance`](@ref) stays `R` (the bias is a constant, not a
+fixed point but not its slope, so `@resistance` stays `R` (the bias is a constant, not a
 function of `I`):
 
 ```julia

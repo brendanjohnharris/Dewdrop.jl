@@ -34,6 +34,26 @@ _subparams(ex, ::Vector{Symbol}) = ex
 _subparams(ex::Symbol, params::Vector{Symbol}) = ex in params ? :(m.$ex) : ex
 _subparams(ex::Expr, params::Vector{Symbol}) = Expr(ex.head, map(a -> _subparams(a, params), ex.args)...)
 
+"""
+    @neuron Name begin ... end
+
+Define a linear (LIF-family) neuron model from hook expressions, without the struct + interface
+boilerplate. The block lists `@parameters`, `@state`, and the membrane hooks `@asymptote`,
+`@resistance`, `@timeconstant`, `@threshold`, `@reset` and `@refractory`; parameter symbols in any
+expression are rewritten to field accesses `m.<param>`. The membrane must be linear in `V` (the exact
+propagator applies). Generated models run on every backend except [`Turbo`](@ref).
+
+    @neuron MyLIF begin
+        @parameters   τ=20.0 EL=-60.0 Vθ=-50.0 Vr=-60.0 R=1.0 tref=5.0
+        @state        V refrac
+        @asymptote    EL + R * I     # steady-state V for total input current I
+        @resistance   R              # ∂V∞/∂I --- couples COBA synapses
+        @timeconstant τ
+        @threshold    V ≥ Vθ
+        @reset        Vr
+        @refractory   tref
+    end
+"""
 macro neuron(name, block)
     params = Symbol[]
     kwargs = Any[]            # constructor keyword args (with defaults where given)

@@ -4,6 +4,13 @@
 # default `Auto()` lets the advisor choose. All backends are numerically equivalent EXCEPT `Turbo`,
 # which trades the exp ULP for SIMD speed (spike-identical, not bit-identical).
 
+"""
+    SimBackend
+
+Abstract supertype for execution backends --- *how* a step's dense per-neuron phases run, orthogonal
+to the architecture (*where* the state lives). See [`Auto`](@ref), [`Serial`](@ref), [`Fused`](@ref)
+and [`Turbo`](@ref).
+"""
 abstract type SimBackend end
 
 """
@@ -102,8 +109,14 @@ function _step_to_backend(step::Symbol)
 end
 
 # --- Turbo availability + per-model specialisation (populated by the LoopVectorization extension) ---
-# `turbo_kernel(M)` returns a SIMD step function for model type `M`, or `nothing`. A model gains a
-# Turbo specialization when the extension (or a user) defines a method; `supports_turbo` reports it.
+"""
+    turbo_kernel(::Type{M}) -> f | nothing
+
+The SIMD dense-phase step function for model type `M`, or `nothing` when `M` has no [`Turbo`](@ref)
+specialization. The LoopVectorization extension registers methods for the built-in models; a custom
+model gains `Turbo` support by defining one (see the model-support table in the docs).
+`supports_turbo(M)` reports availability.
+"""
 turbo_kernel(::Type) = nothing
 @inline supports_turbo(::Type{M}) where {M} = turbo_kernel(M) !== nothing
 # the extension is loaded iff `Base.get_extension` resolves it (returns `nothing` when unloaded).

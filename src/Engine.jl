@@ -202,6 +202,14 @@ Adapt.adapt_structure(to, integ::DewdropIntegrator) = DewdropIntegrator(
     adapt(to, integ.noise), integ.backend, integ.subpops, integ.positions, integ.progress,
 )
 
+"""
+    init(prob::DewdropNetwork, alg::FixedStep; kwargs...) -> DewdropIntegrator
+
+Build the integrator cache for `prob` under fixed-step `alg` without running it: allocate state on the
+problem's architecture, resolve the scatter mode and backend, and wire the `record = (...)` monitors.
+Advance it with [`step!`](@ref) or run to completion with [`solve!`](@ref); [`solve`](@ref) is
+`solve! ∘ init`. Keywords include `record`, `v0`, `batch`, `backend` and `scatter`.
+"""
 function CommonSolve.init(prob::DewdropNetwork, alg::FixedStep;
         record = nothing, v0 = nothing, v0_seed::Unsigned = 0x5eed00d % UInt64,
         batch = nothing, input = nothing, streams = nothing, sync_every::Integer = _DEFAULT_WINDOW,
@@ -509,6 +517,12 @@ end
 # is the broadcast-per-phase execution used on the CPU and for any non-canonical schedule.
 _run_step!(sched::Schedule, integ::DewdropIntegrator) = run_phases!(sched, integ)
 
+"""
+    step!(integ::DewdropIntegrator) -> integ
+
+Advance the integrator by one fixed time step: run the schedule's phases, then update the time and
+step count. Returns `integ`.
+"""
 function CommonSolve.step!(integ::DewdropIntegrator)
     _run_step!(integ.schedule, integ)
     integ.n += 1
@@ -517,6 +531,12 @@ function CommonSolve.step!(integ::DewdropIntegrator)
     return integ
 end
 
+"""
+    solve!(integ::DewdropIntegrator) -> DewdropSolution
+
+Run `integ` to completion (its `nsteps` fixed steps), flush and finalise the monitors, and return the
+[`DewdropSolution`](@ref).
+"""
 function CommonSolve.solve!(integ::DewdropIntegrator)
     rep = _progress_reporter(integ.progress, _progress_total(integ))   # nothing ⇒ every hook no-ops
     _progress_start!(rep)
