@@ -17,14 +17,11 @@ hero:
       link: https://github.com/brendanjohnharris/Dewdrop.jl
 
 features:
-  - icon: 🌱
-    title: Swap between CPU and GPU
+  - title: Swap between CPU and GPU
     details: KernelAbstractions kernels run on the CPU and CUDA; the architecture chooses where, the backend chooses how.
-  - icon: 🚀
-    title: Pluggable execution backends
+  - title: Pluggable execution backends
     details: Serial (bit-reproducible), Fused (tight loop, near-C++ on CPU, the GPU megakernel), and Turbo (SIMD, opt-in).
-  - icon: 🧠
-    title: Flexible models
+  - title: Flexible models
     details: LIF, AdEx, conductance-adaptation FNS, per-neuron Heterogeneous, multi-type MultiModel, custom @neuron models.
 ---
 ```
