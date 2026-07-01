@@ -43,7 +43,7 @@ nb = network(AdEx(; C = 281.0, gL = 30.0, EL = -70.6, VT = -50.4, ΔT = 2.0, Vr 
 
 [`population!`](@ref) takes a `name`, a neuron `model` (see [neuron models](models.md)), and a count
 `N`. `input` is a per-population constant current (a scalar, or a length-`N` vector); `positions`
-(optional) are consumed by distance-kernel projections (see [spatial networks](wrcircuit.md)). The
+(optional) are consumed by distance-kernel projections (see [connectivity & space](connectivity.md)). The
 name `:all` is reserved --- it always denotes the whole network.
 
 ```julia

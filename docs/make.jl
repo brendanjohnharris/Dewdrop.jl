@@ -69,8 +69,6 @@ pages = [
         "Turbo & model specialization" => "guide/turbo.md",
         "Benchmarks" => "benchmarks.md",
     ],
-    "Differentiable simulation & training" => "guide/training.md",
-    "Case study: the WRCircuit" => "guide/wrcircuit.md",
     "Reference" => "reference.md",
 ]
 

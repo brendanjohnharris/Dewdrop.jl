@@ -147,7 +147,7 @@ STDP
 
 ## Differentiable backend
 
-The surrogate-gradient backend; see [differentiable simulation & training](guide/training.md).
+The surrogate-gradient backend for automatic differentiation through a CPU run.
 
 ```@docs
 Differentiable

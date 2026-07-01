@@ -4,8 +4,7 @@ layout: home
 
 hero:
   name: "Dewdrop.jl"
-  text: "A GPU-aware spiking neural network simulator"
-  tagline: "Fixed-step, struct-of-arrays, CPU & GPU from one source."
+  tagline: "A CPU/GPU spiking neural network simulator for Julia"
   actions:
     - theme: brand
       text: Get started

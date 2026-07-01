@@ -37,6 +37,11 @@
     --vp-c-text-1: var(--c-abyad-lighter);
     --vp-c-text-2: var(--c-abyad-light);
     --vp-c-text-3: var(--c-abyad-base);
+    /* Without these the gray ramp leaks its light values into dark mode, so `alt`
+       surfaces (e.g. the home-page action buttons) render near-white on near-white. */
+    --vp-c-gray-1: var(--c-chernoe-lighter);
+    --vp-c-gray-2: var(--c-chernoe-light);
+    --vp-c-gray-3: var(--c-chernoe-base);
     --vp-c-brand-1: var(--c-baikal-light);
     --vp-c-brand-2: var(--c-baikal-base);
     --vp-c-brand-3: var(--c-mesopelagic-light);
