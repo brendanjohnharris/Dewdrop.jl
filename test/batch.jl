@@ -18,9 +18,11 @@ _lif() = LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 10.0, R = 1.0, tref = 2.0)
 function _ei_delta(input; N = 100, T = 80.0, arch = ARCH)
     ce = fixed_prob(arch, N, N, 0.1; weight = 0.5, delay = steps(5), seed = UInt64(1), sources = 1:(4N ÷ 5), allow_self = false)
     ci = fixed_prob(arch, N, N, 0.1; weight = -1.0, delay = steps(5), seed = UInt64(2), sources = (4N ÷ 5 + 1):N, allow_self = false)
-    return DewdropNetwork(_lif(), N; input = input, tspan = (0.0, T), arch = arch,
+    return DewdropNetwork(
+        _lif(), N; input = input, tspan = (0.0, T), arch = arch,
         projections = (Projection(DeltaSynapse(), ce), Projection(DeltaSynapse(), ci)),
-        drive = PoissonDrive(rate = 20.0, weight = 0.5, seed = UInt64(3)))
+        drive = PoissonDrive(rate = 20.0, weight = 0.5, seed = UInt64(3))
+    )
 end
 _colmat(vals, N) = repeat(reshape(collect(Float64, vals), 1, :), N, 1)   # (N,B) per-column constant input
 _ncols_expected(T) = round(Int, T / 0.1)                                 # recorded columns at dt=0.1, every=1
@@ -34,7 +36,7 @@ _ncols_expected(T) = round(Int, T / 0.1)                                 # recor
         s1 = [Dewdrop.draw_uniform(Float64, UInt64(7), s, 3, 1) for s in 0:300]
         @test s0 != s1 && abs(cor(s0, s1)) < 0.2                         # independent streams
         @test [Dewdrop.draw_poisson(2.0, UInt64(7), s, 3) for s in 0:50] ==
-              [Dewdrop.draw_poisson(2.0, UInt64(7), s, 3, 0) for s in 0:50]
+            [Dewdrop.draw_poisson(2.0, UInt64(7), s, 3, 0) for s in 0:50]
     end
 
     @testset "bit-exact scalar reference (delta E/I + drive), input sweep" begin
@@ -59,18 +61,24 @@ _ncols_expected(T) = round(Int, T / 0.1)                                 # recor
         cobaprob(input) = let mc = LIF(; τ = 20.0, EL = -60.0, Vθ = -50.0, Vr = -60.0, R = 1.0, tref = 5.0)
             ce = fixed_prob(ARCH, N, N, 0.1; weight = 0.5, delay = steps(1), seed = UInt64(1), sources = 1:72)
             ci = fixed_prob(ARCH, N, N, 0.1; weight = 4.0, delay = steps(1), seed = UInt64(2), sources = 73:N)
-            DewdropNetwork(mc, N; input = input, tspan = (0.0, T), arch = ARCH,
-                projections = (Projection(ConductanceSynapse(τ = 5.0, Erev = 0.0), ce),
-                    Projection(ConductanceSynapse(τ = 10.0, Erev = -80.0), ci)),
-                drive = PoissonDrive(rate = 6.0, weight = 0.1, seed = UInt64(7)))
+            DewdropNetwork(
+                mc, N; input = input, tspan = (0.0, T), arch = ARCH,
+                projections = (
+                    Projection(ConductanceSynapse(τ = 5.0, Erev = 0.0), ce),
+                    Projection(ConductanceSynapse(τ = 10.0, Erev = -80.0), ci),
+                ),
+                drive = PoissonDrive(rate = 6.0, weight = 0.1, seed = UInt64(7))
+            )
         end
         sc = [solve(cobaprob(inputs[b]), FixedStep(0.1); v0 = -60.0).spike_count for b in 1:B]
         bc = solve(cobaprob(0.0), FixedStep(0.1); batch = B, input = _colmat(inputs, N), streams = fill(0, B), v0 = -60.0)
         @test all(bc.spike_count[:, b] == sc[b] for b in 1:B)
         # CUBA
-        cubaprob(input) = DewdropNetwork(_lif(), N; input = input, tspan = (0.0, T), arch = ARCH,
+        cubaprob(input) = DewdropNetwork(
+            _lif(), N; input = input, tspan = (0.0, T), arch = ARCH,
             projection = Projection(CurrentSynapse(τ = 5.0), fixed_prob(ARCH, N, N, 0.1; weight = 1.0, delay = steps(3), seed = UInt64(4), allow_self = false)),
-            drive = PoissonDrive(rate = 25.0, weight = 0.5, seed = UInt64(5)))
+            drive = PoissonDrive(rate = 25.0, weight = 0.5, seed = UInt64(5))
+        )
         su = [solve(cubaprob(inputs[b]), FixedStep(0.1)).spike_count for b in 1:B]
         bu = solve(cubaprob(0.0), FixedStep(0.1); batch = B, input = _colmat(inputs, N), streams = fill(0, B))
         @test all(bu.spike_count[:, b] == su[b] for b in 1:B)
@@ -107,8 +115,10 @@ _ncols_expected(T) = round(Int, T / 0.1)                                 # recor
     @testset "batched monitors bit-exact vs scalar (Spikes / Trace / subset / Aggregate)" begin
         N, B, T = 60, 5, 60.0
         inputs = [(b - 1) * 0.5 for b in 1:B]
-        rec() = (spikes = Spikes(), V = Trace(:V), sub = Trace(:V; of = 10:20),
-            rate = Aggregate(Spikes(), sum), mv = Aggregate(Trace(:V), :mean))
+        rec() = (
+            spikes = Spikes(), V = Trace(:V), sub = Trace(:V; of = 10:20),
+            rate = Aggregate(Spikes(), sum), mv = Aggregate(Trace(:V), :mean),
+        )
         scal = [solve(_ei_delta(inputs[b]; N, T), FixedStep(0.1); record = rec()) for b in 1:B]
         bs = solve(_ei_delta(0.0; N, T), FixedStep(0.1); batch = B, input = _colmat(inputs, N), streams = fill(0, B), record = rec())
         @test size(bs.record.spikes.data) == (N, B, _ncols_expected(T))

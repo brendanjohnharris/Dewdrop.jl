@@ -12,13 +12,13 @@
 @inline _color(io::IO) = get(io, :color, false)::Bool
 function _styled(io::IO, s, kind::Symbol)
     if _color(io)
-        kind === :type    ? printstyled(io, s; color = :light_black) :
-        kind === :field   ? printstyled(io, s; color = :cyan) :
-        kind === :unit    ? printstyled(io, s; color = :light_black) :
-        kind === :tree    ? printstyled(io, s; color = :light_black) :
-        kind === :section ? printstyled(io, s; bold = true) :
-        kind === :dim     ? printstyled(io, s; color = :light_black) :
-        print(io, s)
+        kind === :type ? printstyled(io, s; color = :light_black) :
+            kind === :field ? printstyled(io, s; color = :cyan) :
+            kind === :unit ? printstyled(io, s; color = :light_black) :
+            kind === :tree ? printstyled(io, s; color = :light_black) :
+            kind === :section ? printstyled(io, s; bold = true) :
+            kind === :dim ? printstyled(io, s; color = :light_black) :
+            print(io, s)
     else
         print(io, s)
     end
@@ -56,24 +56,30 @@ _onhost(x::AbstractArray) = x isa Array
 # `_field_dims(::Type)` defaults to `nothing` (e.g. @neuron models) → bare numbers, no invented units.
 _field_dims(::Type) = nothing
 _unit_of(dim::Symbol) =
-    dim === :time        ? "ms" :
-    dim === :voltage     ? "mV" :
+    dim === :time ? "ms" :
+    dim === :voltage ? "mV" :
     dim === :conductance ? "nS" :
-    dim === :current     ? "pA" :
+    dim === :current ? "pA" :
     dim === :capacitance ? "pF" :
-    dim === :resistance  ? "GΩ" :
-    dim === :rate        ? "kHz" : ""
+    dim === :resistance ? "GΩ" :
+    dim === :rate ? "kHz" : ""
 @inline _unit_for(::Nothing, ::Symbol) = nothing
 @inline _unit_for(dims::NamedTuple, f::Symbol) = haskey(dims, f) ? _unit_of(getfield(dims, f)) : nothing
 
 # the canonical-dimension tables (mirror exactly what each constructor declares in src/Units.jl terms)
 _field_dims(::Type{<:LIF}) = (τ = :time, EL = :voltage, Vθ = :voltage, Vr = :voltage, R = :resistance, tref = :time)
-_field_dims(::Type{<:AdaptLIF}) = (τ = :time, EL = :voltage, Vθ = :voltage, Vr = :voltage, R = :resistance,
-    tref = :time, a = :conductance, b = :current, τw = :time)
-_field_dims(::Type{<:AdEx}) = (C = :capacitance, gL = :conductance, EL = :voltage, VT = :voltage, ΔT = :voltage,
-    Vr = :voltage, Vpeak = :voltage, a = :conductance, b = :current, τw = :time, tref = :time)
-_field_dims(::Type{<:FNSNeuron}) = (C = :capacitance, gL = :conductance, VL = :voltage, VK = :voltage,
-    Vθ = :voltage, Vr = :voltage, tref = :time, τK = :time, ΔgK = :conductance)
+_field_dims(::Type{<:AdaptLIF}) = (
+    τ = :time, EL = :voltage, Vθ = :voltage, Vr = :voltage, R = :resistance,
+    tref = :time, a = :conductance, b = :current, τw = :time,
+)
+_field_dims(::Type{<:AdEx}) = (
+    C = :capacitance, gL = :conductance, EL = :voltage, VT = :voltage, ΔT = :voltage,
+    Vr = :voltage, Vpeak = :voltage, a = :conductance, b = :current, τw = :time, tref = :time,
+)
+_field_dims(::Type{<:FNSNeuron}) = (
+    C = :capacitance, gL = :conductance, VL = :voltage, VK = :voltage,
+    Vθ = :voltage, Vr = :voltage, tref = :time, τK = :time, ΔgK = :conductance,
+)
 _field_dims(::Type{<:CurrentSynapse}) = (τ = :time,)
 _field_dims(::Type{<:ConductanceSynapse}) = (τ = :time, Erev = :voltage)
 _field_dims(::Type{<:DualExpSynapse}) = (τr = :time, τd = :time, Erev = :voltage)
@@ -142,9 +148,11 @@ function _param_children(m)
     isempty(fns) && return Any[]
     dims = _field_dims(typeof(m))
     namew = maximum(f -> length(string(f)), fns)
-    return Any[let u = _unit_for(dims, f)
-            (string(rpad(string(f), namew), " = ", _fmt(getfield(m, f)), u === nothing ? "" : " " * u), Any[])
-        end for f in fns]
+    return Any[
+        let u = _unit_for(dims, f)
+                (string(rpad(string(f), namew), " = ", _fmt(getfield(m, f)), u === nothing ? "" : " " * u), Any[])
+        end for f in fns
+    ]
 end
 
 # population sub-tree: a simple neuron model expands to its parameters; a merged model (Heterogeneous /
@@ -329,17 +337,25 @@ end
 
 function Base.show(io::IO, ::MIME"text/plain", net::DewdropNetwork)
     get(io, :compact, false) && return show(io, net)
-    print(io, "DewdropNetwork · N=", net.n, " · t∈[", _fmt(net.tspan[1]), ",", _fmt(net.tspan[2]), "] ms · ",
-        nameof(typeof(net.arch)))
+    print(
+        io, "DewdropNetwork · N=", net.n, " · t∈[", _fmt(net.tspan[1]), ",", _fmt(net.tspan[2]), "] ms · ",
+        nameof(typeof(net.arch))
+    )
     children = Any[]
     pops, nw, rngs, rw = _pop_rows(net.subpops)
     full = _expand(io)
-    popkids = Any[(string(rpad(pops[i][1], nw), "  ", rpad(rngs[i], rw), "  ", _pop_model_str(net.model, pops[i][2])),
-                   full ? _pop_param_children(net.model, pops[i][2]) : Any[]) for i in eachindex(pops)]
+    popkids = Any[
+        (
+                string(rpad(pops[i][1], nw), "  ", rpad(rngs[i], rw), "  ", _pop_model_str(net.model, pops[i][2])),
+                full ? _pop_param_children(net.model, pops[i][2]) : Any[],
+            ) for i in eachindex(pops)
+    ]
     isempty(popkids) || push!(children, ("populations ($(length(popkids)))", popkids))
     if !isempty(net.projections)
-        projkids = Any[(_proj_head(net, i), full ? _param_children(net.projections[i].synapse) : Any[])
-                       for i in eachindex(net.projections)]
+        projkids = Any[
+            (_proj_head(net, i), full ? _param_children(net.projections[i].synapse) : Any[])
+                for i in eachindex(net.projections)
+        ]
         push!(children, ("projections ($(length(projkids)))", projkids))
     end
     net.drive === nothing || push!(children, ("drive  " * _oneline(net.drive), Any[]))
@@ -375,8 +391,12 @@ function _show_builder(io::IO, arch, tspan, names, models, sizes, projspecs, dri
     _styled(io, tag, :dim)
     full = _expand(io)
     children = Any[]
-    popkids = Any[(string(names[i], "  ", sizes[i], "  ", full ? nameof(typeof(models[i])) : typeof(models[i])),
-                   full ? _param_children(models[i]) : Any[]) for i in eachindex(names)]
+    popkids = Any[
+        (
+                string(names[i], "  ", sizes[i], "  ", full ? nameof(typeof(models[i])) : typeof(models[i])),
+                full ? _param_children(models[i]) : Any[],
+            ) for i in eachindex(names)
+    ]
     isempty(popkids) || push!(children, ("populations ($(length(popkids)))", popkids))
     projkids = Any[(_builder_proj_head(s), full ? _proj_param_children(s) : Any[]) for s in projspecs]
     isempty(projkids) || push!(children, ("projections ($(length(projkids)))", projkids))
@@ -387,8 +407,10 @@ end
 
 function Base.show(io::IO, ::MIME"text/plain", nb::NetworkBuilder)
     get(io, :compact, false) && return show(io, nb)
-    _show_builder(io, nb.arch, nb.tspan, nb.names, nb.models, nb.sizes, nb.projspecs, nb.drive;
-        head = "NetworkBuilder", tag = "(unbuilt)")
+    _show_builder(
+        io, nb.arch, nb.tspan, nb.names, nb.models, nb.sizes, nb.projspecs, nb.drive;
+        head = "NetworkBuilder", tag = "(unbuilt)"
+    )
     return nothing
 end
 Base.show(io::IO, nb::NetworkBuilder) =
@@ -398,8 +420,10 @@ Base.show(io::IO, nb::NetworkBuilder) =
 # structured (frozen builder): the same populations/projection-recipe tree, marked unmaterialised.
 function Base.show(io::IO, ::MIME"text/plain", spec::FrozenBuilder)
     get(io, :compact, false) && return show(io, spec)
-    _show_builder(io, spec.arch, spec.tspan, spec.names, spec.models, spec.sizes, spec.projspecs, spec.drive;
-        head = "NetworkSpec", tag = "(spec, unmaterialised)")
+    _show_builder(
+        io, spec.arch, spec.tspan, spec.names, spec.models, spec.sizes, spec.projspecs, spec.drive;
+        head = "NetworkSpec", tag = "(spec, unmaterialised)"
+    )
     return nothing
 end
 Base.show(io::IO, spec::FrozenBuilder) =
@@ -445,8 +469,10 @@ end
 function Base.show(io::IO, ::MIME"text/plain", sol::DewdropSolution)
     get(io, :compact, false) && return show(io, sol)
     dur = sol.nsteps * sol.dt
-    print(io, "DewdropSolution · N=", length(sol.spike_count), " · ", sol.nsteps, " steps × dt=", _fmt(sol.dt),
-        " ms = ", _fmt(dur), " ms")
+    print(
+        io, "DewdropSolution · N=", length(sol.spike_count), " · ", sol.nsteps, " steps × dt=", _fmt(sol.dt),
+        " ms = ", _fmt(dur), " ms"
+    )
     children = Any[]
     pops, nw, rngs, rw = _pop_rows(sol.subpops)
     popkids = Any[(string(rpad(pops[i][1], nw), "  ", rpad(rngs[i], rw)), Any[]) for i in eachindex(pops)]
@@ -478,8 +504,10 @@ function Base.show(io::IO, ::MIME"text/plain", bsol::BatchedSolution)
     print(io, "\n  ")
     _styled(io, "firing rate: ", :section)
     print(io, round(_rate_hz(bsol.spike_count, length(bsol.spike_count), dur); digits = 1), " Hz  (mean over ", bsol.batch, " instances)")
-    isempty(bsol.record) || (print(io, "\n  "); _styled(io, "recorded: ", :section);
-        print(io, join([string(k, " (", r.kind, ")") for (k, r) in pairs(bsol.record)], ", ")))
+    isempty(bsol.record) || (
+        print(io, "\n  "); _styled(io, "recorded: ", :section);
+        print(io, join([string(k, " (", r.kind, ")") for (k, r) in pairs(bsol.record)], ", "))
+    )
     return nothing
 end
 Base.show(io::IO, bsol::BatchedSolution) = print(io, "BatchedSolution(N=", size(bsol.spike_count, 1), ", B=", bsol.batch, ")")

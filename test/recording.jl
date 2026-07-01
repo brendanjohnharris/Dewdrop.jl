@@ -24,7 +24,7 @@ using GPUArrays
         @test size(sol.record.spikes.data) == (4, nsteps)
         @test eltype(sol.record.spikes.data) == Bool
         @test vec(sum(sol.record.spikes.data; dims = 2)) == sol.spike_count   # raster ⇔ counts
-        @test all(v -> m.EL - 1e-6 ≤ v < m.Vθ, sol.record.V.data)             # post-reset, sub-θ
+        @test all(v -> m.EL - 1.0e-6 ≤ v < m.Vθ, sol.record.V.data)             # post-reset, sub-θ
         @test sol.record.V.data[:, end] == sol.state.state.V                  # last column = final
     end
 
@@ -49,8 +49,11 @@ using GPUArrays
     end
 
     @testset "aggregates (scalar reduction per step)" begin
-        agg = solve(prob, FixedStep(dt); record = (
-            rate = Aggregate(Spikes(), sum), meanV = Aggregate(Trace(:V), :mean)))
+        agg = solve(
+            prob, FixedStep(dt); record = (
+                rate = Aggregate(Spikes(), sum), meanV = Aggregate(Trace(:V), :mean),
+            )
+        )
         @test size(agg.record.rate.data) == (1, nsteps)
         @test vec(agg.record.rate.data) == vec(sum(sol.record.spikes.data; dims = 1))
         @test vec(agg.record.meanV.data) ≈ vec(mean(sol.record.V.data; dims = 1))
@@ -67,15 +70,17 @@ using GPUArrays
         ls = solve(long, FixedStep(dt); record = (V = Trace(:V),))
         @test size(ls.record.V.data, 2) == 1300
         @test ls.record.V.data[:, end] == ls.state.state.V             # final partial window flushed
-        @test all(v -> m.EL - 1e-6 ≤ v < m.Vθ, ls.record.V.data)       # every window flushed correctly
+        @test all(v -> m.EL - 1.0e-6 ≤ v < m.Vθ, ls.record.V.data)       # every window flushed correctly
     end
 
     @testset "other state vars, synaptic vars, and a probe" begin
-        @test all(≥(-1e-9), solve(prob, FixedStep(dt); record = (r = Trace(:refrac),)).record.r.data)
+        @test all(≥(-1.0e-9), solve(prob, FixedStep(dt); record = (r = Trace(:refrac),)).record.r.data)
         # a CUBA projection exposes a synaptic current column
         conn = fixed_prob(Dewdrop.CPU(), 4, 4, 0.5; weight = 1.0, delay = steps(2), seed = UInt64(1))
-        cprob = DewdropNetwork(m, 4; input = 0.5, tspan = (0.0, tend),
-            projection = Projection(CurrentSynapse(τ = 5.0), conn))
+        cprob = DewdropNetwork(
+            m, 4; input = 0.5, tspan = (0.0, tend),
+            projection = Projection(CurrentSynapse(τ = 5.0), conn)
+        )
         cs = solve(cprob, FixedStep(dt); record = (I = Trace(:Isyn; projection = 1),))
         @test size(cs.record.I.data) == (4, nsteps)
         # a probe records an arbitrary derived quantity (here the population mean V)
@@ -85,8 +90,12 @@ using GPUArrays
 
     @testset "GPU-safe under allowscalar(false): traces, spikes, in-kernel aggregate" begin
         GPUArrays.allowscalar(false)
-        gpu = adapt(JLArray, init(prob, FixedStep(dt);
-            record = (V = Trace(:V), spikes = Spikes(), rate = Aggregate(Spikes(), sum))))
+        gpu = adapt(
+            JLArray, init(
+                prob, FixedStep(dt);
+                record = (V = Trace(:V), spikes = Spikes(), rate = Aggregate(Spikes(), sum))
+            )
+        )
         @test gpu.monitors.V.buf.window isa JLArray
         for _ in 1:50
             step!(gpu)

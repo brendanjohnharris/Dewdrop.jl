@@ -116,9 +116,12 @@ function StreamingWelch(arch, ::Type{T}, n_out::Integer, B::Integer, fs::Real, f
     sumr2 = fill!(allocate(arch, T, Int(n_out), Int(B)), zero(T))
     hann = on_architecture(arch, hann_h)
     plan = plan_rfft(buf, 1)
-    return StreamingWelch{typeof(buf), typeof(accP2), typeof(accP1), typeof(sumr), typeof(hann),
-        typeof(H), typeof(plan), T}(
-        buf, accP2, accP1, sumr, sumr2, hann, H, plan, nfft, overlap, nfreq, T(A), T(fs), 0, 0)
+    return StreamingWelch{
+        typeof(buf), typeof(accP2), typeof(accP1), typeof(sumr), typeof(hann),
+        typeof(H), typeof(plan), T,
+    }(
+        buf, accP2, accP1, sumr, sumr2, hann, H, plan, nfft, overlap, nfreq, T(A), T(fs), 0, 0
+    )
 end
 
 # Feed the s-th recorded sample `xt` ((n_out × B) view of the engine's selected state). Accumulate raw
@@ -212,8 +215,10 @@ function StreamingFano(arch, ::Type{T}, n_out::Integer, B::Integer, taus, dt::Re
     all(>(0), tv) || throw(ArgumentError("Fano timescales must be positive"))
     ntau = length(tv)
     z3() = fill!(allocate(arch, T, Int(n_out), Int(B), ntau), zero(T))
-    return StreamingFano(fill!(allocate(arch, T, Int(n_out), Int(B)), zero(T)), z3(), z3(), z3(),
-        on_architecture(arch, tv), T(dt))
+    return StreamingFano(
+        fill!(allocate(arch, T, Int(n_out), Int(B)), zero(T)), z3(), z3(), z3(),
+        on_architecture(arch, tv), T(dt)
+    )
 end
 
 # One thread per (neuron, member, timescale): on a window boundary (this step's time entered a new τ-window),
@@ -322,4 +327,3 @@ Fano(; of = :all, taus, transient::Integer = 0, every::Integer = 1) =
     Fano(of, collect(Float64, taus), Int(transient), Int(every))
 
 export MADev, Welch, SpikeRate, Fano
-

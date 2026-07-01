@@ -178,8 +178,10 @@ Reproducible from the seed. The in-degree count and per-edge weight assignment a
 they run on a host copy of the post indices --- a no-op for a CPU connectome, a single bulk device→host copy
 for a GPU one --- and the result is written back in one bulk `copyto!`, so it works on a GPU connectome too.
 """
-function correlate_weights!(conn::SparseCSR, J::Real; targets = 1:npost(conn),
-        jitter::Real = 0.05, seed::Unsigned, count_empty::Bool = true)
+function correlate_weights!(
+        conn::SparseCSR, J::Real; targets = 1:npost(conn),
+        jitter::Real = 0.05, seed::Unsigned, count_empty::Bool = true
+    )
     lo = first(targets)
     n = length(targets)
     post = Array(conn.post)          # host copy (no scalar device indexing); bulk on GPU, no-op-ish on CPU

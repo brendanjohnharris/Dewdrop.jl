@@ -25,16 +25,18 @@ function run_regime(p)
     m = LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 10.0, R = 1.0, tref = 2.0)
     nb = network(m, p.NE, p.NI; arch = Dewdrop.CPU(), tspan = (0.0, p.T))
     project!(nb, :E, DeltaSynapse(); p = 0.1, weight = p.J, delay = steps(p.D), seed = UInt64(1))
-    project!(nb, :I, DeltaSynapse(); p = 0.1, weight = -p.g * p.J, delay = steps(p.D), seed = UInt64(0x101))
-    drive!(nb, PoissonDrive(; rate = p.drive_rate, weight = p.drive_weight, seed = UInt64(0x201)))
+    project!(nb, :I, DeltaSynapse(); p = 0.1, weight = -p.g * p.J, delay = steps(p.D), seed = UInt64(0x0101))
+    drive!(nb, PoissonDrive(; rate = p.drive_rate, weight = p.drive_weight, seed = UInt64(0x0201)))
     sol = solve(build(nb), FixedStep(0.1); record = (spikes = Spikes(),), v0 = p.v0)
     times, ids = raster(sol)
     _, A = pop_activity(times, p.transient, p.T, 1.0)
     freqs, power = pop_spectrum(A, 1.0)
     fpk, prom = dominant_peak(freqs, power)
-    st = (rate = mean_rate(times, p.transient, p.T, N), cv = mean_cv_isi(times, ids, N),
+    st = (
+        rate = mean_rate(times, p.transient, p.T, N), cv = mean_cv_isi(times, ids, N),
         fpeak = fpk, prominence = prom, sync = synchrony_index(A),
-        frac_silent = count(==(0), sol.spike_count) / N)
+        frac_silent = count(==(0), sol.spike_count) / N,
+    )
     return (; p, times, ids, A, freqs, power, st, N)
 end
 
@@ -71,8 +73,12 @@ end
     rs = NamedTuple[]
 
     @testset "SR (synchronous regular, g=3)" begin
-        r = run_regime((; title = "SR (g = 3)", NE = 2000, NI = 500, g = 3.0, J = 0.224,
-            drive_rate = 300.0, drive_weight = 0.224, D = 15, T = 1000.0, transient = 200.0, v0 = nothing))
+        r = run_regime(
+            (;
+                title = "SR (g = 3)", NE = 2000, NI = 500, g = 3.0, J = 0.224,
+                drive_rate = 300.0, drive_weight = 0.224, D = 15, T = 1000.0, transient = 200.0, v0 = nothing,
+            )
+        )
         push!(rs, r)
         st = r.st
         @test st.cv < 0.1                # regular firing (near clock-like)
@@ -93,8 +99,12 @@ end
     # no synchronous bands) and demonstrate a genuine high-CV AI state with conductance synapses
     # in the Vogels-Abbott COBA test (CV ≈ 1.4).
     @testset "AI (asynchronous-irregular, finite-size-limited, g=5)" begin
-        r = run_regime((; title = "AI (g = 5)", NE = 2000, NI = 500, g = 5.0, J = 0.1,
-            drive_rate = 20.0, drive_weight = 0.1, D = 15, T = 600.0, transient = 200.0, v0 = (10.0, 20.0)))
+        r = run_regime(
+            (;
+                title = "AI (g = 5)", NE = 2000, NI = 500, g = 5.0, J = 0.1,
+                drive_rate = 20.0, drive_weight = 0.1, D = 15, T = 600.0, transient = 200.0, v0 = (10.0, 20.0),
+            )
+        )
         push!(rs, r)
         st = r.st
         @test 50 < st.rate < 100         # sustained balanced activity at the canonical η=2 drive
@@ -105,27 +115,35 @@ end
     end
 
     @testset "SI-fast (synchronous irregular, fast, g=6)" begin
-        r = run_regime((; title = "SI fast (g = 6)", NE = 2000, NI = 500, g = 6.0, J = 0.4,
-            drive_rate = 11.0, drive_weight = 0.4, D = 15, T = 1000.0, transient = 200.0, v0 = nothing))
+        r = run_regime(
+            (;
+                title = "SI fast (g = 6)", NE = 2000, NI = 500, g = 6.0, J = 0.4,
+                drive_rate = 11.0, drive_weight = 0.4, D = 15, T = 1000.0, transient = 200.0, v0 = nothing,
+            )
+        )
         push!(rs, r)
         st = r.st
         @test 0.7 < st.cv < 1.05         # irregular single cells
         @test 140 < st.fpeak < 220       # fast delay-controlled oscillation
         @test st.prominence > 8          # clear peak
         @test st.rate < st.fpeak         # sparse: single-cell rate below oscillation freq
-        @test st.frac_silent < 0.20
+        @test st.frac_silent < 0.2
     end
 
     @testset "SI-slow (synchronous irregular, slow, g=4.5)" begin
-        r = run_regime((; title = "SI slow (g = 4.5)", NE = 2000, NI = 500, g = 4.5, J = 0.224,
-            drive_rate = 3.8, drive_weight = 0.224, D = 15, T = 1000.0, transient = 200.0, v0 = nothing))
+        r = run_regime(
+            (;
+                title = "SI slow (g = 4.5)", NE = 2000, NI = 500, g = 4.5, J = 0.224,
+                drive_rate = 3.8, drive_weight = 0.224, D = 15, T = 1000.0, transient = 200.0, v0 = nothing,
+            )
+        )
         push!(rs, r)
         st = r.st
         @test 3.5 < st.rate < 9.0        # low single-cell rate
         @test 0.4 < st.cv < 0.85         # intermediate-irregular
         @test 8 < st.fpeak < 50          # slow oscillation, well below SI-fast
         @test st.prominence > 40         # clear low-frequency peak
-        @test st.frac_silent < 0.10
+        @test st.frac_silent < 0.1
     end
 
     path = brunel_figure(rs)

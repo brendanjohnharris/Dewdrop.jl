@@ -39,8 +39,10 @@ if VERSION >= v"1.10"
             JET.@test_call target_modules = (Dewdrop,) Dewdrop.draw_uniform(Float64, UInt64(1), 1, 1)
 
             conn = SparseCSR(Dewdrop.CPU(), [(1, 2, 40.0, 15)]; npre = 2, npost = 2)
-            cprob = DewdropNetwork(m, 2; input = [0.5, 0.0], tspan = (0.0, 5.0),
-                projection = Projection(CurrentSynapse(τ = 5.0), conn))
+            cprob = DewdropNetwork(
+                m, 2; input = [0.5, 0.0], tspan = (0.0, 5.0),
+                projection = Projection(CurrentSynapse(τ = 5.0), conn)
+            )
             JET.@test_call target_modules = (Dewdrop,) solve(cprob, FixedStep(0.1))
             buf = Dewdrop.DelayBuffer(Dewdrop.CPU(), Float64, 2, 5)
             JET.@test_call target_modules = (Dewdrop,) Dewdrop.scatter!(buf, conn, [true, false], 0)
@@ -80,8 +82,10 @@ if VERSION >= v"1.10"
             # dispatch on synaptic-state type, per-unit input, and the KA scatter launch all
             # resolve at compile time.
             conn = SparseCSR(Dewdrop.CPU(), [(1, 2, 40.0, 15)]; npre = 2, npost = 2)
-            cprob = DewdropNetwork(m, 2; input = [0.5, 0.0], tspan = (0.0, 10.0),
-                projection = Projection(CurrentSynapse(τ = 5.0), conn))
+            cprob = DewdropNetwork(
+                m, 2; input = [0.5, 0.0], tspan = (0.0, 10.0),
+                projection = Projection(CurrentSynapse(τ = 5.0), conn)
+            )
             cinteg = init(cprob, FixedStep(0.1))
             step!(cinteg)
             JET.@test_opt target_modules = (Dewdrop,) step!(cinteg)
@@ -89,9 +93,11 @@ if VERSION >= v"1.10"
 
             # the Brunel path: delta synapses + Poisson drive must also be dispatch-free
             dconn = SparseCSR(Dewdrop.CPU(), [(1, 2, 0.2, 15), (2, 1, -1.0, 15)]; npre = 2, npost = 2)
-            dprob = DewdropNetwork(m, 2; input = 0.0, tspan = (0.0, 5.0),
+            dprob = DewdropNetwork(
+                m, 2; input = 0.0, tspan = (0.0, 5.0),
                 projection = Projection(DeltaSynapse(), dconn),
-                drive = PoissonDrive(; rate = 6.0, weight = 0.2, seed = UInt64(2)))
+                drive = PoissonDrive(; rate = 6.0, weight = 0.2, seed = UInt64(2))
+            )
             dinteg = init(dprob, FixedStep(0.1))
             step!(dinteg)
             JET.@test_opt target_modules = (Dewdrop,) step!(dinteg)
@@ -100,9 +106,13 @@ if VERSION >= v"1.10"
             # multiple heterogeneous projections (COBA E + COBA I): the tuple-recursion
             # dispatch and conductance accumulation must stay dispatch-free.
             mconn = SparseCSR(Dewdrop.CPU(), [(1, 2, 15.0, 1)]; npre = 2, npost = 2)
-            mprob = DewdropNetwork(m, 2; input = [0.5, 0.0], tspan = (0.0, 5.0),
-                projections = (Projection(ConductanceSynapse(τ = 5.0, Erev = 0.0), mconn),
-                    Projection(ConductanceSynapse(τ = 10.0, Erev = -80.0), mconn)))
+            mprob = DewdropNetwork(
+                m, 2; input = [0.5, 0.0], tspan = (0.0, 5.0),
+                projections = (
+                    Projection(ConductanceSynapse(τ = 5.0, Erev = 0.0), mconn),
+                    Projection(ConductanceSynapse(τ = 10.0, Erev = -80.0), mconn),
+                )
+            )
             minteg = init(mprob, FixedStep(0.1))
             step!(minteg)
             JET.@test_opt target_modules = (Dewdrop,) step!(minteg)

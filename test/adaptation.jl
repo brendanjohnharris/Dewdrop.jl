@@ -26,8 +26,10 @@ function adex_reference_spikes(m, I, dt, tend)
 end
 
 @testset "AdaptLIF: hooks + exact (V,w) recursion (plumbing)" begin
-    m = AdaptLIF(; τ = 20.0, EL = -65.0, Vθ = 1.0e6, Vr = -65.0, R = 1.0, tref = 0.0,
-        a = 0.05, b = 0.0, τw = 100.0)
+    m = AdaptLIF(;
+        τ = 20.0, EL = -65.0, Vθ = 1.0e6, Vr = -65.0, R = 1.0, tref = 0.0,
+        a = 0.05, b = 0.0, τw = 100.0
+    )
     @test Dewdrop.statevars(m) == (:V, :refrac, :w)
     @test Dewdrop.float_type(m) == Float64
     @test Dewdrop.reset_value(m) == -65.0
@@ -50,14 +52,16 @@ end
 @testset "AdaptLIF: subthreshold fixed point (analytic)" begin
     # subthreshold (Vθ → ∞), constant input I: the (V,w) system relaxes to
     #   V* = EL + R·I/(1 + R·a),   w* = a·R·I/(1 + R·a)
-    m = AdaptLIF(; τ = 20.0, EL = -65.0, Vθ = 1.0e6, Vr = -65.0, R = 1.0, tref = 0.0,
-        a = 0.05, b = 0.0, τw = 100.0)
+    m = AdaptLIF(;
+        τ = 20.0, EL = -65.0, Vθ = 1.0e6, Vr = -65.0, R = 1.0, tref = 0.0,
+        a = 0.05, b = 0.0, τw = 100.0
+    )
     I = 10.0
     sol = solve(DewdropNetwork(m, 1; input = I, tspan = (0.0, 800.0)), FixedStep(0.1))
     Vstar = m.EL + m.R * I / (1 + m.R * m.a)
     wstar = m.a * m.R * I / (1 + m.R * m.a)
-    @test only(sol.state.state.V) ≈ Vstar rtol = 1e-3
-    @test only(sol.state.state.w) ≈ wstar rtol = 1e-3
+    @test only(sol.state.state.V) ≈ Vstar rtol = 1.0e-3
+    @test only(sol.state.state.w) ≈ wstar rtol = 1.0e-3
 end
 
 @testset "AdaptLIF: spike-frequency adaptation; b=0,a=0 ≡ LIF" begin
@@ -67,8 +71,10 @@ end
 
     # adapting model: spike-frequency adaptation -> ISIs grow over the train
     madapt = AdaptLIF(; base..., a = 0.0, b = 1.0, τw = 150.0)
-    sa = solve(DewdropNetwork(madapt, 1; input = I, tspan = (0.0, tend)), FixedStep(dt);
-        record = (spk = Spikes(),))
+    sa = solve(
+        DewdropNetwork(madapt, 1; input = I, tspan = (0.0, tend)), FixedStep(dt);
+        record = (spk = Spikes(),)
+    )
     times, _ = raster(sa; name = :spk)
     @test length(times) ≥ 4
     isis = diff(times)
@@ -86,8 +92,10 @@ end
 
 @testset "AdEx: dynamics vs fine-dt reference; no NaN; sub/supra rheobase" begin
     # canonical adapting AdEx (Brette & Gerstner 2005-ish, canonical units)
-    m = AdEx(; C = 200.0, gL = 10.0, EL = -70.0, VT = -50.0, ΔT = 2.0, Vr = -58.0,
-        Vpeak = 0.0, a = 2.0, b = 60.0, τw = 120.0, tref = 2.0)
+    m = AdEx(;
+        C = 200.0, gL = 10.0, EL = -70.0, VT = -50.0, ΔT = 2.0, Vr = -58.0,
+        Vpeak = 0.0, a = 2.0, b = 60.0, τw = 120.0, tref = 2.0
+    )
     dt = 0.1
 
     # sub-rheobase: settles, no spikes, finite
@@ -98,8 +106,10 @@ end
 
     # supra-rheobase: spikes, finite (Vpeak cutoff fires, no NaN), adapts
     Isup = 500.0
-    ssup = solve(DewdropNetwork(m, 1; input = Isup, tspan = (0.0, 1000.0)), FixedStep(dt);
-        record = (spk = Spikes(),))
+    ssup = solve(
+        DewdropNetwork(m, 1; input = Isup, tspan = (0.0, 1000.0)), FixedStep(dt);
+        record = (spk = Spikes(),)
+    )
     @test ssup.spike_count[1] ≥ 4
     @test all(isfinite, ssup.state.state.V)
     t_eng, _ = raster(ssup; name = :spk)
@@ -113,8 +123,10 @@ end
 end
 
 @testset "adaptation: CPU broadcast ≡ JLArray fused; batched reference" begin
-    m = AdaptLIF(; τ = 20.0, EL = -65.0, Vθ = -50.0, Vr = -65.0, R = 1.0, tref = 2.0,
-        a = 0.02, b = 0.5, τw = 100.0)
+    m = AdaptLIF(;
+        τ = 20.0, EL = -65.0, Vθ = -50.0, Vr = -65.0, R = 1.0, tref = 2.0,
+        a = 0.02, b = 0.5, τw = 100.0
+    )
     dt = 0.1
     prob = DewdropNetwork(m, 48; input = 22.0, tspan = (0.0, 200.0))
     cpu = init(prob, FixedStep(dt))
@@ -147,6 +159,12 @@ end
     @test Dewdrop._advance_unit(m, v, nothing, 0.0, 0.1, 0.1) ===
         (Dewdrop.membrane_step(m, v, 0.0, 0.1, 0.1), nothing)
     @test Dewdrop._has_w(typeof(m)) == false
-    @test Dewdrop._has_w(typeof(AdaptLIF(; τ = 20.0, EL = -65.0, Vθ = -50.0, Vr = -65.0,
-        R = 1.0, tref = 2.0, a = 0.02, b = 0.5, τw = 100.0))) == true
+    @test Dewdrop._has_w(
+        typeof(
+            AdaptLIF(;
+                τ = 20.0, EL = -65.0, Vθ = -50.0, Vr = -65.0,
+                R = 1.0, tref = 2.0, a = 0.02, b = 0.5, τw = 100.0
+            )
+        )
+    ) == true
 end

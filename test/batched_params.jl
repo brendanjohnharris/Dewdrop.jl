@@ -8,8 +8,10 @@ using Test
 #   (b) `BatchedModel` wraps ANY base + per-member (B) or per-(neuron,member) (N×B) overrides;
 #   (c) synapse scalar params may be per-member (length B).
 
-_adex() = AdEx(; C = 281.0, gL = 30.0, EL = -70.0, VT = -50.0, ΔT = 2.0, Vr = -60.0,
-    Vpeak = -40.0, a = 4.0, b = 80.0, τw = 144.0, tref = 2.0)
+_adex() = AdEx(;
+    C = 281.0, gL = 30.0, EL = -70.0, VT = -50.0, ΔT = 2.0, Vr = -60.0,
+    Vpeak = -40.0, a = 4.0, b = 80.0, τw = 144.0, tref = 2.0
+)
 _net(model, N) = DewdropNetwork(model, N; input = 800.0, tspan = (0.0, 200.0))
 _run(model, N; kw...) = solve(_net(model, N), FixedStep(0.1); progress = false, kw...)
 
@@ -55,11 +57,15 @@ _run(model, N; kw...) = solve(_net(model, N), FixedStep(0.1); progress = false, 
     @testset "(c) per-member synapse `a` (conductance scale) takes effect ≡ standalone" begin
         N = 8; B = 2
         lif = LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 100.0, tref = 2.0)
-        mk(w) = (nb = network(; tspan = (0.0, 200.0));
+        mk(w) = (
+            nb = network(; tspan = (0.0, 200.0));
             population!(nb, :E, lif, N; input = 0.25);
-            project!(nb, :E => :E, FrozenDualExpSynapse(; τr = 1.0, τd = 5.0, Erev = 0.0);
-                p = 0.6, weight = w, delay = steps(1), seed = UInt64(1), allow_self = false);
-            build(nb))
+            project!(
+                nb, :E => :E, FrozenDualExpSynapse(; τr = 1.0, τd = 5.0, Erev = 0.0);
+                p = 0.6, weight = w, delay = steps(1), seed = UInt64(1), allow_self = false
+            );
+            build(nb)
+        )
         s_rec = solve(mk(0.5), FixedStep(0.1); progress = false)       # excitatory recurrence on
         s_off = solve(mk(0.0), FixedStep(0.1); progress = false)       # recurrence off (zero weights, same structure)
         @test sum(s_rec.spike_count) > 0
@@ -67,8 +73,10 @@ _run(model, N; kw...) = solve(_net(model, N), FixedStep(0.1); progress = false, 
         a_base = Dewdrop._dualexp_a(1.0, 5.0)
         # ONE shared connectome (weight 0.5); member 1 gets the full conductance scale, member 2 gets a = 0.
         # a is linear in the deposited weight, so a = a_base ≡ weight 0.5 and a = 0 ≡ weight 0 (synapse off).
-        bs = solve(mk(0.5), FixedStep(0.1); batch = B,
-            syn_overrides = Dict(1 => (; a = [a_base, 0.0])), progress = false)
+        bs = solve(
+            mk(0.5), FixedStep(0.1); batch = B,
+            syn_overrides = Dict(1 => (; a = [a_base, 0.0])), progress = false
+        )
         @test bs.spike_count[:, 1] == s_rec.spike_count                 # a = a_base ≡ full recurrence
         @test bs.spike_count[:, 2] == s_off.spike_count                 # a = 0 ≡ recurrence off
     end
@@ -81,8 +89,10 @@ _run(model, N; kw...) = solve(_net(model, N), FixedStep(0.1); progress = false, 
         lif = LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 100.0, tref = 2.0)
         nb = network(; tspan = (0.0, 200.0))
         population!(nb, :E, lif, N; input = 0.0)
-        drive!(nb, :E, DeltaSynapse(); rate = 200.0, n_ext = 12, p = 0.5, weight = 2.0,
-            delay = steps(1), seed = UInt64(7))
+        drive!(
+            nb, :E, DeltaSynapse(); rate = 200.0, n_ext = 12, p = 0.5, weight = 2.0,
+            delay = steps(1), seed = UInt64(7)
+        )
         net = build(nb)
         s = solve(net, FixedStep(0.1); progress = false)               # standalone (the drive sustains it)
         @test sum(s.spike_count) > 0
@@ -113,8 +123,10 @@ _run(model, N; kw...) = solve(_net(model, N), FixedStep(0.1); progress = false, 
         lif = LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 100.0, tref = 2.0)
         nb = network(; tspan = (0.0, 150.0))
         population!(nb, :E, lif, N; input = 0.3)
-        project!(nb, :E => :E, FrozenDualExpSynapse(; τr = 1.0, τd = 5.0, Erev = 0.0);
-            p = 0.5, weight = 0.4, delay = steps(1), seed = UInt64(2), allow_self = false)
+        project!(
+            nb, :E => :E, FrozenDualExpSynapse(; τr = 1.0, τd = 5.0, Erev = 0.0);
+            p = 0.5, weight = 0.4, delay = steps(1), seed = UInt64(2), allow_self = false
+        )
         net = build(nb)
         rec = (it = Trace(:itot), gt = Trace(:gtot))
         s = solve(net, FixedStep(0.1); backend = Fused(), record = rec, progress = false)

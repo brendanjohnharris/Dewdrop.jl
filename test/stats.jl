@@ -25,8 +25,10 @@ using Test
 end
 
 @testset "coarsegrain (time binning)" begin
-    S = Bool[1 0 1 1 0 1
-             0 0 1 0 1 1]
+    S = Bool[
+        1 0 1 1 0 1
+        0 0 1 0 1 1
+    ]
     @test coarsegrain(S, 2; dims = 2) == [1 2 1; 0 1 2]          # sum each 2-step bin per neuron
     @test coarsegrain(S, 3; dims = 2) == [2 2; 1 2]
     @test size(coarsegrain(S, 4; dims = 2), 2) == 1             # remainder discarded
@@ -93,8 +95,10 @@ end
 @testset "sol-level wrappers (addressor + positions)" begin
     m = LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 10.0, R = 1.0, tref = 2.0)
     pos = grid_positions(8, 8)
-    prob = DewdropNetwork(m, 64; input = 30.0, tspan = (0.0, 200.0),
-        subpops = (E = 1:32, I = 33:64), positions = pos)
+    prob = DewdropNetwork(
+        m, 64; input = 30.0, tspan = (0.0, 200.0),
+        subpops = (E = 1:32, I = 33:64), positions = pos
+    )
     sol = solve(prob, FixedStep(0.1); v0 = (5.0, 19.0), record = (spikes = Spikes(),))
 
     @test susceptibility(sol) isa Float64

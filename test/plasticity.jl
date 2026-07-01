@@ -37,23 +37,23 @@ end
     dt = 1.0
     for Δ in (1, 3, 5, 10, 20, 40)
         dw, _ = stdp_pair_dw(rule, Δ; dt = dt)
-        @test dw ≈ rule.Aplus * exp(-Δ * dt / rule.τplus) rtol = 1e-5     # pre→post potentiates
+        @test dw ≈ rule.Aplus * exp(-Δ * dt / rule.τplus) rtol = 1.0e-5     # pre→post potentiates
     end
     for Δ in (-1, -3, -5, -10, -20)
         dw, _ = stdp_pair_dw(rule, Δ; dt = dt)
-        @test dw ≈ -rule.Aminus * exp(Δ * dt / rule.τminus) rtol = 1e-5    # post→pre depresses
+        @test dw ≈ -rule.Aminus * exp(Δ * dt / rule.τminus) rtol = 1.0e-5    # post→pre depresses
     end
     # exact coincidence Δt = 0: both endpoints spike the same step -> potentiation reads the
     # not-yet-bumped pre trace (0) and depression the not-yet-bumped post trace (0) -> no change
     dw0, _ = stdp_pair_dw(rule, 0; dt = dt)
-    @test dw0 ≈ 0.0 atol = 1e-12
+    @test dw0 ≈ 0.0 atol = 1.0e-12
 end
 
 @testset "STDP: delays are transmission-only (Δw independent of delay)" begin
     rule = Dewdrop.STDP(; Aplus = 0.1, Aminus = 0.1, τplus = 20.0, τminus = 20.0, wmin = 0.0, wmax = 100.0)
     dw1, _ = stdp_pair_dw(rule, 10; d = 1)
     dw5, _ = stdp_pair_dw(rule, 10; d = 7)
-    @test dw1 ≈ dw5 rtol = 1e-12       # plasticity uses actual spike times, not delivery time
+    @test dw1 ≈ dw5 rtol = 1.0e-12       # plasticity uses actual spike times, not delivery time
 end
 
 @testset "STDP: convergence + clamp to [wmin, wmax]" begin
@@ -61,8 +61,12 @@ end
     pot = Dewdrop.STDP(; Aplus = 0.5, Aminus = 0.5, τplus = 20.0, τminus = 20.0, wmin = 1.0, wmax = 6.0)
     m = LIF(; τ = 20.0, EL = -65.0, Vθ = 1.0e6, Vr = -65.0, R = 1.0, tref = 0.0)
     conn = Dewdrop.SparseCSR(Dewdrop.CPU(), [(1, 2, 3.0, 1)]; npre = 2, npost = 2)
-    integ = init(DewdropNetwork(m, 2; input = 0.0, tspan = (0.0, 10.0),
-        projection = Dewdrop.Projection(DeltaSynapse(), conn; plasticity = pot)), FixedStep(1.0))
+    integ = init(
+        DewdropNetwork(
+            m, 2; input = 0.0, tspan = (0.0, 10.0),
+            projection = Dewdrop.Projection(DeltaSynapse(), conn; plasticity = pot)
+        ), FixedStep(1.0)
+    )
     # drive many pre(t)→post(t+2) pairs
     for rep in 1:200
         for (k, sp) in ((0, 1), (2, 2))

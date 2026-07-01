@@ -15,13 +15,13 @@ module UnitfulExt
 using Dewdrop
 using Unitful: Unitful, Quantity, ustrip, dimension, @u_str
 
-@inline Dewdrop.to_time(x::Quantity)        = float(ustrip(u"ms", x))
-@inline Dewdrop.to_voltage(x::Quantity)     = float(ustrip(u"mV", x))
-@inline Dewdrop.to_current(x::Quantity)     = float(ustrip(u"pA", x))
+@inline Dewdrop.to_time(x::Quantity) = float(ustrip(u"ms", x))
+@inline Dewdrop.to_voltage(x::Quantity) = float(ustrip(u"mV", x))
+@inline Dewdrop.to_current(x::Quantity) = float(ustrip(u"pA", x))
 @inline Dewdrop.to_conductance(x::Quantity) = float(ustrip(u"nS", x))
-@inline Dewdrop.to_resistance(x::Quantity)  = float(ustrip(u"GΩ", x))
+@inline Dewdrop.to_resistance(x::Quantity) = float(ustrip(u"GΩ", x))
 @inline Dewdrop.to_capacitance(x::Quantity) = float(ustrip(u"pF", x))
-@inline Dewdrop.to_rate(x::Quantity)        = float(ustrip(u"kHz", x))
+@inline Dewdrop.to_rate(x::Quantity) = float(ustrip(u"kHz", x))
 
 # Per-neuron input may be a unitful array.
 @inline Dewdrop.to_current(x::AbstractArray{<:Quantity}) = float.(ustrip.(u"pA", x))
@@ -32,8 +32,12 @@ function Dewdrop.to_weight(x::Quantity)
     d === dimension(u"mV") && return float(ustrip(u"mV", x))   # delta-synapse voltage jump
     d === dimension(u"pA") && return float(ustrip(u"pA", x))   # CUBA current
     d === dimension(u"nS") && return float(ustrip(u"nS", x))   # COBA conductance
-    throw(ArgumentError("synaptic weight has dimension $d; expected a voltage (delta), " *
-        "current (CUBA), or conductance (COBA)"))
+    throw(
+        ArgumentError(
+            "synaptic weight has dimension $d; expected a voltage (delta), " *
+                "current (CUBA), or conductance (COBA)"
+        )
+    )
 end
 
 end # module UnitfulExt

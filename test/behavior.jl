@@ -26,7 +26,7 @@ using Test
         @test sol.nsteps == round(Int, tend / dt)
         @test Dewdrop.duration(sol) ≈ sol.nsteps * dt
         @test sol.tspan[2] ≈ tend
-        @test sol.tspan[1] ≈ 0.0 atol = 1e-9
+        @test sol.tspan[1] ≈ 0.0 atol = 1.0e-9
     end
 
     @testset "refractory branch semantics (direct)" begin

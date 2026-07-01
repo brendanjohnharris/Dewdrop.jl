@@ -10,8 +10,10 @@ using ForwardDiff
 
 @testset "differentiable backend (surrogate-gradient training)" begin
     # an unconnected LIF population driven above threshold; tref = 0 (conventional for surrogate training).
-    build(R) = DewdropNetwork(LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 0.0, R = R, tref = 0.0),
-        8; input = 30.0, tspan = (0.0, 300.0))
+    build(R) = DewdropNetwork(
+        LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 0.0, R = R, tref = 0.0),
+        8; input = 30.0, tspan = (0.0, 300.0)
+    )
     rate(R; β = 25.0) = let s = solve(build(R), FixedStep(0.1); backend = Differentiable(β = β))
         sum(s.spike_count) / (8 * duration(s))
     end
@@ -35,10 +37,10 @@ using ForwardDiff
     @testset "ForwardDiff gradient matches finite differences (through the real solve)" begin
         R0 = 1.0
         g_ad = ForwardDiff.derivative(rate, R0)
-        h = 1e-4
+        h = 1.0e-4
         g_fd = (rate(R0 + h) - rate(R0 - h)) / (2h)
         @test isfinite(g_ad) && g_ad > 0
-        @test g_ad ≈ g_fd rtol = 1e-5
+        @test g_ad ≈ g_fd rtol = 1.0e-5
     end
 
     @testset "gradient descent reduces a fit-to-rate loss" begin
@@ -54,8 +56,10 @@ using ForwardDiff
 
     @testset "error paths (CPU-only, unconnected, canonical for now)" begin
         conn = fixed_prob(Dewdrop.CPU(), 8, 8, 0.2; weight = 0.5, delay = steps(1), seed = UInt64(1))
-        connected = DewdropNetwork(LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 0.0, R = 1.0, tref = 0.0),
-            8; input = 30.0, tspan = (0.0, 10.0), projection = Projection(DeltaSynapse(), conn))
+        connected = DewdropNetwork(
+            LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 0.0, R = 1.0, tref = 0.0),
+            8; input = 30.0, tspan = (0.0, 10.0), projection = Projection(DeltaSynapse(), conn)
+        )
         @test_throws Exception init(connected, FixedStep(0.1); backend = Differentiable())  # surrogate scatter is the next step
     end
 end

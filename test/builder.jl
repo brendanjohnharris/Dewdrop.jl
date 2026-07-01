@@ -102,10 +102,16 @@ end
 
     @testset "different model TYPES → MultiModel (AdEx-E + LIF-I)" begin
         nb = network(; arch = Dewdrop.CPU(), tspan = (0.0, 300.0))
-        population!(nb, :E, AdEx(; C = 200.0, gL = 10.0, EL = -70.0, VT = -50.0, ΔT = 2.0, Vr = -58.0,
-            Vpeak = 0.0, a = 2.0, b = 60.0, τw = 120.0, tref = 2.0), 40; input = 700.0)
-        population!(nb, :I, LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 0.1, tref = 2.0), 40;
-            input = 400.0)
+        population!(
+            nb, :E, AdEx(;
+                C = 200.0, gL = 10.0, EL = -70.0, VT = -50.0, ΔT = 2.0, Vr = -58.0,
+                Vpeak = 0.0, a = 2.0, b = 60.0, τw = 120.0, tref = 2.0
+            ), 40; input = 700.0
+        )
+        population!(
+            nb, :I, LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 0.1, tref = 2.0), 40;
+            input = 400.0
+        )
         prob = build(nb)
         @test prob.model isa MultiModel
         @test prob.subpops.E == 1:40

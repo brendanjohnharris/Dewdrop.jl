@@ -31,7 +31,7 @@ using Test
 
     # refractory floor: rate can never exceed 1/tref no matter how strong the drive
     sol = solve(DewdropNetwork(m, 1; input = 100.0, tspan = (0.0, tend)), FixedStep(dt))
-    @test only(firing_rate(sol)) ≤ 1.0 / m.tref + 1e-9
+    @test only(firing_rate(sol)) ≤ 1.0 / m.tref + 1.0e-9
 
     # a homogeneous population fires identically across units (determinism + no cross-talk)
     solN = solve(DewdropNetwork(m, 16; input = 0.5, tspan = (0.0, tend)), FixedStep(dt))

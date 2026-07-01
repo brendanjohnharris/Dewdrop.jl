@@ -34,7 +34,11 @@ end
 
     # the generic linear membrane step couples conductance (COBA) synapses for macro models too
     ce = fixed_prob(Dewdrop.CPU(), 16, 16, 0.2; weight = 0.5, delay = steps(2), seed = UInt64(1))
-    scoba = solve(DewdropNetwork(MacroLIF(), 16; input = 1.5, tspan = (0.0, 50.0),
-            projection = Projection(ConductanceSynapse(τ = 5.0, Erev = 0.0), ce)), FixedStep(0.1))
+    scoba = solve(
+        DewdropNetwork(
+            MacroLIF(), 16; input = 1.5, tspan = (0.0, 50.0),
+            projection = Projection(ConductanceSynapse(τ = 5.0, Erev = 0.0), ce)
+        ), FixedStep(0.1)
+    )
     @test sum(scoba.spike_count) ≥ 0
 end

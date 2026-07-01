@@ -27,9 +27,12 @@ struct AdaptLIF{T} <: AbstractNeuronModel
     τ::T; EL::T; Vθ::T; Vr::T; R::T; tref::T
     a::T; b::T; τw::T
 end
-AdaptLIF(; τ, EL, Vθ, Vr, R, tref, a, b, τw) = AdaptLIF(promote(
-    to_time(τ), to_voltage(EL), to_voltage(Vθ), to_voltage(Vr), to_resistance(R), to_time(tref),
-    to_conductance(a), to_current(b), to_time(τw))...)
+AdaptLIF(; τ, EL, Vθ, Vr, R, tref, a, b, τw) = AdaptLIF(
+    promote(
+        to_time(τ), to_voltage(EL), to_voltage(Vθ), to_voltage(Vr), to_resistance(R), to_time(tref),
+        to_conductance(a), to_current(b), to_time(τw)
+    )...
+)
 export AdaptLIF
 
 statevars(::Type{<:AdaptLIF}) = (:V, :refrac, :w)
@@ -58,9 +61,12 @@ struct AdEx{T} <: AbstractNeuronModel
     C::T; gL::T; EL::T; VT::T; ΔT::T; Vr::T; Vpeak::T
     a::T; b::T; τw::T; tref::T
 end
-AdEx(; C, gL, EL, VT, ΔT, Vr, Vpeak, a, b, τw, tref = 0.0) = AdEx(promote(
-    to_capacitance(C), to_conductance(gL), to_voltage(EL), to_voltage(VT), to_voltage(ΔT),
-    to_voltage(Vr), to_voltage(Vpeak), to_conductance(a), to_current(b), to_time(τw), to_time(tref))...)
+AdEx(; C, gL, EL, VT, ΔT, Vr, Vpeak, a, b, τw, tref = 0.0) = AdEx(
+    promote(
+        to_capacitance(C), to_conductance(gL), to_voltage(EL), to_voltage(VT), to_voltage(ΔT),
+        to_voltage(Vr), to_voltage(Vpeak), to_conductance(a), to_current(b), to_time(τw), to_time(tref)
+    )...
+)
 export AdEx
 
 statevars(::Type{<:AdEx}) = (:V, :refrac, :w)
@@ -97,10 +103,15 @@ conductance-LIF (the inhibitory population). State: `V`, `refrac`, `w` (the gene
 struct FNSNeuron{T} <: AbstractNeuronModel
     C::T; gL::T; VL::T; VK::T; Vθ::T; Vr::T; tref::T; τK::T; ΔgK::T
 end
-FNSNeuron(; C = 0.25, gL = 0.0167, VL = -70.0, VK = -85.0, Vθ = -50.0, Vr = -60.0,
-        tref = 4.0, τK = 80.0, ΔgK = 0.01) = FNSNeuron(promote(
-    to_capacitance(C), to_conductance(gL), to_voltage(VL), to_voltage(VK), to_voltage(Vθ), to_voltage(Vr),
-    to_time(tref), to_time(τK), to_conductance(ΔgK))...)
+FNSNeuron(;
+    C = 0.25, gL = 0.0167, VL = -70.0, VK = -85.0, Vθ = -50.0, Vr = -60.0,
+    tref = 4.0, τK = 80.0, ΔgK = 0.01
+) = FNSNeuron(
+    promote(
+        to_capacitance(C), to_conductance(gL), to_voltage(VL), to_voltage(VK), to_voltage(Vθ), to_voltage(Vr),
+        to_time(tref), to_time(τK), to_conductance(ΔgK)
+    )...
+)
 export FNSNeuron
 
 statevars(::Type{<:FNSNeuron}) = (:V, :refrac, :w)            # the generic aux column :w holds gK

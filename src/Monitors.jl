@@ -65,8 +65,10 @@ function _windowslice(window, filled)                       # device → host
 end
 function flush!(wb::WindowBuffer)
     wb.filled == 0 && return wb
-    @inbounds copyto!(view(wb.store, :, (wb.flushed + 1):(wb.flushed + wb.filled)),
-        _windowslice(wb.window, wb.filled))
+    @inbounds copyto!(
+        view(wb.store, :, (wb.flushed + 1):(wb.flushed + wb.filled)),
+        _windowslice(wb.window, wb.filled)
+    )
     wb.flushed += wb.filled
     wb.filled = 0
     return wb

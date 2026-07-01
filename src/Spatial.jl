@@ -86,9 +86,11 @@ flat indices stay absolute. Returns a [`SparseCSR`](@ref). Together with
 [`grid_positions`](@ref)/[`ring_positions`](@ref) and the kernel helpers this expresses
 distance-kernel, ring and grid topologies.
 """
-function distance_prob(arch::AbstractArchitecture, positions; kernel, weight, delay,
+function distance_prob(
+        arch::AbstractArchitecture, positions; kernel, weight, delay,
         seed::Unsigned, allow_self::Bool = false, period = nothing,
-        sources = eachindex(positions), targets = eachindex(positions), index_type::Type = Int)
+        sources = eachindex(positions), targets = eachindex(positions), index_type::Type = Int
+    )
     npost = length(positions)
     wtype = typeof(to_weight(weight isa Function ? weight(1) : weight))
     dtype = typeof(_delayval(delay isa Function ? delay(1) : delay))   # Int (steps) or Float (ms)
@@ -182,9 +184,11 @@ counter-based RNG. Unlike per-pair Bernoulli [`distance_prob`](@ref) (random edg
 the count exactly --- a fixed-degree connectivity. `sources`/`targets` restrict the pair set; pairs
 with zero kernel probability are never selected. O(|sources|·|targets|) time, O(count) memory.
 """
-function distance_fixed_count(arch::AbstractArchitecture, positions; kernel, count, weight, delay,
+function distance_fixed_count(
+        arch::AbstractArchitecture, positions; kernel, count, weight, delay,
         seed::Unsigned, allow_self::Bool = false, period = nothing,
-        sources = eachindex(positions), targets = eachindex(positions), index_type::Type = Int)
+        sources = eachindex(positions), targets = eachindex(positions), index_type::Type = Int
+    )
     cnt = Int(count)
     cnt ≥ 0 || throw(ArgumentError("count must be ≥ 0 (got $cnt)"))
     h = _TopK(cnt)

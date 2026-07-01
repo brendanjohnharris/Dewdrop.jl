@@ -152,11 +152,14 @@ function _check_accum_record(bk::SimBackend, record)
     (record === nothing || _populates_accum(bk)) && return nothing
     for spec in values(record)
         if spec isa Trace && spec.projection === nothing && spec.var in (:gtot, :itot)
-            throw(ArgumentError(
-                "Trace(:$(spec.var)) is not materialised by backend = $(nameof(typeof(bk)))(): that step " *
-                "keeps the $(spec.var) accumulator per-lane and never writes it back, so recording it " *
-                "here would silently return zeros. Use backend = Serial()/Fused(), or record a synaptic " *
-                "variable instead, e.g. `Trace(:g_decay; projection = i)`."))
+            throw(
+                ArgumentError(
+                    "Trace(:$(spec.var)) is not materialised by backend = $(nameof(typeof(bk)))(): that step " *
+                        "keeps the $(spec.var) accumulator per-lane and never writes it back, so recording it " *
+                        "here would silently return zeros. Use backend = Serial()/Fused(), or record a synaptic " *
+                        "variable instead, e.g. `Trace(:g_decay; projection = i)`."
+                )
+            )
         end
     end
     return nothing

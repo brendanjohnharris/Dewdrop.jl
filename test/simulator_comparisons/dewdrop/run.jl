@@ -50,10 +50,14 @@ function build_prob(N::Int, arch, ::Type{T}, ::Type{IT}, tspan) where {T, IT}
     pre, post = connectome(N, Int(nw["K"]), Int(nw["seed"]))
     edges = [(pre[e] + 1, post[e] + 1, T(pre[e] < NE ? sy["GE"] : -sy["GI"]), Int(sy["delay_steps"])) for e in eachindex(pre)]
     conn = SparseCSR(arch, edges; npre = N, npost = N, index_type = IT)
-    m = AdEx(; C = T(nn["C"]), gL = T(nn["gL"]), EL = T(nn["EL"]), VT = T(nn["VT"]), ΔT = T(nn["dT"]),
-        Vr = T(nn["Vr"]), Vpeak = T(nn["Vpeak"]), a = T(nn["a"]), b = T(nn["b"]), τw = T(nn["tauw"]), tref = T(nn["tref"]))
-    prob = DewdropNetwork(m, N; input = T(sy["I_ext"]), tspan = tspan, arch = arch,
-        projection = Projection(CurrentSynapse(τ = T(sy["tau"])), conn))
+    m = AdEx(;
+        C = T(nn["C"]), gL = T(nn["gL"]), EL = T(nn["EL"]), VT = T(nn["VT"]), ΔT = T(nn["dT"]),
+        Vr = T(nn["Vr"]), Vpeak = T(nn["Vpeak"]), a = T(nn["a"]), b = T(nn["b"]), τw = T(nn["tauw"]), tref = T(nn["tref"])
+    )
+    prob = DewdropNetwork(
+        m, N; input = T(sy["I_ext"]), tspan = tspan, arch = arch,
+        projection = Projection(CurrentSynapse(τ = T(sy["tau"])), conn)
+    )
     return prob, Dewdrop.nedges(conn)
 end
 
@@ -97,8 +101,10 @@ end
 function run_correctness()
     N = Int(SPEC["problem"]["N_correctness"]); Tc = Float64(SPEC["problem"]["T_correctness"])
     prob, ne = build_prob(N, CPU(), Float64, Int, (0.0, Tc))
-    sol = solve(prob, FixedStep(Float64(SPEC["problem"]["dt"])); v0 = (-70.0, -50.0),
-        backend = Serial(), record = (spk = Spikes(),))
+    sol = solve(
+        prob, FixedStep(Float64(SPEC["problem"]["dt"])); v0 = (-70.0, -50.0),
+        backend = Serial(), record = (spk = Spikes(),)
+    )
     rate = sum(sol.spike_count) / (N * Tc / 1000.0)
     t, id = raster(sol; name = :spk)
     println("CORR $N $rate $(cv_isi(t, id, N)) $ne")
@@ -106,7 +112,9 @@ function run_correctness()
 end
 function cv_isi(times, ids, N)
     by = [Float64[] for _ in 1:N]
-    for (t, j) in zip(times, ids); push!(by[j], t); end
+    for (t, j) in zip(times, ids)
+        push!(by[j], t)
+    end
     cvs = Float64[]
     for ts in by
         length(ts) ≥ 3 && (isi = diff(sort(ts)); m = sum(isi) / length(isi); push!(cvs, sqrt(sum(x -> (x - m)^2, isi) / (length(isi) - 1)) / m))
@@ -116,7 +124,9 @@ end
 
 writecsv(path, header, rows) = open(path, "w") do io
     println(io, header)
-    for r in rows; println(io, join(r, ",")); end
+    for r in rows
+        println(io, join(r, ","))
+    end
 end
 
 # --- orchestrate: a subprocess per config, collect RESULT/CORR lines, write the standard CSVs ---
@@ -141,16 +151,20 @@ function main()
         end
     end
     writecsv(joinpath(OUT, "performance.csv"), "simulator,backend,device,N,wall_s,mem_mb", perf)
-    corr = try read(`julia +1.12 $proj $self correctness`, String) catch; "" end
+    corr = try
+        read(`julia +1.12 $proj $self correctness`, String)
+    catch
+        ""
+    end
     for line in split(corr, '\n')
         startswith(line, "CORR") || continue
         f = split(line)
         writecsv(joinpath(OUT, "values.csv"), "N,rate_hz,cv_isi,nedges", [[f[2], f[3], f[4], f[5]]])
         println("  [dewdrop/values] N=$(f[2]) rate=$(round(parse(Float64, f[3]); digits = 1))Hz CV=$(round(parse(Float64, f[4]); digits = 2))")
     end
-    println("wrote $OUT/{performance,values}.csv")
+    return println("wrote $OUT/{performance,values}.csv")
 end
 
 isempty(ARGS) ? main() :
-ARGS[1] == "correctness" ? run_correctness() :
-run_single(Symbol(ARGS[1]), Symbol(ARGS[2]), parse(Int, ARGS[3]))
+    ARGS[1] == "correctness" ? run_correctness() :
+    run_single(Symbol(ARGS[1]), Symbol(ARGS[2]), parse(Int, ARGS[3]))

@@ -52,11 +52,15 @@ homogeneous fast path).
 """
 function network(; arch::AbstractArchitecture = CPU(), tspan)
     T = float_type_of_tspan(tspan)
-    return NetworkBuilder(arch, (T(to_time(tspan[1])), T(to_time(tspan[2]))),
-        Symbol[], Any[], Int[], Any[], Any[], _ProjSpec[], nothing)
+    return NetworkBuilder(
+        arch, (T(to_time(tspan[1])), T(to_time(tspan[2]))),
+        Symbol[], Any[], Int[], Any[], Any[], _ProjSpec[], nothing
+    )
 end
-function network(model::AbstractNeuronModel, NE::Integer, NI::Integer;
-        arch::AbstractArchitecture = CPU(), tspan)
+function network(
+        model::AbstractNeuronModel, NE::Integer, NI::Integer;
+        arch::AbstractArchitecture = CPU(), tspan
+    )
     nb = network(; arch = arch, tspan = tspan)
     population!(nb, :E, model, NE)
     population!(nb, :I, model, NI)
@@ -75,8 +79,10 @@ Add a named population of `N` `model` neurons. Populations are concatenated in d
 `input` is a per-population constant current (scalar or length-`N` vector); `positions` (optional)
 are consumed by distance-kernel projections.
 """
-function population!(nb::NetworkBuilder, name::Symbol, model::AbstractNeuronModel, N::Integer;
-        input = 0.0, positions = nothing)
+function population!(
+        nb::NetworkBuilder, name::Symbol, model::AbstractNeuronModel, N::Integer;
+        input = 0.0, positions = nothing
+    )
     name === :all && error("population name :all is reserved (it always denotes the whole network)")
     name in nb.names && error("population :$name already defined")
     push!(nb.names, name)
@@ -113,8 +119,10 @@ the solve `dt`), or use `steps(n)` for an explicit step count. An optional `adju
 runs over the materialised connectivity (e.g. to rescale/correlate weights). (Named `project!` rather
 than `connect!` to avoid clashing with `Observables.connect!`, which `Makie` re-exports.)
 """
-function project!(nb::NetworkBuilder, pair::Pair{Symbol, Symbol}, synapse::AbstractSynapseModel;
-        plasticity = nothing, kw...)
+function project!(
+        nb::NetworkBuilder, pair::Pair{Symbol, Symbol}, synapse::AbstractSynapseModel;
+        plasticity = nothing, kw...
+    )
     push!(nb.projspecs, _ProjSpec(pair.first, pair.second, synapse, NamedTuple(kw), plasticity))
     return nb
 end
@@ -148,16 +156,24 @@ postsynaptic kinetics). Appended as a drive projection --- a [`PoissonSource`](@
 CSR --- materialised at [`build`](@ref) once `target`'s global range is known. `adjust` (e.g.
 [`correlate_weights`](@ref)) optionally rescales the external weights.
 """
-function drive!(nb::NetworkBuilder, target::Symbol, synapse::AbstractSynapseModel;
+function drive!(
+        nb::NetworkBuilder, target::Symbol, synapse::AbstractSynapseModel;
         rate, n_ext::Integer, p::Real, weight = 1.0, delay = 1.0, seed = 0x9e3779b97f4a7c15,
-        fire_seed = nothing, adjust = nothing, index_type::Type = Int)
+        fire_seed = nothing, adjust = nothing, index_type::Type = Int
+    )
     # `seed` keys the wiring (source→target connectome). `fire_seed` keys the per-step Poisson firing; default
     # `nothing` → reuse `seed` (so a lone drive is unchanged). Give two drives the SAME `fire_seed` with
     # DIFFERENT `seed` to make them a shared common-mode source (the same external spikes, independent fan-out).
-    push!(nb.projspecs, _ProjSpec(:__poisson__, target, synapse,
-        (; rate = rate, n_ext = Int(n_ext), p = p, weight = weight, delay = delay,
-            seed = seed % UInt64, fire_seed = fire_seed === nothing ? nothing : (fire_seed % UInt64),
-            adjust = adjust, index_type = index_type), nothing))
+    push!(
+        nb.projspecs, _ProjSpec(
+            :__poisson__, target, synapse,
+            (;
+                rate = rate, n_ext = Int(n_ext), p = p, weight = weight, delay = delay,
+                seed = seed % UInt64, fire_seed = fire_seed === nothing ? nothing : (fire_seed % UInt64),
+                adjust = adjust, index_type = index_type,
+            ), nothing
+        )
+    )
     return nb
 end
 export drive!
@@ -221,17 +237,23 @@ function _build_projection(spec::_ProjSpec, reg::NamedTuple, positions, arch, N:
     elseif haskey(kw, :kernel) && kw.kernel !== nothing
         positions === nothing && error("distance-kernel projection :$(spec.src)=>:$(spec.dst) needs population `positions`")
         if haskey(kw, :count) && kw.count !== nothing
-            distance_fixed_count(CPU(), positions; kernel = kw.kernel, count = kw.count, weight = kw.weight,
+            distance_fixed_count(
+                CPU(), positions; kernel = kw.kernel, count = kw.count, weight = kw.weight,
                 delay = kw.delay, seed = kw.seed, allow_self = get(kw, :allow_self, false),
-                period = get(kw, :period, nothing), sources = sources, targets = targets, index_type = it)
+                period = get(kw, :period, nothing), sources = sources, targets = targets, index_type = it
+            )
         else
-            distance_prob(CPU(), positions; kernel = kw.kernel, weight = kw.weight, delay = kw.delay,
+            distance_prob(
+                CPU(), positions; kernel = kw.kernel, weight = kw.weight, delay = kw.delay,
                 seed = kw.seed, allow_self = get(kw, :allow_self, false),
-                period = get(kw, :period, nothing), sources = sources, targets = targets, index_type = it)
+                period = get(kw, :period, nothing), sources = sources, targets = targets, index_type = it
+            )
         end
     else
-        fixed_prob(CPU(), N, N, kw.p; weight = kw.weight, delay = kw.delay, seed = kw.seed,
-            allow_self = get(kw, :allow_self, false), sources = sources, targets = targets, index_type = it)
+        fixed_prob(
+            CPU(), N, N, kw.p; weight = kw.weight, delay = kw.delay, seed = kw.seed,
+            allow_self = get(kw, :allow_self, false), sources = sources, targets = targets, index_type = it
+        )
     end
     # optional post-build hook: `project!(…; adjust = conn -> …)` runs over the materialised connectivity
     # (e.g. in-degree-scaled / spatially-correlated weights). A 2-arg adjuster `(conn, ctx)` additionally
@@ -250,8 +272,10 @@ function _build_drive(spec::_ProjSpec, reg::NamedTuple, arch, N::Int)
     rng = _subrange(reg, spec.dst)
     kw = spec.kw
     wseed = kw.seed ⊻ 0x243f6a8885a308d3     # wiring stream, independent of the per-step firing stream
-    extconn = fixed_prob(CPU(), kw.n_ext, N, kw.p; weight = kw.weight, delay = kw.delay,   # build host-side
-        seed = wseed, sources = 1:(kw.n_ext), targets = rng, index_type = get(kw, :index_type, Int))
+    extconn = fixed_prob(
+        CPU(), kw.n_ext, N, kw.p; weight = kw.weight, delay = kw.delay,   # build host-side
+        seed = wseed, sources = 1:(kw.n_ext), targets = rng, index_type = get(kw, :index_type, Int)
+    )
     kw.adjust === nothing || _apply_adjust(kw.adjust, extconn, 1:(kw.n_ext), rng)           # adjust host-side
     extconn = on_architecture(arch, extconn)                                                # then move onto the device
     fseed = kw.fire_seed === nothing ? kw.seed : kw.fire_seed                               # firing stream (shareable)
@@ -274,8 +298,10 @@ materialise the projections. `input` overrides the per-population inputs with a 
 # deferred spec; see NetworkSpec.jl). Concatenates the populations, merges models/inputs, materialises the
 # projections, and records the named-projection labels --- parameterised by `tspan` (so a frozen spec can
 # override the builder's default duration). The dynamic boundary (heterogeneous models/projspecs) is here.
-function _build_network(arch, tspan, names, models, sizes, inputs, positions_in, projspecs, drive;
-        input = nothing, schedule::Schedule = default_schedule())
+function _build_network(
+        arch, tspan, names, models, sizes, inputs, positions_in, projspecs, drive;
+        input = nothing, schedule::Schedule = default_schedule()
+    )
     isempty(names) && error("network has no populations --- add them with `population!`")
     N = sum(sizes)
     reg = merge((all = 1:N,), _registry(names, sizes))   # include the implicit :all so projections can target it
@@ -286,12 +312,16 @@ function _build_network(arch, tspan, names, models, sizes, inputs, positions_in,
     projs = Tuple(_build_projection(spec, reg, positions, arch, N) for spec in projspecs)
     labels = isempty(projspecs) ? nothing :
         Tuple((spec.src === :__poisson__ ? :poisson : spec.src) => spec.dst for spec in projspecs)
-    return DewdropNetwork(model, N; input = in_, tspan = tspan, arch = arch,
+    return DewdropNetwork(
+        model, N; input = in_, tspan = tspan, arch = arch,
         schedule = schedule, projections = projs, drive = drive, subpops = reg, positions = positions,
-        projlabels = labels)
+        projlabels = labels
+    )
 end
 
 build(nb::NetworkBuilder; input = nothing, schedule::Schedule = default_schedule()) =
-    _build_network(nb.arch, nb.tspan, nb.names, nb.models, nb.sizes, nb.inputs, nb.positions, nb.projspecs,
-        nb.drive; input = input, schedule = schedule)
+    _build_network(
+    nb.arch, nb.tspan, nb.names, nb.models, nb.sizes, nb.inputs, nb.positions, nb.projspecs,
+    nb.drive; input = input, schedule = schedule
+)
 export build

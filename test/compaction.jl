@@ -28,9 +28,11 @@ end
         N = 300
         ce = fixed_prob(ARCH, N, N, 0.1; weight = 0.5, delay = steps(5), seed = UInt64(1), sources = 1:(4N ÷ 5), allow_self = false)
         ci = fixed_prob(ARCH, N, N, 0.1; weight = -1.0, delay = steps(5), seed = UInt64(2), sources = (4N ÷ 5 + 1):N, allow_self = false)
-        prob = DewdropNetwork(_lif(), N; input = 0.0, tspan = (0.0, 80.0), arch = ARCH,
+        prob = DewdropNetwork(
+            _lif(), N; input = 0.0, tspan = (0.0, 80.0), arch = ARCH,
             projections = (Projection(DeltaSynapse(), ce), Projection(DeltaSynapse(), ci)),
-            drive = PoissonDrive(rate = 20.0, weight = 0.5, seed = UInt64(3)))
+            drive = PoissonDrive(rate = 20.0, weight = 0.5, seed = UInt64(3))
+        )
         ref = solve(prob, FixedStep(0.1); record = (spikes = Spikes(),), advise = false)
         comp = _jl_run(prob, FixedStep(0.1); scatter = :compacted, record = (spikes = Spikes(),))
         edge = _jl_run(prob, FixedStep(0.1); scatter = :edge, record = (spikes = Spikes(),))
@@ -50,10 +52,14 @@ end
         mc = LIF(; τ = 20.0, EL = -60.0, Vθ = -50.0, Vr = -60.0, R = 1.0, tref = 5.0)
         ce = fixed_prob(ARCH, N, N, 0.08; weight = 0.5, delay = steps(1), seed = UInt64(1), sources = 1:160)
         ci = fixed_prob(ARCH, N, N, 0.08; weight = 4.0, delay = steps(1), seed = UInt64(2), sources = 161:N)
-        prob = DewdropNetwork(mc, N; input = 0.0, tspan = (0.0, 100.0), arch = ARCH,
-            projections = (Projection(ConductanceSynapse(τ = 5.0, Erev = 0.0), ce),
-                Projection(ConductanceSynapse(τ = 10.0, Erev = -80.0), ci)),
-            drive = PoissonDrive(rate = 6.0, weight = 0.1, seed = UInt64(7)))
+        prob = DewdropNetwork(
+            mc, N; input = 0.0, tspan = (0.0, 100.0), arch = ARCH,
+            projections = (
+                Projection(ConductanceSynapse(τ = 5.0, Erev = 0.0), ce),
+                Projection(ConductanceSynapse(τ = 10.0, Erev = -80.0), ci),
+            ),
+            drive = PoissonDrive(rate = 6.0, weight = 0.1, seed = UInt64(7))
+        )
         ref = solve(prob, FixedStep(0.1); v0 = -60.0, advise = false).spike_count
         comp = _jl_run(prob, FixedStep(0.1); scatter = :compacted, v0 = -60.0)
         @test Array(comp.spike_count) == ref
@@ -62,9 +68,11 @@ end
     @testset "empty + single-edge connectivity compact cleanly" begin
         # zero spikes / zero edges must not crash the compactify or the 2-level launch
         N = 64
-        prob = DewdropNetwork(_lif(), N; input = 0.0, tspan = (0.0, 30.0), arch = ARCH,
+        prob = DewdropNetwork(
+            _lif(), N; input = 0.0, tspan = (0.0, 30.0), arch = ARCH,
             projection = Projection(DeltaSynapse(), fixed_prob(ARCH, N, N, 0.1; weight = 0.5, delay = steps(2), seed = UInt64(4))),
-            drive = PoissonDrive(rate = 5.0, weight = 0.5, seed = UInt64(9)))
+            drive = PoissonDrive(rate = 5.0, weight = 0.5, seed = UInt64(9))
+        )
         comp = _jl_run(prob, FixedStep(0.1); scatter = :compacted)
         ref = solve(prob, FixedStep(0.1); advise = false).spike_count
         @test Array(comp.spike_count) == ref
@@ -82,8 +90,10 @@ end
         # pass the target arch to the resolver separately. A UnitRange `src` (O(1) memory) stands in for an
         # arbitrarily large connectome, and CPU construction keeps this runnable without a functional CUDA.
         fakeconn(ne) = Dewdrop.SparseCSR([1, 1], 1:ne, Float64[], Int[], 1:1, 1, 1, 1)
-        prob(ne; plastic = nothing) = DewdropNetwork(_lif(), 1000; input = 0.0, tspan = (0.0, 1.0),
-            arch = Dewdrop.CPU(), projection = Projection(DeltaSynapse(), fakeconn(ne); plasticity = plastic))
+        prob(ne; plastic = nothing) = DewdropNetwork(
+            _lif(), 1000; input = 0.0, tspan = (0.0, 1.0),
+            arch = Dewdrop.CPU(), projection = Projection(DeltaSynapse(), fakeconn(ne); plasticity = plastic)
+        )
         unconn() = DewdropNetwork(_lif(), 1000; input = 0.0, tspan = (0.0, 1.0), arch = Dewdrop.CPU())
         res(s, arch, p) = Dewdrop._resolve_scatter(s, arch, p.projections)
         L2 = Dewdrop._l2_cache_bytes(Dewdrop.GPU())

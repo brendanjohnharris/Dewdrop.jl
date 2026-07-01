@@ -32,12 +32,16 @@ end
 
     ce = fixed_prob(arch, N, N, ε; weight = ge, delay = steps(D), seed = UInt64(1), sources = 1:NE, allow_self = false)
     ci = fixed_prob(arch, N, N, ε; weight = gi, delay = steps(D), seed = UInt64(2), sources = (NE + 1):N, allow_self = false)
-    projs = (Projection(ConductanceSynapse(τ = 5.0, Erev = 0.0), ce),
-        Projection(ConductanceSynapse(τ = 10.0, Erev = -80.0), ci))
+    projs = (
+        Projection(ConductanceSynapse(τ = 5.0, Erev = 0.0), ce),
+        Projection(ConductanceSynapse(τ = 10.0, Erev = -80.0), ci),
+    )
     drive = PoissonDrive(; rate = 6.0, weight = 0.1, seed = UInt64(7))
 
-    sol = solve(DewdropNetwork(m, N; input = 0.0, tspan = (0.0, 500.0), projections = projs, drive = drive),
-        FixedStep(0.1); record = (spikes = Spikes(),))
+    sol = solve(
+        DewdropNetwork(m, N; input = 0.0, tspan = (0.0, 500.0), projections = projs, drive = drive),
+        FixedStep(0.1); record = (spikes = Spikes(),)
+    )
     times, ids = raster(sol)
 
     rate = 1000 * sum(firing_rate(sol)) / N

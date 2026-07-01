@@ -56,8 +56,8 @@ function probe(P, tag; savefig = true)
     m = LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 10.0, R = 1.0, tref = 2.0)
     nb = network(m, NE, NI; arch = Dewdrop.CPU(), tspan = (0.0, T))
     project!(nb, :E, DeltaSynapse(); p = 0.1, weight = J, delay = steps(D), seed = seed)
-    project!(nb, :I, DeltaSynapse(); p = 0.1, weight = -g * J, delay = steps(D), seed = seed + 0x100)
-    drive!(nb, PoissonDrive(; rate = P["drive_rate"], weight = P["drive_weight"], seed = seed + 0x200))
+    project!(nb, :I, DeltaSynapse(); p = 0.1, weight = -g * J, delay = steps(D), seed = seed + 0x0100)
+    drive!(nb, PoissonDrive(; rate = P["drive_rate"], weight = P["drive_weight"], seed = seed + 0x0200))
 
     v0 = P["v0hi"] > P["v0lo"] ? (P["v0lo"], P["v0hi"]) : nothing
     t_run = @elapsed sol = solve(build(nb), FixedStep(dt); record = (spikes = Spikes(),), v0 = v0)
@@ -72,13 +72,15 @@ function probe(P, tag; savefig = true)
     sync = synchrony_index(A)
     frac_silent = count(==(0), sol.spike_count) / N
 
-    println("RESULT {",
+    println(
+        "RESULT {",
         "\"tag\":\"", tag, "\",\"rate\":", js(rate), ",\"cv\":", js(cv),
         ",\"fpeak\":", js(fpk), ",\"prominence\":", js(prom), ",\"sync\":", js(sync),
         ",\"frac_silent\":", js(frac_silent), ",\"runtime_s\":", js(t_run),
         ",\"NE\":", NE, ",\"NI\":", NI, ",\"g\":", js(g), ",\"J\":", js(J),
         ",\"drive_rate\":", js(P["drive_rate"]), ",\"drive_weight\":", js(P["drive_weight"]),
-        ",\"D\":", D, ",\"T\":", js(T), "}")
+        ",\"D\":", D, ",\"T\":", js(T), "}"
+    )
 
     savefig || return nothing
     win = (max(t0, T - 300.0), T)
@@ -86,8 +88,10 @@ function probe(P, tag; savefig = true)
     cwin, Awin = pop_activity(times, win[1], win[2], Δ)
     Arate = Awin .* (1000.0 / N / Δ)
     fig = Figure(; size = (700, 720))
-    ax1 = Axis(fig[1, 1]; ylabel = "Neuron",
-        title = "Brunel $(tag): $(round(rate; digits = 1)) Hz, CV $(round(cv; digits = 2)), f $(round(fpk; digits = 0)) Hz (prom $(round(prom; digits = 1)))")
+    ax1 = Axis(
+        fig[1, 1]; ylabel = "Neuron",
+        title = "Brunel $(tag): $(round(rate; digits = 1)) Hz, CV $(round(cv; digits = 2)), f $(round(fpk; digits = 0)) Hz (prom $(round(prom; digits = 1)))"
+    )
     scatter!(ax1, times[keep], ids[keep]; markersize = 2)
     ax2 = Axis(fig[2, 1]; xlabel = "Time (ms)", ylabel = "Pop. rate (Hz)")
     lines!(ax2, cwin, Arate)

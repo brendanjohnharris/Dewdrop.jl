@@ -35,8 +35,10 @@ end
     end
 
     @testset "AdEx leaf renders all 11 params with units" begin
-        m = AdEx(; C = 281.0, gL = 30.0, EL = -70.6, VT = -50.4, ΔT = 2.0, Vr = -70.6,
-            Vpeak = -40.0, a = 4.0, b = 80.5, τw = 144.0, tref = 0.0)
+        m = AdEx(;
+            C = 281.0, gL = 30.0, EL = -70.6, VT = -50.4, ΔT = 2.0, Vr = -70.6,
+            Vpeak = -40.0, a = 4.0, b = 80.5, τw = 144.0, tref = 0.0
+        )
         s = rich(m)
         @test startswith(s, "AdEx{Float64}")
         for f in ("C", "gL", "EL", "VT", "ΔT", "Vr", "Vpeak", "a", "b", "τw", "tref")
@@ -75,9 +77,15 @@ end
     end
 
     @testset "MultiModel: one tree row per group with its range + model" begin
-        mm = MultiModel([AdEx(; C = 281.0, gL = 30.0, EL = -70.6, VT = -50.4, ΔT = 2.0, Vr = -70.6,
-                Vpeak = -40.0, a = 4.0, b = 80.5, τw = 144.0, tref = 0.0),
-            LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 1.0, tref = 2.0)], [8, 2])
+        mm = MultiModel(
+            [
+                AdEx(;
+                    C = 281.0, gL = 30.0, EL = -70.6, VT = -50.4, ΔT = 2.0, Vr = -70.6,
+                    Vpeak = -40.0, a = 4.0, b = 80.5, τw = 144.0, tref = 0.0
+                ),
+                LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 1.0, tref = 2.0),
+            ], [8, 2]
+        )
         s = rich(mm)
         @test occursin("MultiModel", s)
         @test occursin("2 groups", s) && occursin("N=10", s)
@@ -100,8 +108,10 @@ end
     end
 
     @testset "connectivity + projection summaries" begin
-        conn = fixed_prob(Dewdrop.CPU(), 10, 10, 1.0; weight = 0.5, delay = steps(5), seed = UInt64(1),
-            sources = 1:6, targets = 7:10)
+        conn = fixed_prob(
+            Dewdrop.CPU(), 10, 10, 1.0; weight = 0.5, delay = steps(5), seed = UInt64(1),
+            sources = 1:6, targets = 7:10
+        )
         cs = rich(conn)
         @test occursin("SparseCSR", cs)
         @test occursin("edges", cs)
@@ -117,10 +127,14 @@ _lif5() = LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 100.0, tref 
 
 @testset "show (network, builder, solution)" begin
     @testset "DewdropNetwork: populations + projections tree, recovered labels" begin
-        conn = fixed_prob(Dewdrop.CPU(), 5, 5, 1.0; weight = 0.5, delay = steps(1), seed = UInt64(1),
-            sources = 1:3, targets = 4:5)
-        net = DewdropNetwork(_lif5(), 5; input = 0.0, tspan = (0.0, 10.0),
-            projections = (Projection(DeltaSynapse(), conn),), subpops = (E = 1:3, I = 4:5))
+        conn = fixed_prob(
+            Dewdrop.CPU(), 5, 5, 1.0; weight = 0.5, delay = steps(1), seed = UInt64(1),
+            sources = 1:3, targets = 4:5
+        )
+        net = DewdropNetwork(
+            _lif5(), 5; input = 0.0, tspan = (0.0, 10.0),
+            projections = (Projection(DeltaSynapse(), conn),), subpops = (E = 1:3, I = 4:5)
+        )
         s = rich(net)
         @test startswith(s, "DewdropNetwork")
         @test occursin("N=5", s)

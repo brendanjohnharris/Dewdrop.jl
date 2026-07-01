@@ -95,20 +95,22 @@ macro neuron(name, block)
     sa, st, sr, sf = _subparams(asym, params), _subparams(thr, params),
         _subparams(rst, params), _subparams(refr, params)
 
-    return esc(quote
-        struct $name{T} <: Dewdrop.AbstractNeuronModel
-            $(fields...)
+    return esc(
+        quote
+            struct $name{T} <: Dewdrop.AbstractNeuronModel
+                $(fields...)
+            end
+            $name(; $(kwargs...)) = $name(Base.promote($(params...))...)
+            Dewdrop.statevars(::Type{<:$name}) = $statetuple
+            Dewdrop.float_type(::$name{T}) where {T} = T
+            @inline Dewdrop.asymptote(m::$name, I) = $sa
+            @inline Dewdrop.membrane_step(m::$name, V, gtot, itot, dt) =
+                Dewdrop._linear_membrane_step(Dewdrop.asymptote(m, itot), m.$Rparam, m.$τparam, V, gtot, dt)
+            @inline Dewdrop.threshold(m::$name, V) = $st
+            @inline Dewdrop.reset_value(m::$name) = $sr
+            @inline Dewdrop.refractory(m::$name) = $sf
+            $name
         end
-        $name(; $(kwargs...)) = $name(Base.promote($(params...))...)
-        Dewdrop.statevars(::Type{<:$name}) = $statetuple
-        Dewdrop.float_type(::$name{T}) where {T} = T
-        @inline Dewdrop.asymptote(m::$name, I) = $sa
-        @inline Dewdrop.membrane_step(m::$name, V, gtot, itot, dt) =
-            Dewdrop._linear_membrane_step(Dewdrop.asymptote(m, itot), m.$Rparam, m.$τparam, V, gtot, dt)
-        @inline Dewdrop.threshold(m::$name, V) = $st
-        @inline Dewdrop.reset_value(m::$name) = $sr
-        @inline Dewdrop.refractory(m::$name) = $sf
-        $name
-    end)
+    )
 end
 export @neuron

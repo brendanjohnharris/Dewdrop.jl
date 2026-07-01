@@ -67,11 +67,13 @@ end
     m = LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 10.0, R = 1.0, tref = 2.0)
     N = 100
     prob = DewdropNetwork(m, N; subpops = (E = 1:50, I = 51:100), input = 30.0, tspan = (0.0, 60.0))
-    sol = solve(prob, FixedStep(0.1); record = (
-        vfull = Trace(:V),
-        vI = Trace(:V; of = :I),
-        sE = Spikes(of = :E),
-    ))
+    sol = solve(
+        prob, FixedStep(0.1); record = (
+            vfull = Trace(:V),
+            vI = Trace(:V; of = :I),
+            sE = Spikes(of = :E),
+        )
+    )
     @test size(sol.record.vI.data, 1) == 50             # only the I subpop's rows
     @test sol.record.vI.data == sol.record.vfull.data[51:100, :]   # same values, restricted
     @test size(sol.record.sE.data, 1) == 50             # E subpop spike raster

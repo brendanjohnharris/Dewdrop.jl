@@ -45,17 +45,21 @@ _firing_fraction(sol) =
 function _advise_static(prob::DewdropNetwork)
     _is_gpu(prob) || return nothing
     if float_type(prob.model) === Float64
-        _emit(:float32,
+        _emit(
+            :float32,
             "running Float64 on the GPU. Float32 state (e.g. `LIF(; τ = 20.0f0, …)` with " *
-            "`FixedStep(0.1f0)` and Float32 weights) runs ~1.7-2.4× faster combined with Int32 " *
-            "indices, and matches Float64 dynamics to within ~5%.")
+                "`FixedStep(0.1f0)` and Float32 weights) runs ~1.7-2.4× faster combined with Int32 " *
+                "indices, and matches Float64 dynamics to within ~5%."
+        )
     end
     for conn in _conns(prob)
         if eltype(conn.post) === Int && 0 < nedges(conn) < typemax(Int32)
-            _emit(:int32,
+            _emit(
+                :int32,
                 "connectivity uses 64-bit indices (nedges = $(nedges(conn))). Pass " *
-                "`index_type = Int32` to `fixed_prob`/`SparseCSR` to halve the scatter's index " *
-                "bandwidth (~1.5-2×, bit-identical).")
+                    "`index_type = Int32` to `fixed_prob`/`SparseCSR` to halve the scatter's index " *
+                    "bandwidth (~1.5-2×, bit-identical)."
+            )
             break
         end
     end
@@ -73,22 +77,28 @@ function _advise_runtime(prob::DewdropNetwork, frac::Real, scatter::Symbol = :au
     # only suggest compaction if this run's ACTUAL scatter is the edge scatter (not when it already resolved
     # to compacted --- whether via `:auto` past the L2-spill crossover, or an explicit `scatter = :compacted`).
     if ne > 1_000_000 && frac < 0.02 && _resolve_scatter(scatter, prob.arch, prob.projections) === :edge
-        _emit(:compaction,
+        _emit(
+            :compaction,
             "sparse firing ($(pct)% of neurons per step) over a large network " *
-            "(nedges = $ne): the scatter wastes most of its threads on silent synapses. The " *
-            "compacted scatter (`solve(...; scatter = :compacted)`) processes only active " *
-            "synapses --- measured up to ~30× faster in this regime.")
+                "(nedges = $ne): the scatter wastes most of its threads on silent synapses. The " *
+                "compacted scatter (`solve(...; scatter = :compacted)`) processes only active " *
+                "synapses --- measured up to ~30× faster in this regime."
+        )
     elseif md > 500 && frac > 0.05
-        _emit(:gather,
+        _emit(
+            :gather,
             "dense connectivity (mean degree ≈ $(round(Int, md))) at high firing ($(pct)%/step): " *
-            "the atomic edge-parallel scatter is contention-bound here. A gather/SpMV backend " *
-            "(atomic-free, target-parallel) is the structural fit --- not yet implemented.")
+                "the atomic edge-parallel scatter is contention-bound here. A gather/SpMV backend " *
+                "(atomic-free, target-parallel) is the structural fit --- not yet implemented."
+        )
     elseif prob.n < 5000 && frac < 0.01
-        _emit(:graphs,
+        _emit(
+            :graphs,
             "a small, quiet network: the step is launch-bound, not compute-bound, so scatter " *
-            "tuning will not help. CUDA-graph capture of the per-step launch sequence is the " *
-            "lever here (not yet implemented); for parameter sweeps, batching (`solve(...; " *
-            "batch = B)`) amortises launches across instances.")
+                "tuning will not help. CUDA-graph capture of the per-step launch sequence is the " *
+                "lever here (not yet implemented); for parameter sweeps, batching (`solve(...; " *
+                "batch = B)`) amortises launches across instances."
+        )
     end
     return nothing
 end
@@ -102,12 +112,14 @@ end
 # they could benefit (large N, multicore, canonical schedule).
 function _advise_cpu(prob::DewdropNetwork)
     if Threads.nthreads() > 1 && prob.n ≥ 10_000 && prob.schedule == default_schedule()
-        _emit(:turbo_cpu,
+        _emit(
+            :turbo_cpu,
             "a large CPU network (N = $(prob.n)): the default `Auto` backend already runs the threaded " *
-            "`Fused` step here (a single fused pass, ~2× the per-phase `Serial` baseline, bit-identical). " *
-            "For close to compiled-C++ throughput, `using LoopVectorization` unlocks `backend = Turbo()` " *
-            "--- a SIMD-vectorised step for models with a Turbo specialization (AdEx, LIF, …; see the " *
-            "backend docs). Turbo is spike-identical but not bit-identical (SIMD `exp`).")
+                "`Fused` step here (a single fused pass, ~2× the per-phase `Serial` baseline, bit-identical). " *
+                "For close to compiled-C++ throughput, `using LoopVectorization` unlocks `backend = Turbo()` " *
+                "--- a SIMD-vectorised step for models with a Turbo specialization (AdEx, LIF, …; see the " *
+                "backend docs). Turbo is spike-identical but not bit-identical (SIMD `exp`)."
+        )
     end
     return nothing
 end

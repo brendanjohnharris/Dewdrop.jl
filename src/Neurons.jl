@@ -50,8 +50,11 @@ struct LIF{T} <: AbstractNeuronModel
     R::T
     tref::T
 end
-LIF(; τ, EL, Vθ, Vr, R, tref) = LIF(promote(
-    to_time(τ), to_voltage(EL), to_voltage(Vθ), to_voltage(Vr), to_resistance(R), to_time(tref))...)
+LIF(; τ, EL, Vθ, Vr, R, tref) = LIF(
+    promote(
+        to_time(τ), to_voltage(EL), to_voltage(Vθ), to_voltage(Vr), to_resistance(R), to_time(tref)
+    )...
+)
 export LIF
 
 statevars(::Type{<:LIF}) = (:V, :refrac)

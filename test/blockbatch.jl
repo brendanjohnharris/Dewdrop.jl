@@ -9,10 +9,12 @@ using Test
 # With NO drive the members are deterministic, so every mode must give the SAME per-member result.
 
 _lif() = LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 100.0, tref = 2.0)
-_mk(I; seed = 1) = (nb = network(; tspan = (0.0, 50.0));
+_mk(I; seed = 1) = (
+    nb = network(; tspan = (0.0, 50.0));
     population!(nb, :E, _lif(), 6; input = I);
     project!(nb, :E => :E, DeltaSynapse(); p = 0.5, weight = 0.3, delay = steps(2), seed = UInt64(seed), allow_self = true);
-    build(nb))
+    build(nb)
+)
 _solve(net) = solve(net, FixedStep(0.1); progress = false)
 
 @testset "batching" begin
@@ -30,13 +32,19 @@ _solve(net) = solve(net, FixedStep(0.1); progress = false)
         # Distinct-topology members that DEPEND on an external Poisson drive (input = 0): block-stacking must
         # offset every member's `PoissonSource` into its own block. Reusing member 1's drive (the bug) leaves
         # members 2..B undriven → silent. Each member's batched result must equal its standalone, bit-for-bit.
-        mkd(; cseed, dseed) = (nb = network(; tspan = (0.0, 50.0));
+        mkd(; cseed, dseed) = (
+            nb = network(; tspan = (0.0, 50.0));
             population!(nb, :E, _lif(), 8; input = 0.0);
-            project!(nb, :E => :E, DeltaSynapse(); p = 0.3, weight = 0.5, delay = steps(2),
-                seed = UInt64(cseed), allow_self = false);
-            drive!(nb, :E, DeltaSynapse(); rate = 150.0, n_ext = 10, p = 0.5, weight = 1.2,
-                delay = steps(1), seed = UInt64(dseed));
-            build(nb))
+            project!(
+                nb, :E => :E, DeltaSynapse(); p = 0.3, weight = 0.5, delay = steps(2),
+                seed = UInt64(cseed), allow_self = false
+            );
+            drive!(
+                nb, :E, DeltaSynapse(); rate = 150.0, n_ext = 10, p = 0.5, weight = 1.2,
+                delay = steps(1), seed = UInt64(dseed)
+            );
+            build(nb)
+        )
         n1, n2 = mkd(cseed = 1, dseed = 101), mkd(cseed = 2, dseed = 202)
         s1, s2 = _solve(n1).spike_count, _solve(n2).spike_count
         @test sum(s2) > 0                       # member 2 is active standalone (its drive sustains it)
@@ -92,11 +100,15 @@ _solve(net) = solve(net, FixedStep(0.1); progress = false)
         @test seq[1] == par[1] && seq[2] == par[2]      # threaded == sequential (bit-identical, Serial ≡ Fused)
 
         # different model TYPES sharing the connectome → auto :multirun (fused needs a uniform type)
-        adex = AdEx(; C = 281.0, gL = 30.0, EL = -70.0, VT = -50.0, ΔT = 2.0, Vr = -60.0, Vpeak = -40.0,
-            a = 4.0, b = 80.0, τw = 144.0, tref = 2.0)
-        adexnet = DewdropNetwork(adex, base.n; input = base.input, tspan = base.tspan, arch = base.arch,
+        adex = AdEx(;
+            C = 281.0, gL = 30.0, EL = -70.0, VT = -50.0, ΔT = 2.0, Vr = -60.0, Vpeak = -40.0,
+            a = 4.0, b = 80.0, τw = 144.0, tref = 2.0
+        )
+        adexnet = DewdropNetwork(
+            adex, base.n; input = base.input, tspan = base.tspan, arch = base.arch,
             schedule = base.schedule, projections = base.projections, drive = base.drive, noise = base.noise,
-            subpops = base.subpops, positions = base.positions, projlabels = base.projlabels)
+            subpops = base.subpops, positions = base.positions, projlabels = base.projlabels
+        )
         mixed = solve(batch([base, adexnet]), FixedStep(0.1); progress = false)
         @test mixed.mode == :multirun && nmembers(mixed) == 2
     end

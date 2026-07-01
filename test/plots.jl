@@ -29,8 +29,10 @@ isdir(PLOTDIR) || mkpath(PLOTDIR)
         ts = collect(0:200) .* dt
 
         fig = OnePanel()
-        ax = Axis(fig[1, 1]; xlabel = "Time (ms)", ylabel = "Synaptic current (a.u.)",
-            title = "Current synapse PSC")
+        ax = Axis(
+            fig[1, 1]; xlabel = "Time (ms)", ylabel = "Synaptic current (a.u.)",
+            title = "Current synapse PSC"
+        )
         lines!(ax, ts, trace)
         addlabels!(fig)
         path = joinpath(PLOTDIR, "m1b_synapse_psc.png")

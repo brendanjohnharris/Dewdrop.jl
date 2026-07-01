@@ -68,9 +68,11 @@ function _apply_sweep(net::DewdropNetwork, nt::NamedTuple)
 end
 # a fresh network with `input` swapped but the SAME model + projections objects (`===`), so a pure-input
 # sweep is detected as a shared-connectivity batch and runs as the fused Mode-0 ensemble.
-_swap_input(net::DewdropNetwork, input) = DewdropNetwork(net.model, net.n; input = input, tspan = net.tspan,
+_swap_input(net::DewdropNetwork, input) = DewdropNetwork(
+    net.model, net.n; input = input, tspan = net.tspan,
     arch = net.arch, schedule = net.schedule, projections = net.projections, drive = net.drive,
-    noise = net.noise, subpops = net.subpops, positions = net.positions, projlabels = net.projlabels)
+    noise = net.noise, subpops = net.subpops, positions = net.positions, projlabels = net.projlabels
+)
 
 function batch(base; cartesian::Bool = false, kw...)
     isempty(kw) && error("batch(base; param = values, …) needs at least one swept parameter")
@@ -166,8 +168,10 @@ function _block_diagonal(nets::AbstractVector{<:DewdropNetwork})
     end
     projs = Tuple(projlist)
     subpops = NamedTuple(Symbol("member", b) => (offs[b] + 1):(offs[b] + Ns[b]) for b in 1:B)
-    return DewdropNetwork(model, Ntot; input = input, tspan = first(nets).tspan, arch = arch,
-        projections = projs, drive = first(nets).drive, subpops = subpops)
+    return DewdropNetwork(
+        model, Ntot; input = input, tspan = first(nets).tspan, arch = arch,
+        projections = projs, drive = first(nets).drive, subpops = subpops
+    )
 end
 
 # --- the unified batch result -------------------------------------------------------------------------
@@ -221,11 +225,15 @@ end
 # (outer over members; each inner solve forced single-threaded via `Serial` --- bit-identical --- to avoid
 # nesting the per-neuron threading). `threads = :auto` threads when there are ≥2 members and >1 thread.
 function _solve_multirun(nets, alg; threads = :auto, kwargs...)
-    rprojs = Tuple(Projection(p.synapse, _resolve_delays(p.conn, alg.dt); plasticity = p.plasticity)
-                   for p in first(nets).projections)          # resolve delays once → ONE shared connectome
-    _net(net) = DewdropNetwork(net.model, net.n; input = net.input, tspan = net.tspan, arch = net.arch,
+    rprojs = Tuple(
+        Projection(p.synapse, _resolve_delays(p.conn, alg.dt); plasticity = p.plasticity)
+            for p in first(nets).projections
+    )          # resolve delays once → ONE shared connectome
+    _net(net) = DewdropNetwork(
+        net.model, net.n; input = net.input, tspan = net.tspan, arch = net.arch,
         schedule = net.schedule, projections = rprojs, drive = net.drive, noise = net.noise,
-        subpops = net.subpops, positions = net.positions, projlabels = net.projlabels)
+        subpops = net.subpops, positions = net.positions, projlabels = net.projlabels
+    )
     dothread = threads === true || (threads === :auto && length(nets) ≥ 2 && Threads.nthreads() > 1)
     sols = Vector{Any}(undef, length(nets))
     if dothread
@@ -257,9 +265,11 @@ function _solve_fused(nets, alg; kwargs...)
     end
     bmodel = isempty(overrides) ? base.model : BatchedModel(base.model, NamedTuple(overrides))
     inputmat = reduce(hcat, [_expand_input(net.input, net.n) for net in nets])
-    prob = DewdropNetwork(bmodel, base.n; input = base.input, tspan = base.tspan, arch = base.arch,
+    prob = DewdropNetwork(
+        bmodel, base.n; input = base.input, tspan = base.tspan, arch = base.arch,
         schedule = base.schedule, projections = base.projections, drive = base.drive, noise = base.noise,
-        subpops = base.subpops, positions = base.positions, projlabels = base.projlabels)
+        subpops = base.subpops, positions = base.positions, projlabels = base.projlabels
+    )
     bsol = solve(prob, alg; batch = B, input = inputmat, kwargs...)
     return BatchSolution([collect(view(bsol.spike_count, :, b)) for b in 1:B], bsol.nsteps * bsol.dt, :fused, bsol)
 end
@@ -269,8 +279,10 @@ function _solve_block(nets, alg; kwargs...)
     sol = solve(_block_diagonal(nets), alg; kwargs...)
     Ns = [net.n for net in nets]
     offs = [0; cumsum(Ns)[1:(end - 1)]]   # exclusive prefix sum of member sizes (member b's base offset)
-    return BatchSolution([sol.spike_count[(offs[b] + 1):(offs[b] + Ns[b])] for b in eachindex(nets)],
-        duration(sol), :block, sol)
+    return BatchSolution(
+        [sol.spike_count[(offs[b] + 1):(offs[b] + Ns[b])] for b in eachindex(nets)],
+        duration(sol), :block, sol
+    )
 end
 
 """
@@ -281,8 +293,10 @@ model + connectome (vary input) → the fused `:shared` ensemble; shared connect
 `:multirun` (B solves sharing the connectome array); distinct topology → `:block` (block-diagonal). Force a
 mode with `mode = :shared` / `:multirun` / `:block`.
 """
-function CommonSolve.solve(b::NetworkBatch, alg::FixedStep; tspan = nothing, mode::Symbol = :auto,
-        threads = :auto, kwargs...)
+function CommonSolve.solve(
+        b::NetworkBatch, alg::FixedStep; tspan = nothing, mode::Symbol = :auto,
+        threads = :auto, kwargs...
+    )
     nets = DewdropNetwork[_materialize_member(m, alg, tspan) for m in b.members]
     m = mode === :auto ? _choose_mode(nets) : mode
     m === :shared && return _solve_shared(nets, alg; kwargs...)

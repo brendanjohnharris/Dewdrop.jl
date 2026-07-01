@@ -35,8 +35,10 @@ end
 end
 
 @testset "block E/I heterogeneity: only E adapts (E/I pattern)" begin
-    base = AdaptLIF(; τ = 20.0, EL = -65.0, Vθ = -50.0, Vr = -65.0, R = 1.0, tref = 2.0,
-        a = 0.0, b = 0.0, τw = 150.0)
+    base = AdaptLIF(;
+        τ = 20.0, EL = -65.0, Vθ = -50.0, Vr = -65.0, R = 1.0, tref = 2.0,
+        a = 0.0, b = 0.0, τw = 150.0
+    )
     N = 100
     b = [i <= N ÷ 2 ? 1.0 : 0.0 for i in 1:N]                     # E (1:50) adapt, I (51:100) do not
     hm = Heterogeneous(base; b = b)

@@ -33,7 +33,9 @@ end
     w = 2.0
     for s in (sf, se)                                 # one delivered spike, then let the PSG rise
         s.g_rise[1] += w; s.g_decay[1] += w
-        for _ in 1:10; s.g_rise[1] *= s.decay_r; s.g_decay[1] *= s.decay_d; end
+        for _ in 1:10
+            s.g_rise[1] *= s.decay_r; s.g_decay[1] *= s.decay_d
+        end
     end
     g = sf.a * (sf.g_decay[1] - sf.g_rise[1])
     @test g > 0 && g ≈ se.a * (se.g_decay[1] - se.g_rise[1])   # identical conductance from identical kinetics
@@ -47,14 +49,24 @@ end
 
 @testset "frozen dual-exp ≠ exact: different post dynamics" begin
     m = LIF(; τ = 20.0, EL = -65.0, Vθ = -50.0, Vr = -65.0, R = 1.0, tref = 2.0)
-    mkedge() = fixed_prob(Dewdrop.CPU(), 2, 2, 1.0; weight = 5.0, delay = steps(1), seed = UInt64(1),
-        sources = 1:1, targets = 2:2)
-    solf = solve(DewdropNetwork(m, 2; input = [20.0, 0.0], tspan = (0.0, 300.0),
-            projection = Projection(FrozenDualExpSynapse(; τr = 1.0, τd = 5.0, Erev = 0.0), mkedge())),
-        FixedStep(dt); record = (V = Trace(:V),))
-    sole = solve(DewdropNetwork(m, 2; input = [20.0, 0.0], tspan = (0.0, 300.0),
-            projection = Projection(DualExpSynapse(; τr = 1.0, τd = 5.0, Erev = 0.0), mkedge())),
-        FixedStep(dt); record = (V = Trace(:V),))
+    mkedge() = fixed_prob(
+        Dewdrop.CPU(), 2, 2, 1.0; weight = 5.0, delay = steps(1), seed = UInt64(1),
+        sources = 1:1, targets = 2:2
+    )
+    solf = solve(
+        DewdropNetwork(
+            m, 2; input = [20.0, 0.0], tspan = (0.0, 300.0),
+            projection = Projection(FrozenDualExpSynapse(; τr = 1.0, τd = 5.0, Erev = 0.0), mkedge())
+        ),
+        FixedStep(dt); record = (V = Trace(:V),)
+    )
+    sole = solve(
+        DewdropNetwork(
+            m, 2; input = [20.0, 0.0], tspan = (0.0, 300.0),
+            projection = Projection(DualExpSynapse(; τr = 1.0, τd = 5.0, Erev = 0.0), mkedge())
+        ),
+        FixedStep(dt); record = (V = Trace(:V),)
+    )
     @test mean(solf.record.V.data[2, :]) > m.EL      # frozen excitation (Erev=0) still depolarises post
     @test mean(sole.record.V.data[2, :]) > m.EL
     @test !(solf.record.V.data[2, :] ≈ sole.record.V.data[2, :])   # but the two schemes diverge
@@ -63,8 +75,10 @@ end
 @testset "frozen dual-exp: CPU broadcast ≡ JLArray fused" begin
     m = LIF(; τ = 20.0, EL = -65.0, Vθ = -50.0, Vr = -65.0, R = 1.0, tref = 2.0)
     conn = fixed_prob(Dewdrop.CPU(), 64, 64, 0.1; weight = 1.5, delay = steps(2), seed = UInt64(3))
-    prob = DewdropNetwork(m, 64; input = 18.0, tspan = (0.0, 200.0),
-        projection = Projection(FrozenDualExpSynapse(; τr = 1.0, τd = 6.0, Erev = 0.0), conn))
+    prob = DewdropNetwork(
+        m, 64; input = 18.0, tspan = (0.0, 200.0),
+        projection = Projection(FrozenDualExpSynapse(; τr = 1.0, τd = 6.0, Erev = 0.0), conn)
+    )
     cpu = init(prob, FixedStep(dt))
     gpu = adapt(JLArray, init(prob, FixedStep(dt)))
     for _ in 1:2000
@@ -78,8 +92,10 @@ end
 @testset "frozen dual-exp: batched ≡ scalar reference" begin
     m = LIF(; τ = 20.0, EL = -65.0, Vθ = -50.0, Vr = -65.0, R = 1.0, tref = 2.0)
     conn = fixed_prob(Dewdrop.CPU(), 80, 80, 0.1; weight = 1.5, delay = steps(2), seed = UInt64(5))
-    prob = DewdropNetwork(m, 80; input = 18.0, tspan = (0.0, 150.0),
-        projection = Projection(FrozenDualExpSynapse(; τr = 1.0, τd = 5.0, Erev = 0.0), conn))
+    prob = DewdropNetwork(
+        m, 80; input = 18.0, tspan = (0.0, 150.0),
+        projection = Projection(FrozenDualExpSynapse(; τr = 1.0, τd = 5.0, Erev = 0.0), conn)
+    )
     B = 4
     bsol = solve(prob, FixedStep(dt); batch = B)             # no drive/noise → columns identical
     ssol = solve(prob, FixedStep(dt))

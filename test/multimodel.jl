@@ -11,8 +11,10 @@ using JLArrays
 # is monomorphic, so it specialises exactly like the single-model kernel. One group spanning the
 # whole population reduces to the single-model run.
 
-mE() = AdEx(; C = 200.0, gL = 10.0, EL = -70.0, VT = -50.0, ΔT = 2.0, Vr = -58.0, Vpeak = 0.0,
-    a = 2.0, b = 60.0, τw = 120.0, tref = 2.0)
+mE() = AdEx(;
+    C = 200.0, gL = 10.0, EL = -70.0, VT = -50.0, ΔT = 2.0, Vr = -58.0, Vpeak = 0.0,
+    a = 2.0, b = 60.0, τw = 120.0, tref = 2.0
+)
 mI() = LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 0.1, tref = 2.0)
 
 @testset "MultiModel: union SoA + metadata" begin

@@ -51,8 +51,10 @@ network description that materialises into a `DewdropNetwork` at solve time (car
 as the default, overridable per solve). Retains the projection recipes, so it renders as a full tree and is
 a clean source for future batching. A snapshot --- later mutation of `nb` does not affect the frozen spec.
 """
-freeze(nb::NetworkBuilder) = FrozenBuilder(nb.arch, nb.tspan, copy(nb.names), copy(nb.models),
-    copy(nb.sizes), copy(nb.inputs), copy(nb.positions), copy(nb.projspecs), nb.drive)
+freeze(nb::NetworkBuilder) = FrozenBuilder(
+    nb.arch, nb.tspan, copy(nb.names), copy(nb.models),
+    copy(nb.sizes), copy(nb.inputs), copy(nb.positions), copy(nb.projspecs), nb.drive
+)
 export freeze
 
 # --- thunk spec: a captured constructor + its kwargs ----------------------------------------------
@@ -86,13 +88,18 @@ function materialize end
 export materialize
 
 materialize(spec::FrozenBuilder, alg::FixedStep; tspan = nothing) =
-    _build_network(spec.arch, tspan === nothing ? spec.tspan : tspan, spec.names, spec.models, spec.sizes,
-        spec.inputs, spec.positions, spec.projspecs, spec.drive)
+    _build_network(
+    spec.arch, tspan === nothing ? spec.tspan : tspan, spec.names, spec.models, spec.sizes,
+    spec.inputs, spec.positions, spec.projspecs, spec.drive
+)
 
 function materialize(spec::DeferredNetwork, alg::FixedStep; tspan = nothing)
-    tspan === nothing && throw(ArgumentError(
-        "solving a deferred spec needs `tspan` (it captures no default); call " *
-        "`solve(spec, FixedStep(dt); tspan = (t0, t1))`"))
+    tspan === nothing && throw(
+        ArgumentError(
+            "solving a deferred spec needs `tspan` (it captures no default); call " *
+                "`solve(spec, FixedStep(dt); tspan = (t0, t1))`"
+        )
+    )
     return spec.build(; spec.kw..., tspan = tspan, dt = alg.dt)
 end
 
@@ -102,8 +109,10 @@ CommonSolve.init(spec::AbstractNetworkSpec, alg::FixedStep; tspan = nothing, kwa
 
 # reuse the advisor-wrapped network `solve` (Advisor.jl) on the materialised network. The connectome build
 # (`materialize`) can be slow and runs BEFORE the solve loop's progress bar, so announce it (see below).
-function CommonSolve.solve(spec::AbstractNetworkSpec, alg::FixedStep; tspan = nothing, advise::Bool = true,
-        progress = :auto, kwargs...)
+function CommonSolve.solve(
+        spec::AbstractNetworkSpec, alg::FixedStep; tspan = nothing, advise::Bool = true,
+        progress = :auto, kwargs...
+    )
     net = _materialize_announced(spec, alg; tspan = tspan, progress = progress)
     return solve(net, alg; advise = advise, progress = progress, kwargs...)
 end

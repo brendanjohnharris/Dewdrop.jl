@@ -174,7 +174,7 @@ end
 @inline function _launch_grouped!(backend, models::Tuple, ranges::Tuple, integ, st)
     r = first(ranges)
     _launch_group!(backend, first(models), integ, st, first(r) - 1, length(r))
-    _launch_grouped!(backend, Base.tail(models), Base.tail(ranges), integ, st)
+    return _launch_grouped!(backend, Base.tail(models), Base.tail(ranges), integ, st)
 end
 @inline function _launch_group!(backend, m, integ, st, offset::Int, len::Int)
     _fused_kernel!(backend)(
@@ -222,7 +222,7 @@ end
 @inline function _tight_grouped!(models::Tuple, ranges::Tuple, integ, st)
     r = first(ranges)
     _tight_range!(first(models), integ, st, first(r), last(r))
-    _tight_grouped!(Base.tail(models), Base.tail(ranges), integ, st)
+    return _tight_grouped!(Base.tail(models), Base.tail(ranges), integ, st)
 end
 # Thread the dense loop only with enough work per thread to amortise the per-step `@threads` dispatch
 # (~tens of µs/step of task spawn+sync). Below this, the dispatch dominates and a small net runs FASTER

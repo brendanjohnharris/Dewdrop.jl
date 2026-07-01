@@ -34,7 +34,7 @@ using Test
     @test sol.nsteps == round(Int, tend / dt)
     @test all(iszero, sol.spike_count)
     Vfinal = V∞ + (-70.0 - V∞) * exp(-tend / m.τ)
-    @test all(v -> isapprox(v, Vfinal; atol = 1e-6), sol.state.state.V)
+    @test all(v -> isapprox(v, Vfinal; atol = 1.0e-6), sol.state.state.V)
 
     # the schedule is the public, inspectable guarantee the engine executes
     @test Dewdrop.phases(prob.schedule) == (:deliver, :integrate, :threshold, :reset, :propagate, :record)

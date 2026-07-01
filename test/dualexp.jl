@@ -49,10 +49,14 @@ end
     # neuron 1 driven supra-threshold (fires); neuron 2 receives an excitatory (Erev=0) dual-exp
     # conductance via a single 1→2 edge and depolarises above its rest.
     m = LIF(; τ = 20.0, EL = -65.0, Vθ = -50.0, Vr = -65.0, R = 1.0, tref = 2.0)
-    edge = fixed_prob(Dewdrop.CPU(), 2, 2, 1.0; weight = 5.0, delay = steps(1), seed = UInt64(1),
-        sources = 1:1, targets = 2:2)
-    prob = DewdropNetwork(m, 2; input = [20.0, 0.0], tspan = (0.0, 300.0),
-        projection = Projection(DualExpSynapse(; τr = 1.0, τd = 5.0, Erev = 0.0), edge))
+    edge = fixed_prob(
+        Dewdrop.CPU(), 2, 2, 1.0; weight = 5.0, delay = steps(1), seed = UInt64(1),
+        sources = 1:1, targets = 2:2
+    )
+    prob = DewdropNetwork(
+        m, 2; input = [20.0, 0.0], tspan = (0.0, 300.0),
+        projection = Projection(DualExpSynapse(; τr = 1.0, τd = 5.0, Erev = 0.0), edge)
+    )
     # record the dual-exp conductance from the SYNAPSE STATE (`g_decay`, the raw conductance) and V.
     sol = solve(prob, FixedStep(dt); record = (V = Trace(:V), g = Trace(:g_decay; projection = 1)))
     @test sum(sol.spike_count) > 0                  # neuron 1 fires, drives neuron 2
@@ -71,8 +75,10 @@ end
 @testset "dual-exp COBA: CPU broadcast ≡ JLArray fused" begin
     m = LIF(; τ = 20.0, EL = -65.0, Vθ = -50.0, Vr = -65.0, R = 1.0, tref = 2.0)
     conn = fixed_prob(Dewdrop.CPU(), 64, 64, 0.1; weight = 1.5, delay = steps(2), seed = UInt64(3))
-    prob = DewdropNetwork(m, 64; input = 18.0, tspan = (0.0, 200.0),
-        projection = Projection(DualExpSynapse(; τr = 1.0, τd = 6.0, Erev = 0.0), conn))
+    prob = DewdropNetwork(
+        m, 64; input = 18.0, tspan = (0.0, 200.0),
+        projection = Projection(DualExpSynapse(; τr = 1.0, τd = 6.0, Erev = 0.0), conn)
+    )
     cpu = init(prob, FixedStep(dt))
     gpu = adapt(JLArray, init(prob, FixedStep(dt)))
     for _ in 1:2000
@@ -86,8 +92,10 @@ end
 @testset "dual-exp COBA: batched ≡ scalar reference" begin
     m = LIF(; τ = 20.0, EL = -65.0, Vθ = -50.0, Vr = -65.0, R = 1.0, tref = 2.0)
     conn = fixed_prob(Dewdrop.CPU(), 80, 80, 0.1; weight = 1.5, delay = steps(2), seed = UInt64(5))
-    prob = DewdropNetwork(m, 80; input = 18.0, tspan = (0.0, 150.0),
-        projection = Projection(DualExpSynapse(; τr = 1.0, τd = 5.0, Erev = 0.0), conn))
+    prob = DewdropNetwork(
+        m, 80; input = 18.0, tspan = (0.0, 150.0),
+        projection = Projection(DualExpSynapse(; τr = 1.0, τd = 5.0, Erev = 0.0), conn)
+    )
     B = 4
     bsol = solve(prob, FixedStep(dt); batch = B)             # no drive/noise → columns identical
     ssol = solve(prob, FixedStep(dt))

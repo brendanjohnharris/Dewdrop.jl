@@ -15,9 +15,15 @@ _lif() = LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 100.0, tref =
     N = 4
     # one virtual Poisson source wired to ONLY neuron 1; a big delta kick → each delivered event = a spike
     extconn = Dewdrop.SparseCSR(arch, [(1, 1, 25.0, 1)]; npre = 1, npost = N)
-    mknet(rate; seed = UInt64(1)) = DewdropNetwork(_lif(), N; input = 0.0, tspan = (0.0, 200.0), arch = arch,
-        projections = (Projection(PoissonSource(DeltaSynapse(), extconn; rate = rate, seed = seed),
-                                  Dewdrop._empty_csr(arch, N)),))
+    mknet(rate; seed = UInt64(1)) = DewdropNetwork(
+        _lif(), N; input = 0.0, tspan = (0.0, 200.0), arch = arch,
+        projections = (
+            Projection(
+                PoissonSource(DeltaSynapse(), extconn; rate = rate, seed = seed),
+                Dewdrop._empty_csr(arch, N)
+            ),
+        )
+    )
     sol = solve(mknet(300.0), FixedStep(0.1); progress = false)
     @test sol.spike_count[1] > 0                       # neuron 1 is driven → fires
     @test all(==(0), sol.spike_count[2:4])             # neurons 2-4 unwired → silent (ATTACHMENT)
@@ -29,10 +35,18 @@ end
 @testset "PoissonSource is generic over the inner synapse family" begin
     arch = Dewdrop.CPU()
     extconn = Dewdrop.SparseCSR(arch, [(1, 1, 30.0, 1)]; npre = 1, npost = 1)   # 1 source → 1 neuron, strong
-    fires(syn) = solve(DewdropNetwork(_lif(), 1; input = 0.0, tspan = (0.0, 200.0), arch = arch,
-        projections = (Projection(PoissonSource(syn, extconn; rate = 200.0, seed = UInt64(1)),
-                                  Dewdrop._empty_csr(arch, 1)),)),
-        FixedStep(0.1); progress = false).spike_count[1]
+    fires(syn) = solve(
+        DewdropNetwork(
+            _lif(), 1; input = 0.0, tspan = (0.0, 200.0), arch = arch,
+            projections = (
+                Projection(
+                    PoissonSource(syn, extconn; rate = 200.0, seed = UInt64(1)),
+                    Dewdrop._empty_csr(arch, 1)
+                ),
+            )
+        ),
+        FixedStep(0.1); progress = false
+    ).spike_count[1]
     @test fires(DeltaSynapse()) > 0                                     # delivered to V directly
     @test fires(CurrentSynapse(; τ = 5.0)) > 0                          # CUBA current
     @test fires(ConductanceSynapse(; τ = 5.0, Erev = 0.0)) > 0          # COBA conductance (Erev)
@@ -43,8 +57,10 @@ end
     nb = network(; tspan = (0.0, 200.0))
     population!(nb, :E, _lif(), 5; input = 0.0)
     population!(nb, :I, _lif(), 5; input = 0.0)
-    drive!(nb, :E, ConductanceSynapse(; τ = 5.0, Erev = 0.0);
-        rate = 300.0, n_ext = 20, p = 0.6, weight = 2.0, delay = 1.0, seed = UInt64(1))
+    drive!(
+        nb, :E, ConductanceSynapse(; τ = 5.0, Erev = 0.0);
+        rate = 300.0, n_ext = 20, p = 0.6, weight = 2.0, delay = 1.0, seed = UInt64(1)
+    )
     net = build(nb)
     @test length(net.projections) == 1                       # one drive projection appended
     sol = solve(net, FixedStep(0.1); progress = false)

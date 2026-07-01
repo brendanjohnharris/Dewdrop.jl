@@ -134,10 +134,12 @@ _normalize_projections(::Nothing, ps) = Tuple(ps)
 # any user-named subpops layered on top (a user-supplied `:all` wins). Pure host-side metadata.
 _normalize_subpops(::Nothing, N::Int) = (all = 1:N,)
 _normalize_subpops(nt::NamedTuple, N::Int) = merge((all = 1:N,), nt)
-function DewdropNetwork(model::AbstractNeuronModel, N::Integer; input, tspan,
+function DewdropNetwork(
+        model::AbstractNeuronModel, N::Integer; input, tspan,
         arch::AbstractArchitecture = CPU(), schedule::Schedule = default_schedule(),
         projection = nothing, projections = nothing, drive = nothing, noise = nothing,
-        subpops = nothing, positions = nothing, projlabels = nothing)
+        subpops = nothing, positions = nothing, projlabels = nothing
+    )
     T = float_type(model)
     in_ = on_architecture(arch, to_current(input))     # per-unit input arrays move to the architecture
     projs = _normalize_projections(projection, projections)
@@ -173,8 +175,8 @@ mutable struct DewdropIntegrator{M, ST, In, A, S, T, B, C, SY, GT, MO, DR, CO, N
     t::T
     const tend::T
     const nsteps::Int            # fixed total step count: the loop bound (== monitor buffer width). A
-                                 # FixedStep run iterates this integer, never an accumulated-float time
-                                 # comparison (which drifts under a Float32 `t` and truncates the run).
+    # FixedStep run iterates this integer, never an accumulated-float time
+    # comparison (which drifts under a Float32 `t` and truncates the run).
     const arch::A
     const schedule::S
     const spiked::B
@@ -210,11 +212,13 @@ problem's architecture, resolve the scatter mode and backend, and wire the `reco
 Advance it with [`step!`](@ref) or run to completion with [`solve!`](@ref); [`solve`](@ref) is
 `solve! ∘ init`. Keywords include `record`, `v0`, `batch`, `backend` and `scatter`.
 """
-function CommonSolve.init(prob::DewdropNetwork, alg::FixedStep;
-        record = nothing, v0 = nothing, v0_seed::Unsigned = 0x5eed00d % UInt64,
+function CommonSolve.init(
+        prob::DewdropNetwork, alg::FixedStep;
+        record = nothing, v0 = nothing, v0_seed::Unsigned = 0x05eed00d % UInt64,
         batch = nothing, input = nothing, streams = nothing, sync_every::Integer = _DEFAULT_WINDOW,
         scatter::Symbol = :auto, backend::SimBackend = Auto(), step::Union{Nothing, Symbol} = nothing,
-        progress = :auto, syn_overrides = nothing, model_overrides = nothing)
+        progress = :auto, syn_overrides = nothing, model_overrides = nothing
+    )
     # `scatter = :auto` (default): on the GPU pick edge-parallel vs compacted from the connectome size
     # (the L2-spill crossover, see `_resolve_scatter`); CPU / plastic projections → always `:edge`.
     # Resolved BEFORE the batched dispatch so both the scalar and batched paths receive a concrete mode.
@@ -222,8 +226,10 @@ function CommonSolve.init(prob::DewdropNetwork, alg::FixedStep;
     # `batch = B` routes to the ensemble (tensor) batched path (src/Batch.jl); the scalar B=1
     # path below is unchanged (batch defaults to `nothing`), so existing runs are bit-identical.
     # (the batched path is always the fused megakernel, so the backend does not apply there.)
-    batch === nothing || return _batched_init(prob, alg, Int(batch);
-        record, v0, v0_seed, input, streams, sync_every, scatter, progress, syn_overrides, model_overrides)
+    batch === nothing || return _batched_init(
+        prob, alg, Int(batch);
+        record, v0, v0_seed, input, streams, sync_every, scatter, progress, syn_overrides, model_overrides
+    )
     # the execution backend (Auto/Serial/Fused/Turbo; see Backends.jl). `Auto` resolves to the best
     # available for this problem; the deprecated `step::Symbol` (:auto/:fused/…) maps onto a backend.
     bk = _resolve_backend(step === nothing ? backend : _step_to_backend(step), prob)
@@ -308,10 +314,13 @@ end
 _check_drive(::Nothing, dt) = nothing
 function _check_drive(d::PoissonDrive, dt)
     λ = d.rate * dt
-    λ < 700 || throw(ArgumentError(
-        "PoissonDrive mean events/step λ = rate*dt = $λ is too large (≥ 700): the Poisson " *
-        "sampler underflows and saturates. `rate` is in events per unit time matching `dt` " *
-        "(here dt = $dt); did you pass a per-second rate with a per-millisecond dt (1000× too big)?"))
+    λ < 700 || throw(
+        ArgumentError(
+            "PoissonDrive mean events/step λ = rate*dt = $λ is too large (≥ 700): the Poisson " *
+                "sampler underflows and saturates. `rate` is in events per unit time matching `dt` " *
+                "(here dt = $dt); did you pass a per-second rate with a per-millisecond dt (1000× too big)?"
+        )
+    )
     return nothing
 end
 
@@ -350,8 +359,10 @@ function _make_dualexp_state(State, arch, syn, conn, ::Type{T}, N, dt) where {T}
     g_rise = fill!(allocate(arch, T, N), zero(T))
     g_decay = fill!(allocate(arch, T, N), zero(T))
     buf = DelayBuffer(arch, T, N, maximum(conn.delay; init = 0))   # empty projection → L=1 no-op
-    return State(g_rise, g_decay, buf, conn,
-        T(exp(-dt / syn.τr)), T(exp(-dt / syn.τd)), T(_dualexp_a(syn.τr, syn.τd)), T(syn.Erev))
+    return State(
+        g_rise, g_decay, buf, conn,
+        T(exp(-dt / syn.τr)), T(exp(-dt / syn.τd)), T(_dualexp_a(syn.τr, syn.τd)), T(syn.Erev)
+    )
 end
 _make_synstate(arch, syn::DualExpSynapse, conn, ::Type{T}, N, dt) where {T} =
     _make_dualexp_state(DualExpCOBAState, arch, syn, conn, T, N, dt)
@@ -597,8 +608,11 @@ export firing_rate
 
 # resolve a subpop name to its range, with a clear error listing the available names.
 function _subrange(subpops::NamedTuple, name::Symbol)
-    haskey(subpops, name) || throw(ArgumentError(
-        "unknown subpopulation :$name --- available: $(join(keys(subpops), ", "))"))
+    haskey(subpops, name) || throw(
+        ArgumentError(
+            "unknown subpopulation :$name --- available: $(join(keys(subpops), ", "))"
+        )
+    )
     return subpops[name]
 end
 
@@ -627,8 +641,10 @@ function Base.getindex(sol::DewdropSolution, name::Symbol)
     r = _subrange(sol.subpops, name)
     # a StructArray view is a StructArray of column views (no copy); re-wrap as a Population so the
     # sub-solution presents the same `state.state.<col>` shape as the parent.
-    return SubSolution(Population(view(sol.state.state, r)), view(sol.spike_count, r), sol, name, r,
-        _subpositions(sol.positions, r))
+    return SubSolution(
+        Population(view(sol.state.state, r)), view(sol.spike_count, r), sol, name, r,
+        _subpositions(sol.positions, r)
+    )
 end
 
 duration(ss::SubSolution) = duration(ss.parent)

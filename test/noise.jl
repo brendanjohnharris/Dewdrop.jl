@@ -12,7 +12,7 @@ using JLArrays
 _meanvar(x) = (μ = sum(x) / length(x); (μ, sum(y -> (y - μ)^2, x) / length(x)))
 
 @testset "draw_normal (counter-based Gaussian)" begin
-    seed = UInt64(0xC0FFEE)
+    seed = UInt64(0x00C0FFEE)
     # purity: identical inputs -> identical draw
     @test Dewdrop.draw_normal(Float64, seed, 5, 3) === Dewdrop.draw_normal(Float64, seed, 5, 3)
     # distinct step/entity -> (almost surely) distinct draw
@@ -57,8 +57,10 @@ end
     analytic = σ^2 * τ / 2
     vars = Float64[]
     for dt in (0.1, 0.05)
-        prob = DewdropNetwork(m, 200; input = 0.0, tspan = (0.0, 2000.0),
-            noise = WhiteNoise(σ; seed = UInt64(42)))
+        prob = DewdropNetwork(
+            m, 200; input = 0.0, tspan = (0.0, 2000.0),
+            noise = WhiteNoise(σ; seed = UInt64(42))
+        )
         sol = solve(prob, FixedStep(dt); record = (V = Trace(:V),))
         V = sol.record.V.data
         burn = size(V, 2) ÷ 5
@@ -84,10 +86,22 @@ end
     # subthreshold mean (V∞ = 17 < Vθ = 20) -> silent without noise, fires with it; more σ -> more
     sub = 17.0
     r0 = sum(solve(DewdropNetwork(m, 200; input = sub, tspan = (0.0, tend)), FixedStep(dt)).spike_count)
-    r1 = sum(solve(DewdropNetwork(m, 200; input = sub, tspan = (0.0, tend),
-        noise = WhiteNoise(1.0; seed = UInt64(1))), FixedStep(dt)).spike_count)
-    r2 = sum(solve(DewdropNetwork(m, 200; input = sub, tspan = (0.0, tend),
-        noise = WhiteNoise(2.0; seed = UInt64(1))), FixedStep(dt)).spike_count)
+    r1 = sum(
+        solve(
+            DewdropNetwork(
+                m, 200; input = sub, tspan = (0.0, tend),
+                noise = WhiteNoise(1.0; seed = UInt64(1))
+            ), FixedStep(dt)
+        ).spike_count
+    )
+    r2 = sum(
+        solve(
+            DewdropNetwork(
+                m, 200; input = sub, tspan = (0.0, tend),
+                noise = WhiteNoise(2.0; seed = UInt64(1))
+            ), FixedStep(dt)
+        ).spike_count
+    )
     @test r0 == 0
     @test r2 > r1 > 0
 end
@@ -95,8 +109,10 @@ end
 @testset "WhiteNoise: CPU broadcast ≡ JLArray fused; allocation-free" begin
     m = LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 10.0, R = 1.0, tref = 2.0)
     dt = 0.1
-    prob = DewdropNetwork(m, 64; input = 16.0, tspan = (0.0, 50.0),
-        noise = WhiteNoise(2.0; seed = UInt64(99)))
+    prob = DewdropNetwork(
+        m, 64; input = 16.0, tspan = (0.0, 50.0),
+        noise = WhiteNoise(2.0; seed = UInt64(99))
+    )
     # draw_normal is a pure function and JLArrays is CPU-backed, so the fused megakernel matches
     # the broadcast path (same libm exp/log/cos/sqrt) --- bit-identical spikes, V within ULPs.
     cpu = init(prob, FixedStep(dt))
@@ -116,8 +132,10 @@ end
 @testset "WhiteNoise: batched ≡ scalar reference (per-column streams)" begin
     m = LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 10.0, R = 1.0, tref = 2.0)
     dt = 0.1
-    prob = DewdropNetwork(m, 32; input = 16.0, tspan = (0.0, 80.0),
-        noise = WhiteNoise(2.0; seed = UInt64(5)))
+    prob = DewdropNetwork(
+        m, 32; input = 16.0, tspan = (0.0, 80.0),
+        noise = WhiteNoise(2.0; seed = UInt64(5))
+    )
     B = 4
     # streams all-zero -> every column shares the scalar (batch-0) noise draw, so each column
     # equals the scalar solve (the bit-exact ensemble reference, as for the Poisson drive).

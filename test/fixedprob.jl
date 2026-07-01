@@ -75,8 +75,10 @@ using Test
     @test all(in(101:200), posts)                   # every edge lands in the target range
 
     # `sources` and `targets` compose: a block E(1:100) → I(101:200) projection
-    ei_proj = Dewdrop.fixed_prob(arch, 200, 200, 0.2; weight = 1.0f0, delay = steps(1), seed = seed,
-        sources = 1:100, targets = 101:200)
+    ei_proj = Dewdrop.fixed_prob(
+        arch, 200, 200, 0.2; weight = 1.0f0, delay = steps(1), seed = seed,
+        sources = 1:100, targets = 101:200
+    )
     pairs = Tuple{Int, Int}[]
     for pre in 1:200
         Dewdrop.for_each_post(ei_proj, pre) do post, w, d

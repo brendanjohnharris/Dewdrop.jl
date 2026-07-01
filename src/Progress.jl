@@ -97,14 +97,14 @@ end
 @inline _progress_finish!(::Nothing) = nothing
 function _progress_finish!(rep::ProgressReporter)
     rep.shown || return nothing                          # an auto-suppressed trivial run stayed silent
-    @logmsg _PROGRESS_LEVEL rep.name progress=1.0 _id=rep.id   # fraction ≥ 1 ⇒ completed (closes the bar)
+    @logmsg _PROGRESS_LEVEL rep.name progress = 1.0 _id = rep.id   # fraction ≥ 1 ⇒ completed (closes the bar)
     return nothing
 end
 
 @inline function _progress_emit!(rep::ProgressReporter, n::Integer)
     rep.shown = true
     frac = clamp(n / rep.total, 0.0, 1.0)
-    @logmsg _PROGRESS_LEVEL rep.name progress=frac _id=rep.id
+    @logmsg _PROGRESS_LEVEL rep.name progress = frac _id = rep.id
     return nothing
 end
 

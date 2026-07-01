@@ -14,11 +14,13 @@ _mknet(; n, I, tspan, dt) = DewdropNetwork(_lif(), n; input = I, tspan = tspan)
 
 @testset "network spec (deferred materialisation)" begin
     @testset "freeze(builder): materialise ≡ build; solve ≡ built solve (bit-identical)" begin
-        mk() = (nb = network(; tspan = (0.0, 50.0));
+        mk() = (
+            nb = network(; tspan = (0.0, 50.0));
             population!(nb, :E, _lif(), 6; input = 0.3);
             population!(nb, :I, _lif(), 4; input = 0.3);
             project!(nb, :E => :I, DeltaSynapse(); p = 1.0, weight = 0.5, delay = steps(1), seed = UInt64(1));
-            nb)
+            nb
+        )
         spec = freeze(mk())
         @test spec isa Dewdrop.AbstractNetworkSpec
 
@@ -88,9 +90,11 @@ _mknet(; n, I, tspan, dt) = DewdropNetwork(_lif(), n; input = I, tspan = tspan)
 end
 
 @testset "delay in physical time (ms), resolved at the solve dt" begin
-    mk(d) = (nb = network(; tspan = (0.0, 20.0)); population!(nb, :E, _lif(), 4; input = 0.3);
+    mk(d) = (
+        nb = network(; tspan = (0.0, 20.0)); population!(nb, :E, _lif(), 4; input = 0.3);
         project!(nb, :E => :E, DeltaSynapse(); p = 1.0, weight = 0.0, delay = d, seed = UInt64(1), allow_self = true);
-        build(nb))
+        build(nb)
+    )
     maxd(net, dt) = maximum(init(net, FixedStep(dt)).syns[1].conn.delay)
 
     @testset "plain number = ms → step count tracks dt, physical delay fixed" begin
@@ -111,8 +115,10 @@ end
     nb = network(; tspan = (0.0, 20.0))
     population!(nb, :E, _lif(), 5; input = 0.3)
     population!(nb, :I, _lif(), 5; input = 0.3)
-    project!(nb, :E => :I, DeltaSynapse(); p = 1.0, weight = 0.5, delay = steps(1), seed = UInt64(1),
-        adjust = c -> (c.weight .*= 2))                # doubles the built weights in place
+    project!(
+        nb, :E => :I, DeltaSynapse(); p = 1.0, weight = 0.5, delay = steps(1), seed = UInt64(1),
+        adjust = c -> (c.weight .*= 2)
+    )                # doubles the built weights in place
     net = build(nb)
     @test all(==(1.0), net.projections[1].conn.weight)   # 0.5 doubled post-build
 
@@ -121,8 +127,10 @@ end
     nb2 = network(; tspan = (0.0, 20.0))
     population!(nb2, :E, _lif(), 8; input = 0.3)
     population!(nb2, :I, _lif(), 8; input = 0.3)
-    project!(nb2, :E => :I, DeltaSynapse(); p = 0.6, weight = 1.0, delay = steps(1), seed = UInt64(2),
-        adjust = correlate_weights(0.1; seed = UInt64(7)))
+    project!(
+        nb2, :E => :I, DeltaSynapse(); p = 0.6, weight = 1.0, delay = steps(1), seed = UInt64(2),
+        adjust = correlate_weights(0.1; seed = UInt64(7))
+    )
     w = build(nb2).projections[1].conn.weight
     @test !all(==(1.0), w) && all(>(0.0), w)             # in-degree-normalised, not the raw 1.0
     @test build(nb2).projections[1].conn.weight == w     # deterministic / reproducible
