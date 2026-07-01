@@ -4,7 +4,7 @@ layout: home
 
 hero:
   name: "Dewdrop.jl"
-  tagline: "A CPU/GPU spiking neural network simulator for Julia"
+  tagline: "A CPU/GPU spiking circuit simulator for Julia"
   actions:
     - theme: brand
       text: Get started
@@ -18,7 +18,7 @@ hero:
 
 features:
   - icon: 🌱
-    title: One source, CPU & GPU
+    title: Swap between CPU and GPU
     details: KernelAbstractions kernels run on the CPU and CUDA; the architecture chooses where, the backend chooses how.
   - icon: 🚀
     title: Pluggable execution backends

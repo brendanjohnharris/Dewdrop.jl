@@ -25,7 +25,7 @@ using Dewdrop
 using CUDA          # loads the GPU extension (array_type(GPU()) -> CuArray)
 ```
 
-## One source, CPU or GPU
+## Swap between CPU and GPU
 
 Build the connectome on the target architecture (the connectome is stored where it is built), set
 `arch = GPU()` on the network, and solve exactly as on the CPU:
