@@ -77,27 +77,29 @@ end
     end
 
     @testset "scatter = :auto crossover resolution" begin
-        # `_resolve_scatter` only reads each connectome's edge count + index eltype, so a UnitRange `post`
-        # (O(1) memory) stands in for an arbitrarily large connectome --- no million-edge build needed.
+        # `_resolve_scatter` only reads each connectome's edge count + index eltype and the `arch` (for the
+        # GPU check + L2 threshold) --- never device memory --- so we build the networks on the host CPU and
+        # pass the target arch to the resolver separately. A UnitRange `src` (O(1) memory) stands in for an
+        # arbitrarily large connectome, and CPU construction keeps this runnable without a functional CUDA.
         fakeconn(ne) = Dewdrop.SparseCSR([1, 1], 1:ne, Float64[], Int[], 1:1, 1, 1, 1)
-        prob(arch, ne; plastic = nothing) = DewdropNetwork(_lif(), 1000; input = 0.0, tspan = (0.0, 1.0),
-            arch = arch, projection = Projection(DeltaSynapse(), fakeconn(ne); plasticity = plastic))
-        unconn(arch) = DewdropNetwork(_lif(), 1000; input = 0.0, tspan = (0.0, 1.0), arch = arch)
+        prob(ne; plastic = nothing) = DewdropNetwork(_lif(), 1000; input = 0.0, tspan = (0.0, 1.0),
+            arch = Dewdrop.CPU(), projection = Projection(DeltaSynapse(), fakeconn(ne); plasticity = plastic))
+        unconn() = DewdropNetwork(_lif(), 1000; input = 0.0, tspan = (0.0, 1.0), arch = Dewdrop.CPU())
         res(s, arch, p) = Dewdrop._resolve_scatter(s, arch, p.projections)
         L2 = Dewdrop._l2_cache_bytes(Dewdrop.GPU())
         small = 100_000                                       # ~0.8 MB index footprint → L2-resident
         large = (L2 ÷ 2) ÷ sizeof(Int) + 1_000_000            # comfortably past the L2/2 crossover
         # GPU: small → :edge (the no-sync edge launch wins), large → :compacted (the edge rescan spills L2)
-        @test res(:auto, Dewdrop.GPU(), prob(Dewdrop.GPU(), small)) === :edge
-        @test res(:auto, Dewdrop.GPU(), prob(Dewdrop.GPU(), large)) === :compacted
+        @test res(:auto, Dewdrop.GPU(), prob(small)) === :edge
+        @test res(:auto, Dewdrop.GPU(), prob(large)) === :compacted
         # CPU never compacts (its scatter already walks only spiking rows); unconnected → :edge
-        @test res(:auto, Dewdrop.CPU(), prob(Dewdrop.CPU(), large)) === :edge
-        @test res(:auto, Dewdrop.GPU(), unconn(Dewdrop.GPU())) === :edge
+        @test res(:auto, Dewdrop.CPU(), prob(large)) === :edge
+        @test res(:auto, Dewdrop.GPU(), unconn()) === :edge
         # plastic projections must stay on :edge (compacted can't drive STDP potentiation)
         stdp = Dewdrop.STDP(; Aplus = 0.01, Aminus = 0.012, τplus = 20.0, τminus = 20.0)
-        @test res(:auto, Dewdrop.GPU(), prob(Dewdrop.GPU(), large; plastic = stdp)) === :edge
+        @test res(:auto, Dewdrop.GPU(), prob(large; plastic = stdp)) === :edge
         # an explicit mode always passes through unchanged
-        @test res(:edge, Dewdrop.GPU(), prob(Dewdrop.GPU(), large)) === :edge
-        @test res(:compacted, Dewdrop.GPU(), prob(Dewdrop.GPU(), small)) === :compacted
+        @test res(:edge, Dewdrop.GPU(), prob(large)) === :edge
+        @test res(:compacted, Dewdrop.GPU(), prob(small)) === :compacted
     end
 end
