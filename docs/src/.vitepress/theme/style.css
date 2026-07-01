@@ -1,6 +1,12 @@
 /* Semantic Fathom → VitePress mapping. `palette.css` is regenerated each build by docs/make.jl from
    Fathom.jl's colors.yaml, so updating the Fathom palette updates the docs theme automatically. */
 @import './palette.css';
+@import url('https://fonts.googleapis.com/css2?family=Source+Sans+3:ital,wght@0,200..900;1,200..900&display=swap');
+
+/* Fonts */
+:root {
+    --vp-font-family-base: "Source Sans 3", ui-sans-serif, system-ui, sans-serif;
+}
 
 /* Light theme */
 :root {
