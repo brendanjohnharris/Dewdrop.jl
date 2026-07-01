@@ -7,9 +7,9 @@ CurrentModule = Dewdrop
 Dewdrop runs the same simulation on the CPU or the GPU by flipping one flag. Two orthogonal choices
 are involved, and only one of them changes:
 
-- **Architecture** ([`CPU`](@ref) / [`GPU`](@ref), set on the [`DewdropNetwork`](@ref)) --- *where*
+- **Architecture** ([`CPU`](@ref) / [`GPU`](@ref), set on the [`DewdropNetwork`](@ref)): *where*
   the state lives. `arch = GPU()` allocates every state array on the device.
-- **Execution backend** (`backend = …`, passed to [`solve`](@ref)) --- *how* each step runs. On the
+- **Execution backend** (`backend = …`, passed to [`solve`](@ref)): *how* each step runs. On the
   GPU the backend is **always the fused megakernel**; the default [`Auto`](@ref) resolves to
   [`Fused`](@ref) there (see [choosing a backend](backends.md)), and the per-phase CPU paths do not
   apply.
@@ -66,13 +66,13 @@ On the GPU the synaptic scatter has two strategies, chosen by `scatter` on [`sol
 sol = solve(prob, FixedStep(0.1); scatter = :auto)    # :auto (default) | :edge | :compacted
 ```
 
-- **`:edge`** --- one thread per synapse; saturates the device at small/medium sizes but reads an
+- **`:edge`**: one thread per synapse; saturates the device at small/medium sizes but reads an
   index per edge every step, so a very large connectome that spills the L2 cache degrades.
-- **`:compacted`** --- processes only the out-edges of neurons that actually spiked (work ∝ spikes),
+- **`:compacted`**: processes only the out-edges of neurons that actually spiked (work ∝ spikes),
   at the cost of one device→host sync per step; far faster on large, sparsely-firing networks.
 
 `:auto` switches from `:edge` to `:compacted` once the connectome's index footprint exceeds about half
-the device L2 (the measured crossover). Plastic (STDP) projections always use `:edge` --- the
+the device L2 (the measured crossover). Plastic (STDP) projections always use `:edge`: the
 compacted scatter cannot drive the postsynaptic-potentiation branch. The full discussion, including
 the L2-spill crossover and the CPU case, is in [choosing a backend](backends.md).
 
@@ -92,7 +92,7 @@ where the state lives. Each member draws an independent, bit-reproducible stream
 ## Float32 on the GPU
 
 The device prefers single precision. Write the model in convenient `Float64` literals and switch the
-whole network --- model, connectome, weights --- in one call with [`convertfloat`](@ref), and use
+whole network (model, connectome, weights) in one call with [`convertfloat`](@ref), and use
 `Int32` connectome indices to halve the scatter's index bandwidth:
 
 ```julia

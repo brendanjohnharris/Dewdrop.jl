@@ -16,12 +16,12 @@ cg4 = coarsegrain(S, 4; dims = 2)                         # reused (bin = 0.4 ms
 report(name, err) = println(rpad(name, 26), "max|Δ| = ", err)
 
 @testset "Dewdrop Stats.jl ≡ reference stats.py" begin
-    # --- integer / exact ---
+    # integer / exact
     @test coarsegrain(S, 4; dims = 2) == permutedims(REF.coarsegrain)
     @test mua(S) == REF.mua
     @test mua(cg4) == REF.mua_binned
 
-    # --- numpy float64 ---
+    # numpy float64
     eh = maximum(abs.(susceptibility(S) - REF.susceptibility)); report("susceptibility", eh)
     @test susceptibility(S) ≈ REF.susceptibility rtol = 1.0e-4
     @test susceptibility(cg4) ≈ REF.susceptibility_binned rtol = 1.0e-4
@@ -36,7 +36,7 @@ report(name, err) = println(rpad(name, 26), "max|Δ| = ", err)
     @test maximum(abs.(gh - REF.grand_hist)) ≤ 3        # float32 bin-edge quirk in stats.py
     @test gc ≈ REF.grand_centers rtol = 1.0e-4
 
-    # --- jax float32 spectral / spatial ---
+    # jax float32 spectral / spatial
     psd, _ = power_spectrum(S; n_segments = 2, dt = dt)
     report("power_spectrum (PSD)", maximum(abs.(psd - REF.psd)))
     @test psd ≈ REF.psd rtol = 1.0e-3
@@ -46,7 +46,7 @@ report(name, err) = println(rpad(name, 26), "max|Δ| = ", err)
     @test rb ≈ REF.radial_rbins
     @test gr ≈ REF.radial_gr atol = 2.0e-3
 
-    # --- efficiency (2×2 spatial bins, matching the python neuron grouping exactly) ---
+    # efficiency (2×2 spatial bins, matching the python neuron grouping exactly)
     GX = REF.GX
     bin_indices = Matrix{Vector{Int}}(undef, 2, 2)
     for bi in 0:1, bj in 0:1

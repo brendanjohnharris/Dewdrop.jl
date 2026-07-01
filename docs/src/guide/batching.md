@@ -7,9 +7,9 @@ CurrentModule = Dewdrop
 Running many networks at once amortises launch overhead and keeps the device busy. Dewdrop has two
 batch modes, chosen by what varies across members:
 
-- **Ensemble (tensor) batch** --- one network *shape*, `B` independent members on a trailing batch
+- **Ensemble (tensor) batch**: one network *shape*, `B` independent members on a trailing batch
   axis. Same connectome, varied input/seed/parameters. One fused pass over an `(N, B)` state.
-- **Block-diagonal batch** --- `B` possibly *different* networks stacked into one larger network with
+- **Block-diagonal batch**: `B` possibly *different* networks stacked into one larger network with
   no cross-member edges, solved in a single scalar pass.
 
 The ensemble batch is memory-optimal (one shared connectome, `O(edges)`) but requires identical
@@ -70,15 +70,15 @@ sol = solve(prob, FixedStep(0.1); batch = 8,
 ```
 
 `(lo, hi)` initial voltages draw an independent uniform per `(neuron, member)`, so the columns start
-from distinct conditions --- useful for noise/realisation ensembles.
+from distinct conditions; useful for noise/realisation ensembles.
 
 ### Limitations
 
 The shared-connectome design rejects what cannot be tensorised over a single CSR:
 
 - connectivity *structure* and per-synapse *delays* must be identical across the batch;
-- [`MultiModel`](@ref) (several model groups) is not supported --- use the block-diagonal batch;
-- [`STDP`](@ref) (plastic projections) is not supported --- run `B` sequential solves, or the block
+- [`MultiModel`](@ref) (several model groups) is not supported; use the block-diagonal batch;
+- [`STDP`](@ref) (plastic projections) is not supported; run `B` sequential solves, or the block
   batch.
 
 A single-group [`Heterogeneous`](@ref) model *is* supported (it resolves per neuron through the same

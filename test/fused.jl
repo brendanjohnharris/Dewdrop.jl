@@ -86,7 +86,7 @@ end
 end
 
 # `step = :fused` runs the fused megakernel on the NATIVE CPU (KA.CPU threads the per-neuron ndrange)
-# instead of the broadcast phases --- the large-N optimisation the advisor suggests. The Array scatter
+# instead of the broadcast phases: the large-N optimisation the advisor suggests. The Array scatter
 # is unchanged and the dense kernel uses the same CPU libm, so it is BIT-IDENTICAL to the default
 # broadcast path even multi-threaded (exact weights ⇒ order-independent atomic scatter).
 @testset "native CPU step = :fused ≡ broadcast" begin

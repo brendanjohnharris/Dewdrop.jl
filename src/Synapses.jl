@@ -70,8 +70,8 @@ export ConductanceSynapse
 
 Conductance-based (COBA) dual-exponential synapse: a delivered
 spike of weight `w` kicks two accumulators `g_rise`/`g_decay`, which decay with rise time `τr` and
-decay time `τd`; the conductance is `g(t) = a·(g_decay − g_rise)` --- a difference of exponentials
-(rise then decay) --- normalised by `a` so the peak conductance equals the delivered weight `w`. The
+decay time `τd`; the conductance is `g(t) = a·(g_decay − g_rise)` (a difference of exponentials,
+rise then decay) normalised by `a` so the peak conductance equals the delivered weight `w`. The
 synaptic current is voltage-dependent, `g·(Erev − V)`. Requires `τr ≠ τd`.
 """
 struct DualExpSynapse{T} <: AbstractSynapseModel
@@ -95,7 +95,7 @@ export DualExpSynapse
 
 Frozen-current variant of [`DualExpSynapse`](@ref): identical dual-exponential conductance kinetics
 `g(t) = a·(g_decay − g_rise)`, but the synaptic current `g·(Erev − V)` is evaluated with `V` FROZEN at
-its pre-update value and injected as an ordinary current --- it does NOT enter the effective leak, so it
+its pre-update value and injected as an ordinary current; it does NOT enter the effective leak, so it
 does not shunt the membrane time constant. This reproduces the BrainPy `sum_current_inputs`/`COBA`
 integration. Exact COBA ([`DualExpSynapse`](@ref)) is the more accurate scheme (the conductance shunts);
 use this only to reproduce frozen-current dynamics. A drop-in for `DualExpSynapse`. Requires `τr ≠ τd`.

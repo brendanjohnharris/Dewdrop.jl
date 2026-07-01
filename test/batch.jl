@@ -8,7 +8,7 @@ using Adapt: adapt
 # Ensemble (tensor) batching (src/Batch.jl): run B independent network instances at once, sharing
 # connectivity STRUCTURE. The correctness check is a SCALAR REFERENCE: with the per-column drive
 # stream forced to 0 (the scalar default), batched column b must equal a scalar solve configured
-# with that column's input/v0 --- BIT-IDENTICALLY (delta synapses + counter RNG are exact). With
+# with that column's input/v0: BIT-IDENTICALLY (delta synapses + counter RNG are exact). With
 # distinct streams the columns are independent realizations. No GPU is needed: KA kernels run on
 # the CPU backend, and JLArrays' allowscalar(false) proves the batched path never scalar-indexes.
 # (Real-CUDA correctness + the ensemble speedup are in test/cuda.jl, behind a functional GPU.)
@@ -51,7 +51,7 @@ _ncols_expected(T) = round(Int, T / 0.1)                                 # recor
 
     @testset "bit-exact reference for COBA and CUBA synapses" begin
         # Weights are exactly representable (multiples of powers of two), so the scatter's
-        # ring-slot accumulation is ORDER-INDEPENDENT --- the bit-exact reference then holds even when
+        # ring-slot accumulation is ORDER-INDEPENDENT; the bit-exact reference then holds even when
         # the scalar reference scatter runs multithreaded (its atomic path reorders the FP sum;
         # exact weights make any order give the same float). The batched scatter is deterministic
         # regardless (it threads over the disjoint batch axis with no atomics).

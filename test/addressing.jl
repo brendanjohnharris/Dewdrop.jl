@@ -1,7 +1,7 @@
 using Dewdrop
 using Test
 
-# Named-subpopulation addressing --- a subpop is a contiguous range into the one flat
+# Named-subpopulation addressing: a subpop is a contiguous range into the one flat
 # concatenated SoA, recorded in a registry on the problem and carried onto the solution. The
 # reference API is symbol-indexed: `sol[:E]`, `firing_rate(sol, :E)`, `raster(sol; of = :E)`. This
 # is pure addressing metadata over the flat engine (zero hot-loop cost); the simulation is

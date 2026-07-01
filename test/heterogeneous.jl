@@ -69,7 +69,7 @@ end
     @test Array(gpu.spike_count) == cpu.spike_count
     @test Array(gpu.state.state.V) ≈ cpu.state.state.V
 
-    # the per-neuron model resolution is allocation-free (the hot-loop concern) --- the reconstructed
+    # the per-neuron model resolution is allocation-free (the hot-loop concern): the reconstructed
     # isbits model lives on the stack. (The fused step itself allocates a fixed KA launch, by design.)
     Dewdrop._resolve(hm, 1)
     @test @allocated(Dewdrop._resolve(hm, 1)) == 0

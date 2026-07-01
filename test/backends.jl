@@ -55,7 +55,7 @@ using Test
         @test sum(solve(hp, FixedStep(0.1)).spike_count) ≥ 0                       # Auto → Fused
     end
 
-    # (the Turbo backend --- numerics + with-extension error paths --- is tested in test/turbo.jl,
+    # (the Turbo backend, numerics + with-extension error paths, is tested in test/turbo.jl,
     # which loads LoopVectorization; it must run AFTER this file, which assumes the ext is dormant.)
 
     @testset "allocation-free Serial dense phases" begin

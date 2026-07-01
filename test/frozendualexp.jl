@@ -4,10 +4,10 @@ using Adapt
 using JLArrays
 using Statistics
 
-# FrozenDualExpSynapse --- frozen-current variant of `DualExpSynapse`. IDENTICAL dual-exponential
+# FrozenDualExpSynapse: frozen-current variant of `DualExpSynapse`. IDENTICAL dual-exponential
 # conductance kinetics (`g(t) = a·(g_decay − g_rise)`, same `a`/`decay_r`/`decay_d`), but the synaptic
 # current `g·(Erev − V)` is injected with `V` FROZEN at its pre-update value and does NOT enter the
-# effective leak (`gtot`) --- so it does not shunt the membrane time constant. Reproduces the BrainPy
+# effective leak (`gtot`); so it does not shunt the membrane time constant. Reproduces the BrainPy
 # `sum_current_inputs`/`COBA` integration. Only the accumulate step differs from exact COBA, so the test
 # focus is: (1) the accumulate semantics, (2) it diverges from exact, (3) every backend agrees.
 

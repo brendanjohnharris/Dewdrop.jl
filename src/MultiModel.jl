@@ -1,4 +1,4 @@
-# * Multi-type populations --- `MultiModel` holds an ordered tuple of (model, range)
+# * Multi-type populations: `MultiModel` holds an ordered tuple of (model, range)
 # groups over one flat concatenated SoA, so a network can mix neuron model TYPES (e.g. AdEx
 # excitatory + LIF inhibitory) in one engine. The groups partition `1:N` contiguously in
 # declaration order.
@@ -6,13 +6,13 @@
 # State is a UNION SoA: the SoA carries the union of every group's `statevars` (length `N` each), and
 # a group's kernel touches only the columns its own model declares (e.g. `w` is allocated for all `N`
 # but read only by the adaptation groups; the `_aux_col` seam returns `nothing` for a V-only group,
-# so it keeps its byte-identical fast path). The waste is bounded --- groups are few and overlap
+# so it keeps its byte-identical fast path). The waste is bounded; groups are few and overlap
 # heavily on `:V`/`:refrac`.
 #
 # A `MultiModel` is `_is_hetero` (like `Heterogeneous`), so `init` routes it through the fused
 # megakernel. The launch (Fused.jl) loops the groups, launching the SAME per-neuron kernel once per
 # group over its range with that group's CONCRETE model and an index `offset`. Each launch is
-# monomorphic, so it specialises exactly like the single-model kernel --- and the homogeneous path
+# monomorphic, so it specialises exactly like the single-model kernel; and the homogeneous path
 # (a bare model, or one group spanning `1:N`) is unchanged.
 
 """
@@ -24,8 +24,8 @@ float type). Built automatically by the [`network`](@ref) builder when populatio
 model types are added; addressable via the subpop registry (`sol[:E]`).
 """
 struct MultiModel{MS <: Tuple, R <: Tuple} <: AbstractNeuronModel
-    models::MS      # (modelE, modelI, …) --- a heterogeneous tuple of AbstractNeuronModels
-    ranges::R       # (1:NE, NE+1:N, …) --- contiguous, covering 1:N, in declaration order
+    models::MS      # (modelE, modelI, …): a heterogeneous tuple of AbstractNeuronModels
+    ranges::R       # (1:NE, NE+1:N, …): contiguous, covering 1:N, in declaration order
 end
 function MultiModel(models::AbstractVector, sizes::AbstractVector)
     isempty(models) && error("MultiModel needs at least one group")
@@ -71,7 +71,7 @@ function _check_hetero(mm::MultiModel, N::Integer)
 end
 
 # Union SoA construction: merge each group's zero-initialised statevar columns (later groups' shared
-# columns overwrite, same zero value --- a negligible init-time allocation). Each `_group_columns`
+# columns overwrite, same zero value: a negligible init-time allocation). Each `_group_columns`
 # call sees its model's `statevars` via constant propagation (`Val(statevars(typeof(m)))`), like the
 # single-model `Population`, so the merged NamedTuple type is inferred and the StructArray is
 # concretely typed (no @generated, so @neuron group models work too).
@@ -101,5 +101,5 @@ function _init_voltage_model!(V, mm::MultiModel, ::Nothing, ::Type{T}, seed) whe
     return V
 end
 # An explicit v0 (scalar / (lo,hi) / vector) applies over the whole flat population via the generic
-# `_init_voltage_model!(::AbstractNeuronModel, ...)` method above --- `_resting(::MultiModel)` already
+# `_init_voltage_model!(::AbstractNeuronModel, ...)` method above; `_resting(::MultiModel)` already
 # returns `_resting(first(models))`, so no MultiModel-specific method is needed here.

@@ -1,11 +1,11 @@
-# * Neuron models --- "model as code": a small isbits parameter struct plus pure,
+# * Neuron models, "model as code": a small isbits parameter struct plus pure,
 # scalar, allocation-free functions for its dynamics, threshold and reset.
 #
 # The subthreshold update is deliberately structured as the EXACT linear propagator
 # (Rotter--Diesmann) for the linear part of the dynamics, kept distinct from the
 # discontinuous reset. For models with nonlinear coupling (e.g. AdEx's adaptation
 # variable) the extension point is a symplectic-Euler coupling step layered on top of
-# this propagator (Baronig et al. 2025) --- LIF, being fully linear, needs only the
+# this propagator (Baronig et al. 2025); LIF, being fully linear, needs only the
 # propagator.
 
 """
@@ -40,7 +40,7 @@ function float_type end
 
 Leaky integrate-and-fire neuron: `τ dV/dt = -(V - EL) + R·I`; spike when `V ≥ Vθ`;
 reset to `Vr`; absolute refractory period `tref`. Parameters share a float type `T`
-(plain floats --- units are handled at the API boundary). State variables: `V`, `refrac`.
+(plain floats; units are handled at the API boundary). State variables: `V`, `refrac`.
 """
 struct LIF{T} <: AbstractNeuronModel
     τ::T
@@ -65,7 +65,7 @@ float_type(::LIF{T}) where {T} = T
 
 Recursively rebuild `x` with every `AbstractFloat` leaf converted to the float type `T`, recursing through
 structs, `Tuple`s, `NamedTuple`s and arrays. Integers, booleans, symbols, strings, ranges, and **functions**
-(distance kernels, weight adjusters --- they produce the right element type downstream) pass through
+(distance kernels, weight adjusters; they produce the right element type downstream) pass through
 unchanged. So a whole neuron/synapse model, a `NetworkBuilder`, or a network spec switches precision in one
 call: `convertfloat(Float32, build(...))`. Lets a model be written in convenient `Float64` literals and
 converted to `Float32` afterwards (halving the state / recorded-trace / connectome footprint), instead of
@@ -83,7 +83,7 @@ function convertfloat(::Type{T}, x) where {T <: AbstractFloat}
 end
 export convertfloat
 
-# --- Linear subsystem: the EXACT propagator (exact for LIF over dt at constant input) ---
+# Linear subsystem: the EXACT propagator (exact for LIF over dt at constant input)
 """
     asymptote(model, I) -> V∞
 
@@ -108,7 +108,7 @@ One exact linear-propagator update toward the fixed point `V∞`:
 
 # COBA-capable exact subthreshold step (shared by LIF and the adaptation models): conductances
 # set an effective leak (`denom`) and reversal drive, while `itot` carries every current term
-# (external input, synaptic current, and --- for the adaptation models --- the adaptation current
+# (external input, synaptic current, and (for the adaptation models) the adaptation current
 # `-w` and AdEx's exponential term). With no conductance (gtot = 0) this is the plain exact
 # propagator. Lives here (not in Engine.jl) so the adaptation models in Adaptation.jl can reuse it.
 @inline function _coba_step(V, EL, R, τ, gtot, itot, dt)
@@ -117,7 +117,7 @@ One exact linear-propagator update toward the fixed point `V∞`:
     return V∞ + (V - V∞) * exp(-dt * denom / τ)
 end
 
-# --- Threshold / reset / refractory ---
+# Threshold / reset / refractory
 """
     threshold(model, V) -> Bool
 
@@ -143,9 +143,9 @@ The absolute refractory duration for `model`. Part of the neuron-model interface
 # Type-stable state allocation: a SoA `Population` with one zero-initialised column per
 # `statevars(model)`. The names are carried in a `Val` so they reach the constructor as a TYPE
 # parameter (a concrete StructArray, not `Population{S} where S`); constant propagation folds
-# `statevars(M)` for a concrete `M` at the call site. Unlike a `@generated` body --- whose
+# `statevars(M)` for a concrete `M` at the call site. Unlike a `@generated` body (whose
 # generator runs in this module's world and so cannot see a `@neuron`-defined model's
-# `statevars` --- this resolves at the call world, so user models work too.
+# `statevars`), this resolves at the call world, so user models work too.
 function Population(arch::AbstractArchitecture, model::AbstractNeuronModel, N::Integer)
     return _build_population(arch, float_type(model), Int(N), Val(statevars(typeof(model))))
 end

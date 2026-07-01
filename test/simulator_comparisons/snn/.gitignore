@@ -1,0 +1,5 @@
+# Julia side: a self-contained environment + generated outputs (not committed).
+Manifest.toml
+LocalPreferences.toml
+out/
+# keep: run.jl, Project.toml, README-referenced scripts

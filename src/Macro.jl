@@ -1,4 +1,4 @@
-# * @neuron macro --- declarative sugar for defining a linear (LIF-family) neuron model
+# * @neuron macro: declarative sugar for defining a linear (LIF-family) neuron model
 # without the struct + hook boilerplate. The user writes hook expressions over the model's
 # parameters plus the reserved names `I` (total input current) and `V` (membrane potential);
 # the macro rewrites every parameter symbol to a field access `m.<param>` (no equation parsing,
@@ -11,7 +11,7 @@
 #       @parameters  τ=20.0 EL=-60.0 Vθ=-50.0 Vr=-60.0 R=1.0 tref=5.0
 #       @state       V refrac
 #       @asymptote   EL + R * I        # steady-state V for total input current I (linear in I)
-#       @resistance  R                  # ∂V∞/∂I --- couples conductance (COBA) synapses
+#       @resistance  R                  # ∂V∞/∂I: couples conductance (COBA) synapses
 #       @timeconstant τ
 #       @threshold   V ≥ Vθ
 #       @reset       Vr
@@ -47,7 +47,7 @@ propagator applies). Generated models run on every backend except [`Turbo`](@ref
         @parameters   τ=20.0 EL=-60.0 Vθ=-50.0 Vr=-60.0 R=1.0 tref=5.0
         @state        V refrac
         @asymptote    EL + R * I     # steady-state V for total input current I
-        @resistance   R              # ∂V∞/∂I --- couples COBA synapses
+        @resistance   R              # ∂V∞/∂I: couples COBA synapses
         @timeconstant τ
         @threshold    V ≥ Vθ
         @reset        Vr

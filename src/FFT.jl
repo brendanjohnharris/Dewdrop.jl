@@ -6,7 +6,7 @@
 # is kept as the correctness reference (the tests cross-check `_fft` against it). This is a deliberately
 # self-contained, dependency-free transform; it runs on the host at analysis time, not in the hot loop,
 # so the O(N log N) pure-Julia implementation is more than adequate. (FFTW is a package dependency and
-# could back these instead --- see the breaking-change report for the trade-offs.)
+# could back these instead; see the breaking-change report for the trade-offs.)
 
 # Direct DFT / inverse DFT (the O(N²) reference). `sign = -1` forward, `+1` inverse (unnormalised).
 function _dft(x::AbstractVector{<:Number}, sign::Int = -1)

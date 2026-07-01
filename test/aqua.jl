@@ -1,7 +1,7 @@
 using Aqua
 using Dewdrop
 
-# Package-quality checks (Aqua), in their OWN file with a clean `using` --- not nested
+# Package-quality checks (Aqua), in their OWN file with a clean `using`, not nested
 # in the GPU-readiness testset (which loads JLArrays/GPUArrays and toggles allowscalar,
 # needlessly widening the method tables the ambiguity subprocess sees).
 @testset "Aqua quality" begin

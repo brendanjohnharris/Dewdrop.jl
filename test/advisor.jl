@@ -4,7 +4,7 @@ using CUDA
 
 # The performance advisor (src/Advisor.jl) only inspects METADATA (architecture, float type,
 # connectivity index width, degree) and a firing fraction, so a GPU()-arch problem can be built
-# with CPU-resident connectivity and probed WITHOUT a functional GPU --- which is exactly how this
+# with CPU-resident connectivity and probed WITHOUT a functional GPU, which is exactly how this
 # suite exercises every branch. Each distinct suggestion fires at most once per session (deduped),
 # and the whole advisor is silenceable globally / per call.
 

@@ -1,6 +1,6 @@
 # * Progress reporting (host-side) for the `solve` time loop.
 #
-# A progress bar here is just a LOGGING CONVENTION --- the ProgressLogging protocol: emit a
+# A progress bar here is just a LOGGING CONVENTION (the ProgressLogging protocol): emit a
 # `@logmsg LogLevel(-1) name progress=frac _id=id` per update, keyed to one stable `id`. VSCode,
 # TerminalLoggers, Pluto and Juno all render such records as a live bar with an ETA; a bare
 # `julia script.jl` (default ConsoleLogger, min level Info) filters them cheaply, so the loop stays
@@ -39,7 +39,7 @@ mutable struct ProgressReporter
     shown::Bool                           # has any update been emitted? (gates the completion record)
 end
 
-# --- build a reporter from the user spec, or `nothing` (no bar). `Bool` is matched BEFORE `Integer`
+# build a reporter from the user spec, or `nothing` (no bar). `Bool` is matched BEFORE `Integer`
 # so `true`/`false` never fall through to the cadence path (Bool <: Integer in Julia). ---
 _progress_reporter(spec, total::Integer) = _progress_reporter(spec, Int(total))
 _progress_reporter(::Nothing, ::Int) = nothing
@@ -64,13 +64,13 @@ function _build_reporter(name::String, total::Int; calibrate::Bool, show_during_
     return ProgressReporter(UUIDs.uuid4(), name, total, show_during_calib, 0.0, every, first_emit, calibrate, false)
 end
 
-# --- loop hooks. A `nothing` reporter makes every hook a no-op (so `progress = false` is zero-cost). ---
+# loop hooks. A `nothing` reporter makes every hook a no-op (so `progress = false` is zero-cost).
 
 @inline _progress_start!(::Nothing) = nothing
 @inline _progress_start!(rep::ProgressReporter) = (rep.t0 = time(); nothing)
 
 # The per-step hook: its ONLY cost on the common path is the `n >= rep.next_emit` compare (a single,
-# well-predicted branch). `time()` and `@logmsg` are touched only at emit points --- O(log n) during
+# well-predicted branch). `time()` and `@logmsg` are touched only at emit points: O(log n) during
 # calibration (probes at powers of two) and ~2 Hz thereafter.
 @inline _progress_step!(::Nothing, ::Integer) = nothing
 function _progress_step!(rep::ProgressReporter, n::Integer)

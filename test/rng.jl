@@ -51,7 +51,7 @@ using Test
 end
 
 # Counter-based Poisson sampling (inverse-CDF from one uniform) for per-neuron external
-# drive --- pure, one uniform per sample, GPU-kernel-safe.
+# drive: pure, one uniform per sample, GPU-kernel-safe.
 @testset "counter-based Poisson sampling" begin
     seed = UInt64(7)
     λ = 3.0

@@ -12,14 +12,14 @@ import Dewdrop
 import TimeseriesBase: Timeseries, spiketrain, ToolsArray, ToolsDim, 𝑡, Var
 import DimensionalData
 
-# --- Custom Dewdrop dimensions ---
+# Custom Dewdrop dimensions
 abstract type NeuronDim{T} <: ToolsDim{T} end
 DimensionalData.@dim Neuron NeuronDim "Neuron"
 abstract type SynapseDim{T} <: ToolsDim{T} end
 DimensionalData.@dim Synapse SynapseDim "Synapse"
 # The `Population` LABELLED-OUTPUT dimension (matching the WRCircuit bpformat convention). Its name
 # clashes with Dewdrop's core SoA `Population` struct, so it is NOT injected into Dewdrop's namespace
-# --- reference it on a result by its name symbol, e.g. `dims(X, :Population)`.
+# reference it on a result by its name symbol instead, e.g. `dims(X, :Population)`.
 abstract type PopulationDim{T} <: ToolsDim{T} end
 DimensionalData.@dim Population PopulationDim "Population"
 
@@ -72,7 +72,7 @@ function Timeseries(sol::Dewdrop.DewdropSolution, name::Symbol = :V; of = :all, 
     rows, neurons = _sub_rows(sol, res, of)
     data = rows === Colon() ? res.data : (lazy ? view(res.data, rows, :) : res.data[rows, :])
     # per-unit: stored (unit, time); transpose to time-first so it is a proper Timeseries. `lazy = true`
-    # keeps the transpose a `PermutedDimsArray` VIEW (no copy of the whole trace) --- e.g. for `bpformat`
+    # keeps the transpose a `PermutedDimsArray` VIEW (no copy of the whole trace): e.g. for `bpformat`
     # over a large population × long run, where an eager `permutedims` would double the (already large)
     # recorded data. The default stays an eager copy (a contiguous, standalone array).
     mat = lazy ? PermutedDimsArray(data, (2, 1)) : permutedims(data)
@@ -83,7 +83,7 @@ end
     Timeseries(sol::DewdropSolution, populations; vars=[:V])
 
 The recorded traces as a `Population × Var` nested `ToolsArray`, each cell the per-population
-`Time × Neuron` timeseries of one variable --- matching the WRCircuit `bpsolve`/`bpformat` output
+`Time × Neuron` timeseries of one variable, matching the WRCircuit `bpsolve`/`bpformat` output
 shape (the populations are named subpopulations, the variables recorded `Trace` monitor names).
 """
 function Timeseries(sol::Dewdrop.DewdropSolution, populations::AbstractVector; vars = [:V])
@@ -101,7 +101,7 @@ default: the first spike monitor). `of` restricts the `Neuron` axis to a named s
 """
 function spiketrain(sol::Dewdrop.DewdropSolution, name = nothing; of = :all)
     res = Dewdrop._find_spikes(sol.record, name)
-    res === nothing && error("no spikes recorded --- pass `record = (spikes = Spikes(),)` to `solve`")
+    res === nothing && error("no spikes recorded; pass `record = (spikes = Spikes(),)` to `solve`")
     rows, neurons = _sub_rows(sol, res, of)
     data = rows === Colon() ? res.data : res.data[rows, :]
     return ToolsArray(data, (Neuron(neurons), 𝑡(_times(res, sol))); name = :spikes)

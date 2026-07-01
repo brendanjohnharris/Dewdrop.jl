@@ -8,11 +8,11 @@
 # runs each in its own language/environment, and finally runs compare_simulators.jl (verify + plot).
 # A failure in one simulator (missing GPU, missing venv, …) does NOT stop the others or the compare.
 # Drop in a new nest/ or neuron/ with a run.* and it is picked up automatically. (stats_validation/
-# has no run.*, so it is skipped.) No simulator-specific logic lives here --- everything is in spec.toml.
+# has no run.*, so it is skipped.) No simulator-specific logic lives here; everything is in spec.toml.
 set -u
 cd "$(dirname "$(readlink -f "$0")")"
 
-# --- which simulators? explicit args win; otherwise discover, dewdrop first (reference, always built) ---
+# which simulators? explicit args win; otherwise discover, dewdrop first (reference, always built)
 if [[ $# -gt 0 ]]; then
     sims=("$@")
 else
@@ -37,11 +37,11 @@ for sim in "${sims[@]}"; do
         py="$sim/.venv/bin/python"
         [[ -x "$py" ]] || py="$(command -v python3 || command -v python || true)"
         if [[ -z "$py" ]]; then
-            echo "  no python (and no $sim/.venv) --- skipping $sim"; failed+=("$sim"); continue
+            echo "  no python (and no $sim/.venv); skipping $sim"; failed+=("$sim"); continue
         fi
         "$py" "$sim/run.py" || rc=$?
     else
-        echo "  no run.jl/run.py in $sim/ --- skipping"; continue
+        echo "  no run.jl/run.py in $sim/; skipping"; continue
     fi
     if [[ $rc -eq 0 ]]; then ok+=("$sim"); else failed+=("$sim"); echo "  !! $sim exited $rc (continuing)"; fi
 done

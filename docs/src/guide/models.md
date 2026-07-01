@@ -8,7 +8,7 @@ end
 # Neuron and synapse models
 
 A model in Dewdrop is a small isbits parameter struct plus pure, scalar, allocation-free functions
-for its dynamics, threshold and reset --- "model as code". The same struct runs unchanged on the CPU
+for its dynamics, threshold and reset: "model as code". The same struct runs unchanged on the CPU
 or GPU and across every [backend](backends.md); only the parameters live in it, so a model is
 trivially copyable, `Adapt`-movable, and reproducible. This page tours the built-in zoo.
 
@@ -21,7 +21,7 @@ or an extra conductance over that propagator.
 
 | model | extra state | nonlinearity | adaptation | typical use |
 |---|---|---|---|---|
-| [`LIF`](@ref) | --- | none (exact) | none | the default integrate-and-fire unit |
+| [`LIF`](@ref) | none | none (exact) | none | the default integrate-and-fire unit |
 | [`AdaptLIF`](@ref) | `w` | none (linear) | current `w` | spike-frequency adaptation, linear |
 | [`AdEx`](@ref) | `w` | exponential spike | current `w` | bursting / sharp spike initiation |
 | [`FNSNeuron`](@ref) | `w` (holds `gK`) | none (exact COBA) | conductance `gK` | conductance-adaptation LIF (WRCircuit) |

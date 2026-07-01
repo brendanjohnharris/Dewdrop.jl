@@ -1,4 +1,4 @@
-# Python side --- a self-contained uv environment + generated outputs (not committed).
+# Python side: a self-contained uv environment + generated outputs (not committed).
 .venv/
 __pycache__/
 *.pyc

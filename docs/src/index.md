@@ -31,8 +31,8 @@ features:
 Dewdrop is a fixed-step, clock-driven, struct-of-arrays spiking neural network engine. It is built
 around two orthogonal choices:
 
-- **Architecture** (`arch = CPU()` / `GPU()`) --- *where* the state lives.
-- **[Backend](guide/backends.md)** (`backend = Auto()` / `Serial()` / `Fused()` / `Turbo()`) --- *how*
+- **Architecture** (`arch = CPU()` / `GPU()`): *where* the state lives.
+- **[Backend](guide/backends.md)** (`backend = Auto()` / `Serial()` / `Fused()` / `Turbo()`): *how*
   each step executes.
 
 ```julia
@@ -48,7 +48,7 @@ gone on long enough to matter (calibrating its update rate from the first ~0.3 s
 natively in VSCode, Pluto and any `TerminalLogger` REPL, while staying silent in plain scripts. Pass
 `progress = false` to silence it, `progress = true` to force it on from the start, a `String` to name
 the bar, or an `Int` to set a fixed update stride. It is a standard
-[ProgressLogging](https://github.com/JuliaLogging/ProgressLogging.jl) log record --- so it needs no
+[ProgressLogging](https://github.com/JuliaLogging/ProgressLogging.jl) log record, so it needs no
 extra dependency, and it never perturbs the simulation (a `progress` run is bit-identical to none).
 
 See **[Choosing a backend](guide/backends.md)** for when to use each, and **[Turbo & model

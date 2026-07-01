@@ -1,5 +1,5 @@
 """
-NEST implementation of the shared simulator-comparison problem (../spec.toml). Python-only --- no
+NEST implementation of the shared simulator-comparison problem (../spec.toml). Python-only: no
 Julia here; it just generates the standard data CSVs that ../compare_simulators.jl reads. Standalone:
 
     python run.py                  # the (cpu) sweep → out/values.csv + out/performance.csv
@@ -7,14 +7,14 @@ Julia here; it just generates the standard data CSVs that ../compare_simulators.
     python run.py correctness      # the statistics run
 
 NEST is the established C++ gold-standard for CPU spiking-network performance. The neuron is
-`aeif_psc_exp` --- AdEx with current-based exponential postsynaptic currents (= CUBA) --- mapped 1:1
+`aeif_psc_exp` (AdEx with current-based exponential postsynaptic currents, = CUBA), mapped 1:1
 from the spec (V_th = the AdEx exponential threshold V_T, V_peak = the spike cutoff). The connectome is
 the language-agnostic splitmix64 fixed-in-degree graph, byte-identical to every other simulator's.
 Standard NEST is CPU-only (NEST GPU is a separate project), so device is always `cpu`; it runs natively
 multi-threaded, and the thread count is AUTO-SELECTED per network size (the NEST analogue of Dewdrop's
 `Auto` backend): NEST uses busy-wait barriers and synchronises every `min_delay` window (here 0.2 ms =
 every 2 steps), so running one thread per core leaves no slack for the main/OS thread and a single
-descheduled straggler stalls every barrier --- a ~40x collapse. NEST is therefore run with core headroom
+descheduled straggler stalls every barrier: a ~40x collapse. NEST is therefore run with core headroom
 and the faster of {½, ¾}·cores is reported. Override with NEST_THREADS to force a fixed count. Requires
 the nest env (nest-simulator); see README.
 """

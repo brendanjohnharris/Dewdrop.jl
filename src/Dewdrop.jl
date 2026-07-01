@@ -1,6 +1,6 @@
 module Dewdrop
 
-# Dewdrop.jl --- a generic, intuitive, GPU-aware spiking neural network simulator.
+# Dewdrop.jl: a generic, intuitive, GPU-aware spiking neural network simulator.
 #
 # Built CPU-first on a GPU-aware architecture: a custom fixed-step, clock-driven,
 # struct-of-arrays engine. Optional dependencies (CUDA, DimensionalData, Makie, ...)

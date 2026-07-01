@@ -3,9 +3,9 @@ using Test
 
 # Batching (src/BlockBatch.jl): run B network members together via `batch(...)` → `solve` → `BatchSolution`.
 # Three execution modes, auto-routed by what varies (and forceable via `mode=`):
-#   :shared   --- fused shared-CSR ensemble (one connectome, B (N,B) columns; vary input/v0/seed).
-#   :multirun --- B separate scalar solves SHARING the connectome array (vary the model; Mode-A memory, no kernel).
-#   :block    --- block-diagonal stack into one network (distinct topology).
+#   :shared:   fused shared-CSR ensemble (one connectome, B (N,B) columns; vary input/v0/seed).
+#   :multirun: B separate scalar solves SHARING the connectome array (vary the model; Mode-A memory, no kernel).
+#   :block:    block-diagonal stack into one network (distinct topology).
 # With NO drive the members are deterministic, so every mode must give the SAME per-member result.
 
 _lif() = LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 100.0, tref = 2.0)

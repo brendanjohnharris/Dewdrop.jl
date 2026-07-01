@@ -86,7 +86,7 @@ end
 
     @testset "scatter = :auto crossover resolution" begin
         # `_resolve_scatter` only reads each connectome's edge count + index eltype and the `arch` (for the
-        # GPU check + L2 threshold) --- never device memory --- so we build the networks on the host CPU and
+        # GPU check + L2 threshold), never device memory, so we build the networks on the host CPU and
         # pass the target arch to the resolver separately. A UnitRange `src` (O(1) memory) stands in for an
         # arbitrarily large connectome, and CPU construction keeps this runnable without a functional CUDA.
         fakeconn(ne) = Dewdrop.SparseCSR([1, 1], 1:ne, Float64[], Int[], 1:1, 1, 1, 1)

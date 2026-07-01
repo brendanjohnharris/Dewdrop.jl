@@ -1,4 +1,4 @@
-# * Execution backends --- HOW the per-step engine runs, orthogonal to the CPU/GPU architecture
+# * Execution backends: HOW the per-step engine runs, orthogonal to the CPU/GPU architecture
 # (`arch`). The architecture chooses WHERE the arrays live; the backend chooses how the dense
 # per-neuron phases of a step are executed. Pick one with `solve(prob, alg; backend = …)`; the
 # default `Auto()` lets the advisor choose. All backends are numerically equivalent EXCEPT `Turbo`,
@@ -7,7 +7,7 @@
 """
     SimBackend
 
-Abstract supertype for execution backends --- *how* a step's dense per-neuron phases run, orthogonal
+Abstract supertype for execution backends: *how* a step's dense per-neuron phases run, orthogonal
 to the architecture (*where* the state lives). See [`Auto`](@ref), [`Serial`](@ref), [`Fused`](@ref)
 and [`Turbo`](@ref).
 """
@@ -17,7 +17,7 @@ abstract type SimBackend end
     Auto()
 
 The default backend: the advisor picks the best available for the architecture, network size, and
-loaded extensions --- `Fused` on a GPU, `Fused` for a large multithreaded CPU network or a
+loaded extensions: `Fused` on a GPU, `Fused` for a large multithreaded CPU network or a
 heterogeneous/multi-type model, otherwise `Serial`. Override explicitly with `Serial`/`Fused`/`Turbo`.
 """
 struct Auto <: SimBackend end
@@ -26,7 +26,7 @@ struct Auto <: SimBackend end
     Serial()
 
 The per-phase broadcast engine: single-threaded dense phases, **bit-reproducible and allocation-free**.
-The predictable baseline --- best for small networks, exact reproducibility, and debugging. (The
+The predictable baseline: best for small networks, exact reproducibility, and debugging. (The
 sparse scatter is still threaded when `Threads.nthreads() > 1`, as on every backend.)
 """
 struct Serial <: SimBackend end
@@ -45,7 +45,7 @@ struct Fused <: SimBackend end
 """
     Turbo()
 
-A SIMD-vectorised fused loop (via LoopVectorization). The **fastest CPU backend** --- it vectorises
+A SIMD-vectorised fused loop (via LoopVectorization). The **fastest CPU backend**: it vectorises
 the membrane `exp`, reaching compiled-C++ throughput. CPU-only; requires `using LoopVectorization`
 and a model that provides a Turbo specialization (see the model-support table in the docs). **Not
 bit-identical**: SIMD `exp` differs from scalar `libm` at the ULP level, so results are
@@ -84,13 +84,13 @@ export SimBackend, Auto, Serial, Fused, Turbo, Differentiable
 @inline _count_eltype(::SimBackend, ::Type{T}) where {T} = Int
 @inline _count_eltype(::Differentiable, ::Type{T}) where {T} = T
 
-# --- resolution: Auto → a concrete backend for this problem; explicit backends pass through ---
+# resolution: Auto → a concrete backend for this problem; explicit backends pass through
 @inline _resolve_backend(b::SimBackend, prob) = b
 function _resolve_backend(::Auto, prob)
     prob.arch isa GPU && return Fused()                       # the GPU path is the megakernel
     _is_hetero(prob.model) && return Fused()                  # Heterogeneous/MultiModel need the fused per-neuron path
     # Canonical CPU → the single-pass fused tight loop: bit-identical to Serial but ~2× the multi-pass
-    # broadcast, AND work-aware --- it gates its own threading on neurons-per-thread, so it runs
+    # broadcast, AND work-aware; it gates its own threading on neurons-per-thread, so it runs
     # single-threaded for small nets (no `@threads`-dispatch floor) and threads only once the work pays
     # for it. So it is the right pick at every size; Serial stays available for non-canonical schedules
     # (and explicitly, as the allocation-free reproducible baseline).
@@ -108,7 +108,7 @@ function _step_to_backend(step::Symbol)
     throw(ArgumentError("step must be :auto, :serial, :fused or :turbo (got :$step); prefer the `backend = …` keyword"))
 end
 
-# --- Turbo availability + per-model specialisation (populated by the LoopVectorization extension) ---
+# Turbo availability + per-model specialisation (populated by the LoopVectorization extension)
 """
     turbo_kernel(::Type{M}) -> f | nothing
 

@@ -25,10 +25,10 @@ Identical for identical arguments regardless of thread or iteration order.
 """
 # Call the FUNCTIONAL Philox directly rather than constructing a `Philox2x` generator: a
 # freshly-seeded generator does a wasted extra round at counter (0,0) on construction, then
-# `set_counter!` recomputes and the buffered `rand` adds dispatch --- ~170× slower for the
+# `set_counter!` recomputes and the buffered `rand` adds dispatch: ~170× slower for the
 # same bits. `philox((key,), (step, 0), Val(10))[1]` is bit-identical to that generator's
 # first `UInt64` draw (verified over 10^5 inputs) and is a pure, allocation-free, side-effect-
-# free function of (seed, step, entity) --- strictly better on GPU than the mutable generator.
+# free function of (seed, step, entity): strictly better on GPU than the mutable generator.
 @inline function draw_uniform(
         ::Type{T}, seed::Unsigned, step::Integer, entity::Integer
     ) where {T <: AbstractFloat}
@@ -39,7 +39,7 @@ end
     draw_uniform(T, seed, step, entity, batch) -> T
 
 The ensemble-batched draw: an independent, bit-reproducible stream per `batch`. The Philox
-counter is `(step, batch)` --- the high counter word is unused by the 4-arg form (it is a
+counter is `(step, batch)`; the high counter word is unused by the 4-arg form (it is a
 hard zero there), so folding `batch` into it yields B collision-free independent streams keyed
 by `(seed, step, entity, batch)` on CPU and GPU. `batch = 0` reproduces the 4-arg bits exactly
 (so the scalar B=1 path is bit-for-bit unchanged); `batch` must NOT be mixed into `entity`
@@ -55,7 +55,7 @@ end
 
 # Uniform draw in [0, 1) constructed directly from 64 random bits: set the mantissa to
 # form a float in [1, 2) then subtract 1. This is dispatch-free (it avoids the Sampler
-# machinery that `rand(rng, Float32)` routes through --- a runtime dispatch that is also
+# machinery that `rand(rng, Float32)` routes through: a runtime dispatch that is also
 # hostile to GPU kernels) and range-correct at any width.
 @inline _uniform(::Type{Float64}, u::UInt64) =
     reinterpret(Float64, (u >> 12) | 0x3ff0000000000000) - 1.0
@@ -84,7 +84,7 @@ end
 """
     draw_poisson(λ, seed, step, entity) -> Int
 
-A Poisson(λ) draw keyed by `(seed, step, entity)` --- a pure function (one counter-based
+A Poisson(λ) draw keyed by `(seed, step, entity)`: a pure function (one counter-based
 uniform), identical across threads and iteration order. For per-neuron external drive.
 """
 @inline draw_poisson(λ::Real, seed::Unsigned, step::Integer, entity::Integer) =
@@ -103,8 +103,8 @@ The ensemble-batched Poisson draw: an independent reproducible stream per `batch
     draw_normal(T, seed, step, entity) -> T
 
 A standard-normal `N(0, 1)` draw of float type `T`, a *pure* function of `(seed, step, entity)`
-via the Box--Muller transform. It consumes BOTH 64-bit words of a single Philox evaluation --- the
-same call whose second word [`draw_uniform`](@ref) discards --- so it costs one Philox eval per
+via the Box--Muller transform. It consumes BOTH 64-bit words of a single Philox evaluation (the
+same call whose second word [`draw_uniform`](@ref) discards), so it costs one Philox eval per
 draw and is allocation-free and GPU-kernel-safe (no Sampler dispatch, same discipline as
 `_uniform`). Keyed identically to `draw_uniform`, so a distinct `seed` yields an independent
 stream; for the SDE noise term, use a `seed` distinct from any Poisson drive. The `cos` branch

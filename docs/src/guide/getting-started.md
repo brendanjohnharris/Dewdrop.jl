@@ -5,7 +5,7 @@ CurrentModule = Dewdrop
 # Getting started
 
 Dewdrop is a fixed-step, clock-driven, struct-of-arrays spiking neural network engine. This page
-takes you from installation to a running, recorded simulation --- first a single unconnected
+takes you from installation to a running, recorded simulation: first a single unconnected
 population, then a small connected E/I network.
 
 ## Installation
@@ -23,13 +23,13 @@ runs the same code on the device. Nothing else is needed for CPU runs.
 
 Two orthogonal choices govern every run, and it pays to keep them separate:
 
-- **Architecture** (`arch = CPU()` / `GPU()`, set on the [`DewdropNetwork`](@ref)) --- *where* the
+- **Architecture** (`arch = CPU()` / `GPU()`, set on the [`DewdropNetwork`](@ref)): *where* the
   state lives. One source compiles to both; see [`CPU`](@ref) and [`GPU`](@ref).
-- **Execution backend** (`backend = …`, passed to [`solve`](@ref)) --- *how* each step runs. The
+- **Execution backend** (`backend = …`, passed to [`solve`](@ref)): *how* each step runs. The
   default [`Auto`](@ref) picks a good one; see [choosing a backend](backends.md).
 
 All backends compute the same dynamics on either architecture, so you can develop on the CPU and
-move to the GPU by flipping `arch` --- the results match.
+move to the GPU by flipping `arch`; the results match.
 
 Models are "model as code": a small isbits parameter struct (e.g. [`LIF`](@ref)) plus pure scalar
 dynamics. You build them in plain Julia, with no DSL.
@@ -114,7 +114,7 @@ mean_rate = 1000 * sum(firing_rate(sol)) / N       # population mean, in Hz (dt 
 
 [`fixed_prob`](@ref) gives each `(pre, post)` edge probability `p` from a reproducible
 counter-based RNG, so a given `seed` always yields the same connectome. `weight` and `delay` may be
-scalars or functions of the presynaptic index --- the function form is how excitatory and inhibitory
+scalars or functions of the presynaptic index; the function form is how excitatory and inhibitory
 neurons get opposite signs. [`steps`](@ref) sets an exact integer delay in steps (a bare number is a
 delay in milliseconds). [`PoissonDrive`](@ref) adds independent external spikes per neuron, each an
 instantaneous kick of `weight`, drawn reproducibly from `(seed, step, neuron)`.
@@ -125,14 +125,14 @@ connectivity](connectivity.md) and the [fluent builder](networks.md).
 
 ## Where to go next
 
-- [Building networks](networks.md) --- the fluent [`network`](@ref) / [`population!`](@ref) /
+- [Building networks](networks.md): the fluent [`network`](@ref) / [`population!`](@ref) /
   [`project!`](@ref) / [`build`](@ref) builder, named subpopulations, and spatial layouts.
-- [Neuron models](models.md) --- [`AdaptLIF`](@ref), [`AdEx`](@ref), [`FNSNeuron`](@ref),
+- [Neuron models](models.md): [`AdaptLIF`](@ref), [`AdEx`](@ref), [`FNSNeuron`](@ref),
   [`Heterogeneous`](@ref) per-neuron parameters, [`MultiModel`](@ref) mixed populations, and
   [`@neuron`](@ref) for your own.
-- [Synapses and connectivity](connectivity.md) --- the synapse zoo, delays, and connectome builders.
-- [Choosing a backend](backends.md) --- [`Serial`](@ref), [`Fused`](@ref), [`Turbo`](@ref), and
+- [Synapses and connectivity](connectivity.md): the synapse zoo, delays, and connectome builders.
+- [Choosing a backend](backends.md): [`Serial`](@ref), [`Fused`](@ref), [`Turbo`](@ref), and
   when each wins.
-- [Recording](recording.md) --- monitors, on-device reducers, and labelled outputs.
-- [Running on the GPU](gpu.md) --- `arch = GPU()`, batching with [`batch`](@ref), and the scatter
+- [Recording](recording.md): monitors, on-device reducers, and labelled outputs.
+- [Running on the GPU](gpu.md): `arch = GPU()`, batching with [`batch`](@ref), and the scatter
   strategies.

@@ -1,9 +1,9 @@
-# * Statistical observables (analysis layer) --- spatial-network measures,
+# * Statistical observables (analysis layer): spatial-network measures,
 # operating on the recorded traces of a `DewdropSolution`. Two layers: matrix-core functions over a
 # Neuron×Time raster `S` (Dewdrop's recording orientation), and
 # `sol`-based wrappers that pull the `Spikes`/`Trace` data, the time step, positions, and the
 # named-subpopulation registry (`of = :E`) from the solution. Spectral measures use the internal FFT
-# (FFT.jl). These are host-side analysis, not engine work --- pure functions of recorded output.
+# (FFT.jl). These are host-side analysis, not engine work: pure functions of recorded output.
 
 # population mean / variance without a Statistics dependency (population variance, ÷N, the
 # `mean(x²) − mean(x)²` form used by the susceptibility measure).
@@ -14,7 +14,7 @@
 # `of`. Requires a full `Spikes()` recording (idx = Colon) when slicing a named subpop.
 function _spike_raster(sol::DewdropSolution; of = :all, name = nothing)
     res = _find_spikes(sol.record, name)
-    res === nothing && error("no spikes recorded --- pass `record = (spikes = Spikes(),)` to `solve`")
+    res === nothing && error("no spikes recorded: pass `record = (spikes = Spikes(),)` to `solve`")
     data = res.data                                   # (neuron × time), over the recorded set res.idx
     of === :all && return data
     r = _subrange(sol.subpops, of)
@@ -64,7 +64,7 @@ export coarsegrain
     susceptibility(sol; bin=nothing, of=:all) -> χ
 
 Population susceptibility `χ = ⟨ρ²⟩_t − ⟨ρ⟩_t²`, where `ρ(t)` is the fraction of active neurons at
-time `t` of a Neuron×Time raster `S` (the variance of the population activity fraction --- large in a
+time `t` of a Neuron×Time raster `S` (the variance of the population activity fraction: large in a
 synchronous regime, small in an asynchronous one). `bin` (in time units) coarse-grains time first.
 """
 function susceptibility(S::AbstractMatrix)
@@ -114,7 +114,7 @@ function temporal_average(sol::DewdropSolution, var::Symbol = :V; of = :all)
     for r in values(sol.record)
         r.kind === :trace && (res = r; break)
     end
-    res === nothing && error("no trace recorded --- pass e.g. `record = (V = Trace(:V),)` to `solve`")
+    res === nothing && error("no trace recorded: pass e.g. `record = (V = Trace(:V),)` to `solve`")
     data = res.data
     of === :all && return temporal_average(data)
     r = _subrange(sol.subpops, of)
@@ -298,12 +298,12 @@ function radial_autocorrelation(S::AbstractMatrix, positions; dr::Real = 0.05)
         end
         push!(profiles, sums ./ max.(counts, 1))
     end
-    isempty(profiles) && error("all frames were variance-zero --- nothing to average")
+    isempty(profiles) && error("all frames were variance-zero: nothing to average")
     g_r = [_mean(getindex.(profiles, k)) for k in 1:length(r_bins)]
     return g_r, r_bins
 end
 function radial_autocorrelation(sol::DewdropSolution; dr::Real = 0.05, of = :all, name = nothing)
-    sol.positions === nothing && error("the solution carries no positions --- build with `positions = …`")
+    sol.positions === nothing && error("the solution carries no positions: build with `positions = …`")
     S = _spike_raster(sol; of = of, name = name)
     pos = of === :all ? sol.positions : sol.positions[_subrange(sol.subpops, of)]
     return radial_autocorrelation(S, pos; dr = dr)

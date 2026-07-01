@@ -257,7 +257,7 @@ function CommonSolve.init(
     spike_count = fill!(allocate(arch, CT, N), zero(CT))
     # plastic projections (STDP) build a PlasticState (mutable weights + traces); static ones the
     # base synapse state. The compacted scatter walks active SOURCES only, so it cannot drive STDP's
-    # postsynaptic-potentiation branch --- plastic projections require the edge scatter.
+    # postsynaptic-potentiation branch: plastic projections require the edge scatter.
     scatter === :compacted && any(p -> p.plasticity !== nothing, prob.projections) &&
         throw(ArgumentError("STDP (plastic projections) require scatter = :edge; the compacted scatter cannot drive the postsynaptic potentiation branch"))
     # resolve each projection's delays to integer steps at THIS dt (ms → steps; explicit steps pass through),
@@ -291,14 +291,14 @@ _l2_cache_bytes(::AbstractArchitecture) = _DEFAULT_L2_BYTES
 
 # Resolve `scatter = :auto`. The fused GPU edge-parallel scatter reads one source index PER EDGE every
 # step (Θ(nedges) memory traffic, independent of how few neurons fire), so once the connectome's index
-# array spills the L2 cache the step becomes bandwidth-bound and scales with edge count --- a large GPU
+# array spills the L2 cache the step becomes bandwidth-bound and scales with edge count; a large GPU
 # network degrades superlinearly. The compacted scatter (Compaction.jl) touches only ACTIVE sources
 # (work ∝ spikes, for the usual sparse firing), winning past that crossover despite its per-step host
-# sync. So: CPU → always `:edge` (the CPU scatter already walks only spiking rows --- compaction has no
+# sync. So: CPU → always `:edge` (the CPU scatter already walks only spiking rows; compaction has no
 # upside and adds a compactify pass); plastic projections → `:edge` (the compacted scatter cannot drive
 # STDP potentiation); GPU → `:compacted` once the index footprint exceeds ~half the L2 (calibrated to the
 # measured ~1.3e7-edge / 96 MB-L2 crossover), else `:edge`. The firing rate is unknown at init, so this
-# assumes the sparse-firing regime typical of SNNs --- force a mode (`scatter = :edge` / `:compacted`)
+# assumes the sparse-firing regime typical of SNNs; force a mode (`scatter = :edge` / `:compacted`)
 # for a dense large GPU network.
 function _resolve_scatter(scatter::Symbol, arch::AbstractArchitecture, projections)
     scatter === :auto || return scatter
@@ -310,7 +310,7 @@ end
 # Guard the Poisson drive against the sampler's underflow cliff: `poisson_count` inverts the
 # CDF from `exp(-λ)`, which underflows to 0 for λ ≳ 745 and then silently returns the iteration
 # cap every step. λ = rate·dt is the mean events per step, so `rate` must be in events per unit
-# time matching `dt` --- passing a per-second rate with a per-millisecond `dt` overshoots 1000×.
+# time matching `dt`: passing a per-second rate with a per-millisecond `dt` overshoots 1000×.
 _check_drive(::Nothing, dt) = nothing
 function _check_drive(d::PoissonDrive, dt)
     λ = d.rate * dt
@@ -326,7 +326,7 @@ end
 
 # Initial membrane potential. `nothing` => the leak reversal `EL` (synchronous default); a
 # scalar => a uniform clamp; a `(lo, hi)` tuple => uniform-random per neuron via the
-# counter-based RNG (deterministic, GPU-safe, breaks initial synchrony --- essential for the
+# counter-based RNG (deterministic, GPU-safe, breaks initial synchrony; essential for the
 # balanced asynchronous-irregular state); an explicit vector => copied verbatim.
 _init_voltage!(V, EL, ::Nothing, ::Type{T}, seed) where {T} = (fill!(V, EL); V)
 _init_voltage!(V, EL, v0::Real, ::Type{T}, seed) where {T} = (fill!(V, T(v0)); V)
@@ -369,7 +369,7 @@ _make_synstate(arch, syn::DualExpSynapse, conn, ::Type{T}, N, dt) where {T} =
 _make_synstate(arch, syn::FrozenDualExpSynapse, conn, ::Type{T}, N, dt) where {T} =
     _make_dualexp_state(FrozenDualExpCOBAState, arch, syn, conn, T, N, dt)
 
-# --- Within-step phases. Synapse work iterates the projection tuple, dispatching each
+# Within-step phases. Synapse work iterates the projection tuple, dispatching each
 # operation on the per-projection synaptic-state type (compile-time unrolled), so a
 # population can carry any mix of CUBA / COBA / delta projections, and an unconnected
 # population (`syns === ()`) compiles the synapse work away entirely. ---
@@ -438,7 +438,7 @@ end
 end
 
 # Propagate through the compaction seam so `scatter = :compacted` is honoured on EVERY backend
-# (the CPU broadcast path included), matching the fused GPU path and the batched path --- not a
+# (the CPU broadcast path included), matching the fused GPU path and the batched path---not a
 # silent no-op. `nothing` → edge-parallel scatter; a CompactionScratch → the compacted scatter.
 @inline run_phase!(::Val{:propagate}, integ::DewdropIntegrator) = _propagate_step!(integ.compaction, integ)
 
@@ -517,7 +517,7 @@ end
 end
 
 # Compile-time unroll of the schedule (carried in its type parameter) into a straight-line
-# sequence of phase calls --- no runtime Symbol comparison, no dynamic dispatch.
+# sequence of phase calls: no runtime Symbol comparison, no dynamic dispatch.
 @generated function run_phases!(::Schedule{P}, integ::DewdropIntegrator) where {P}
     calls = [:(run_phase!(Val($(QuoteNode(ph))), integ)) for ph in P]
     return Expr(:block, calls..., :(return nothing))
@@ -564,7 +564,7 @@ end
     DewdropSolution
 
 The result of a run: final SoA `state`, per-unit `spike_count`, number of steps, `dt`, `tspan`,
-and `record` --- a NamedTuple of the requested monitors' results (see [`firing_rate`](@ref),
+and `record`: a NamedTuple of the requested monitors' results (see [`firing_rate`](@ref),
 [`raster`](@ref), and the `record` kwarg to `solve`).
 """
 struct DewdropSolution{ST, C, T, R, SP, PO}
@@ -602,7 +602,7 @@ Per-unit firing rate (`spike_count / duration`), in inverse units of `dt`.
 firing_rate(sol::DewdropSolution) = sol.spike_count ./ duration(sol)
 export firing_rate
 
-# --- Named-subpopulation reference API ---
+# Named-subpopulation reference API
 # A subpop is a contiguous range into the flat SoA, looked up in the solution's registry. `sol[:E]`
 # returns a lightweight view (no copy); `firing_rate(sol, :E)` / `raster(sol; of = :E)` restrict to it.
 
@@ -610,7 +610,7 @@ export firing_rate
 function _subrange(subpops::NamedTuple, name::Symbol)
     haskey(subpops, name) || throw(
         ArgumentError(
-            "unknown subpopulation :$name --- available: $(join(keys(subpops), ", "))"
+            "unknown subpopulation :$name; available: $(join(keys(subpops), ", "))"
         )
     )
     return subpops[name]
@@ -667,7 +667,7 @@ particular spike monitor; by default the first one is used. `of` (a subpopulatio
 """
 function raster(sol::DewdropSolution; name = nothing, of = nothing)
     res = _find_spikes(sol.record, name)
-    res === nothing && error("no spikes recorded --- pass `record = (spikes = Spikes(),)` to `solve`")
+    res === nothing && error("no spikes recorded: pass `record = (spikes = Spikes(),)` to `solve`")
     idx = findall(res.data)                          # CartesianIndex(recorded-row, column)
     times = [I[2] * res.every * sol.dt for I in idx]
     ids = [_neuronid(res.idx, I[1]) for I in idx]

@@ -1,5 +1,5 @@
 # * Unit-boundary seams.
-# Dewdrop's engine works in a fixed, *coherent* canonical float system --- time in ms, voltage
+# Dewdrop's engine works in a fixed, *coherent* canonical float system: time in ms, voltage
 # in mV, conductance in nS, current in pA, capacitance in pF, resistance in GΩ, rate in kHz ---
 # chosen so the dynamics equations carry no stray numerical factors (e.g. R·I = GΩ·pA = mV,
 # R·g = GΩ·nS = 1, R·C = GΩ·pF = ms). Plain numbers passed to the API are assumed to already be

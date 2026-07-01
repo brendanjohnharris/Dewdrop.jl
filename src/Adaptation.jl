@@ -1,6 +1,6 @@
-# * Adaptation neurons --- models that carry a spike-triggered adaptation current `w`
+# * Adaptation neurons: models that carry a spike-triggered adaptation current `w`
 # alongside the membrane potential `V`. `AdaptLIF` is fully linear; `AdEx` adds the exponential
-# spike-initiation term. Both advance `(V, w)` by the "w-first" symplectic split --- `w` from the
+# spike-initiation term. Both advance `(V, w)` by the "w-first" symplectic split: `w` from the
 # OLD `V` (exact exponential relaxation), then `V` from the OLD V and the NEW `w` (the exact
 # COBA propagator, with `-w` and AdEx's `Iexp` folded into the current). This split makes the
 # broadcast path (two `@.` passes) and the per-neuron fused/batched kernels bit-identical, and
@@ -15,7 +15,7 @@
 # Inf/NaN in the single step before the Vpeak cutoff fires (kept well inside Float32 range).
 const _ADEX_EXP_CAP = 50.0
 
-# --- AdaptLIF: linear adaptation (aLIF) ----------------------------------------------------------
+# AdaptLIF: linear adaptation (aLIF)
 """
     AdaptLIF(; τ, EL, Vθ, Vr, R, tref, a, b, τw)
 
@@ -47,7 +47,7 @@ float_type(::AdaptLIF{T}) where {T} = T
 # synapses via `gtot` still work); `w` itself uses the shared `_step_w` below (defined after AdEx).
 @inline _step_V(m::AdaptLIF, V, w, gtot, itot, dt) = _coba_step(V, m.EL, m.R, m.τ, gtot, itot - w, dt)
 
-# --- AdEx: adaptive exponential integrate-and-fire (Brette & Gerstner 2005) ----------------------
+# AdEx: adaptive exponential integrate-and-fire (Brette & Gerstner 2005)
 """
     AdEx(; C, gL, EL, VT, ΔT, Vr, Vpeak, a, b, τw, tref=0)
 
@@ -89,7 +89,7 @@ end
     return ifelse(Vn ≥ m.Vpeak, m.Vpeak, Vn)                                     # clamp at the cutoff (no Inf)
 end
 
-# --- FNSNeuron: conductance-adaptation LIF (Treves-style) ------------------
+# FNSNeuron: conductance-adaptation LIF (Treves-style)
 """
     FNSNeuron(; C, gL, VL, VK, Vθ, Vr, tref, τK, ΔgK)
 
@@ -129,7 +129,7 @@ float_type(::FNSNeuron{T}) where {T} = T
 @inline _step_V(m::FNSNeuron, V, w, gtot, itot, dt) =
     _coba_step(V, m.VL, inv(m.gL), m.C / m.gL, gtot + w, itot + w * m.VK, dt)
 
-# --- The shared (V,w) advance, w-first --- used by every execution path ---
+# The shared (V,w) advance, w-first: used by every execution path
 # `advance_state` is the per-neuron scalar step for an adaptation model: w from old V, V from new w.
 @inline function advance_state(m, V, w, gtot, itot, dt)
     w2 = _step_w(m, V, w, dt)
@@ -137,14 +137,14 @@ float_type(::FNSNeuron{T}) where {T} = T
     return (V2, w2)
 end
 
-# --- The aux-state seam: route on whether the model carries a `w` column ---
+# The aux-state seam: route on whether the model carries a `w` column
 # `_has_w` is a compile-time bool from the model's statevars; the `st.w` accesses below appear ONLY
 # in the carries-`w` methods, so a V-only model (LIF / @neuron) never instantiates them and keeps
 # its prior code byte-for-byte. The carries-`w` value is `nothing` for V-only, a scalar otherwise.
 @inline _has_w(::Type{M}) where {M} = (:w in statevars(M))
 
-# --- per-neuron heterogeneity hooks (see Heterogeneous.jl). A scalar model resolves to
-# itself per-neuron (bit-identical, zero-cost), is not heterogeneous, and rests at its leak reversal. ---
+# per-neuron heterogeneity hooks (see Heterogeneous.jl). A scalar model resolves to
+# itself per-neuron (bit-identical, zero-cost), is not heterogeneous, and rests at its leak reversal.
 @inline _resolve(m::AbstractNeuronModel, i) = m
 @inline _is_hetero(::AbstractNeuronModel) = false
 @inline _resting(m::AbstractNeuronModel) = m.EL
@@ -169,7 +169,7 @@ end
 @inline _spike_aux(m, ::Nothing, spiked) = nothing
 @inline _spike_aux(m, w, spiked) = ifelse(spiked, w + spike_increment(m), w)
 
-# --- Broadcast-path helpers (called from Engine.jl's :integrate / :reset phases) ---
+# Broadcast-path helpers (called from Engine.jl's :integrate / :reset phases)
 # V-only: the exact prior single broadcast (byte-identical). Carries-w: the two-pass w-first split.
 @inline _integrate_membrane!(m, st, gtot, itot, dt, refrac, Vr, z) =
     _integrate_membrane!(Val(_has_w(typeof(m))), m, st, gtot, itot, dt, refrac, Vr, z)

@@ -8,7 +8,7 @@
 #   julia --project=test test/brunel_probe.jl NE=2000 NI=500 g=5 J=0.224 \
 #       drive_rate=6 drive_weight=0.224 D=15 T=1000 transient=200 tag=ai seed=1
 #
-# Batch (one Julia load, many solves --- amortises startup):
+# Batch (one Julia load, many solves; amortises startup):
 #   julia --project=test test/brunel_probe.jl batch=/tmp/cands.txt
 #   where each non-blank line of cands.txt is one run's `key=value key=value ...` arg list.
 #

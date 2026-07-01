@@ -1,6 +1,6 @@
-# * Batching --- run B network "members" together. The GENERAL execution is block-diagonal: stack the B
+# * Batching: run B network "members" together. The GENERAL execution is block-diagonal: stack the B
 # networks into ONE (ΣN)-neuron network whose connectome is block-diagonal (member b offset by ΣN_{<b}, no
-# cross-member edges), solved by the EXISTING scalar engine --- no new kernels. This handles distinct
+# cross-member edges), solved by the EXISTING scalar engine (no new kernels). This handles distinct
 # models / weights / delays / topology across members; each member's block runs independently (so with no
 # drive it is bit-identical to that member solved alone). The memory-optimal shared-CSR ensemble (`batch=B`)
 # is the special case for input/v0/seed-only variation; routing to it automatically is a follow-on.
@@ -35,7 +35,7 @@ nmembers(b::NetworkBatch) = length(b.members)
     batch(base; param = values, …) -> NetworkBatch
 
 Construct a [`NetworkBatch`](@ref) of `B` members.
-- a vector of `DewdropNetwork`s / [`AbstractNetworkSpec`](@ref)s --- the members directly;
+- a vector of `DewdropNetwork`s / [`AbstractNetworkSpec`](@ref)s: the members directly;
 - a generator: member `i` is `f(base, i)` for `i in 1:n`;
 - a parameter sweep over `base` (a neuron model / spec / network): `B = length(values)`, member `i` sets each
   `param` to `values[i]` (zipped). `cartesian = true` sweeps the Cartesian product.
@@ -44,7 +44,7 @@ batch(items::AbstractVector) = NetworkBatch(collect(items))
 batch(f, base; n::Integer) = NetworkBatch([f(base, i) for i in 1:Int(n)])
 export batch, nmembers
 
-# --- parameter sweep ---------------------------------------------------------------------------------
+# parameter sweep
 # rebuild an isbits model/struct with the named fields overridden (positional reconstruction; no extra dep).
 function _setparams(x, nt::NamedTuple)
     T = typeof(x)
@@ -89,7 +89,7 @@ function batch(base; cartesian::Bool = false, kw...)
     return NetworkBatch(members)
 end
 
-# --- block-diagonal assembly -------------------------------------------------------------------------
+# block-diagonal assembly
 _expand_input(x::Number, n::Int) = fill(x, n)
 _expand_input(x::AbstractVector, n::Int) =
     (length(x) == n || error("input length $(length(x)) ≠ N = $n"); collect(x))
@@ -101,9 +101,9 @@ function _offset_edges(conn::SparseCSR, off::Int)
     return [(Int(src[e]) + off, Int(post[e]) + off, w[e], d[e]) for e in 1:nedges(conn)]
 end
 
-# --- per-member stateful-synapse offset (so block-stacking carries EVERY member's drive) ----------------
+# per-member stateful-synapse offset (so block-stacking carries EVERY member's drive)
 # A synapse is block-MERGEABLE when its behaviour is fully captured by its edge list + shared scalar params,
-# so the B members' projections share ONE synapse over a concatenated, offset connectome (the default ---
+# so the B members' projections share ONE synapse over a concatenated, offset connectome (the default:
 # FrozenDualExpSynapse, DualExpSynapse, CUBA/COBA, delta). A synapse that carries its OWN internal per-member
 # wiring is NOT mergeable: a streaming `PoissonSource` drive holds an `extconn` targeting member-local indices
 # `1:N`, so reusing member 1's would leave members 2..B undriven. Those get one projection PER MEMBER, each
@@ -112,8 +112,8 @@ _block_mergeable(::AbstractSynapseModel) = true
 _block_mergeable(::PoissonSource) = false
 
 # Shift a synapse's INTERNAL wiring into member b's block: targets += `off`, post-dimension grows to `Ntot`.
-# Edge-defined synapses carry none → identity. A `PoissonSource` offsets its `extconn`'s POST (targets) only
-# --- sources, weights, delays and `seed` are untouched, so the member's per-source Poisson draw is
+# Edge-defined synapses carry none → identity. A `PoissonSource` offsets its `extconn`'s POST (targets) only;
+# sources, weights, delays and `seed` are untouched, so the member's per-source Poisson draw is
 # bit-identical to its standalone solve; only the deposit lands in the member's block.
 _offset_synapse(syn::AbstractSynapseModel, off::Int, Ntot::Int, arch) = syn
 _offset_synapse(p::PoissonSource, off::Int, Ntot::Int, arch) =
@@ -151,7 +151,7 @@ function _block_diagonal(nets::AbstractVector{<:DewdropNetwork})
     # Stacked projections: a block-mergeable synapse shares ONE projection over the members' concatenated,
     # offset edges; a non-mergeable one (a streaming drive) gets ONE projection per member, offset into its
     # block, so every member is driven by ITS OWN source rather than member 1's (otherwise members 2..B are
-    # silently undriven --- their `extconn` would still point at member 1's block).
+    # silently undriven; their `extconn` would still point at member 1's block).
     projlist = Projection[]
     for j in 1:nproj
         syn = first(nets).projections[j].synapse
@@ -174,7 +174,7 @@ function _block_diagonal(nets::AbstractVector{<:DewdropNetwork})
     )
 end
 
-# --- the unified batch result -------------------------------------------------------------------------
+# the unified batch result
 """
     BatchSolution
 
@@ -195,7 +195,7 @@ firing_rate(bs::BatchSolution) = [sc ./ bs.duration for sc in bs.spike_counts]
 firing_rate(bs::BatchSolution, b::Integer) = bs.spike_counts[b] ./ bs.duration
 export BatchSolution
 
-# --- execution modes (all reuse existing engines; only fused Mode A would touch a kernel) ---------------
+# execution modes (all reuse existing engines; only fused Mode A would touch a kernel)
 _materialize_member(net::DewdropNetwork, alg, tspan) = net
 _materialize_member(spec::AbstractNetworkSpec, alg, tspan) = materialize(spec, alg; tspan = tspan)
 
@@ -211,7 +211,7 @@ function _choose_mode(nets)
     return all(n -> typeof(n.model) === M, nets) ? :fused : :multirun
 end
 
-# Mode 0 --- fused shared-CSR ensemble: ONE network broadcast over B `(N,B)` state columns; per-column input.
+# Mode 0, fused shared-CSR ensemble: ONE network broadcast over B `(N,B)` state columns; per-column input.
 function _solve_shared(nets, alg; kwargs...)
     B = length(nets)
     inputmat = reduce(hcat, [_expand_input(net.input, net.n) for net in nets])
@@ -220,9 +220,9 @@ function _solve_shared(nets, alg; kwargs...)
 end
 
 # Mode A-lite (shared-connectivity multi-run): resolve the connectome ONCE and SHARE the array across B
-# separate scalar solves (each with its own model) --- Mode-A memory (O(edges)) with NO kernel changes.
+# separate scalar solves (each with its own model): Mode-A memory (O(edges)) with NO kernel changes.
 # The B solves are independent and the shared connectome is read-only, so `threads` runs them in parallel
-# (outer over members; each inner solve forced single-threaded via `Serial` --- bit-identical --- to avoid
+# (outer over members; each inner solve forced single-threaded via `Serial`, bit-identical, to avoid
 # nesting the per-neuron threading). `threads = :auto` threads when there are ≥2 members and >1 thread.
 function _solve_multirun(nets, alg; threads = :auto, kwargs...)
     rprojs = Tuple(
@@ -249,7 +249,7 @@ function _solve_multirun(nets, alg; threads = :auto, kwargs...)
     return BatchSolution([s.spike_count for s in sols], duration(first(sols)), :multirun, sols)
 end
 
-# Fused Mode A --- per-member params in the (N,B) megakernel: ONE shared connectome, a `BatchedModel` with
+# Fused Mode A, per-member params in the (N,B) megakernel: ONE shared connectome, a `BatchedModel` with
 # per-member override arrays, one fused launch. Best of both (fused throughput + O(edges) memory); needs a
 # uniform model type across members.
 function _solve_fused(nets, alg; kwargs...)
@@ -274,7 +274,7 @@ function _solve_fused(nets, alg; kwargs...)
     return BatchSolution([collect(view(bsol.spike_count, :, b)) for b in 1:B], bsol.nsteps * bsol.dt, :fused, bsol)
 end
 
-# Mode B --- block-diagonal: stack the B members into one network, one scalar solve.
+# Mode B, block-diagonal: stack the B members into one network, one scalar solve.
 function _solve_block(nets, alg; kwargs...)
     sol = solve(_block_diagonal(nets), alg; kwargs...)
     Ns = [net.n for net in nets]

@@ -1,14 +1,14 @@
 # * Beautiful, hierarchical REPL rendering. Every Dewdrop object renders to reflect the structure it
 # actually has: a leaf model (neuron / synapse) as a flat aligned parameter sheet; a composite model
 # (MultiModel / Heterogeneous), a network, a builder, or a solution as an indented tree whose nodes
-# are the real structural units. Purely host-side presentation --- never in a kernel, never on the
+# are the real structural units. Purely host-side presentation: never in a kernel, never on the
 # hot path. Dispatch specificity does the routing: a composite's own `show` is more specific than the
 # generic leaf method, so the tree intercepts automatically.
 #
 # Two forms per type: the rich `show(io, ::MIME"text/plain", x)` (the REPL result) and the compact
-# `show(io, x)` (one line --- inline, array elements, and how a parent renders a child).
+# `show(io, x)` (one line: inline, array elements, and how a parent renders a child).
 
-# --- styling: subtle colour, ALWAYS gated on `get(io, :color, false)` (plain when piped/logged) ---
+# styling: subtle colour, ALWAYS gated on `get(io, :color, false)` (plain when piped/logged)
 @inline _color(io::IO) = get(io, :color, false)::Bool
 function _styled(io::IO, s, kind::Symbol)
     if _color(io)
@@ -52,7 +52,7 @@ end
 # host-resident? (avoid triggering a device reduction at show-time for extrema summaries)
 _onhost(x::AbstractArray) = x isa Array
 
-# --- units: the canonical display unit for a field, where the dimension is known (built-ins only) ---
+# units: the canonical display unit for a field, where the dimension is known (built-ins only)
 # `_field_dims(::Type)` defaults to `nothing` (e.g. @neuron models) → bare numbers, no invented units.
 _field_dims(::Type) = nothing
 _unit_of(dim::Symbol) =
@@ -135,13 +135,13 @@ function _print_tree(io::IO, children::AbstractVector; prefix::String = "")
     return nothing
 end
 
-# --- leaf-parameter expansion for the network / builder / spec tree --------------------------------------
+# leaf-parameter expansion for the network / builder / spec tree
 # The tree expands each leaf's parameters by DEFAULT (`:detail => :full`); `IOContext(io, :detail => :compact)`
-# gives the one-line-per-node type-level summary. (`:compact` --- the Julia inline hint --- still yields the
+# gives the one-line-per-node type-level summary. (`:compact` (the Julia inline hint) still yields the
 # bare one-liner via the 2-arg `show`.)
 @inline _expand(io::IO) = get(io, :detail, :full) !== :compact
 
-# a leaf model's parameters as aligned `name = value unit` tree child rows --- shared by population neuron
+# a leaf model's parameters as aligned `name = value unit` tree child rows: shared by population neuron
 # models and projection synapses (reuses the `_field_dims`/`_unit_for` unit table).
 function _param_children(m)
     fns = fieldnames(typeof(m))
@@ -156,7 +156,7 @@ function _param_children(m)
 end
 
 # population sub-tree: a simple neuron model expands to its parameters; a merged model (Heterogeneous /
-# multi-type) stays type-level --- its parameters are per-neuron, so there is no single sheet to show.
+# multi-type) stays type-level; its parameters are per-neuron, so there is no single sheet to show.
 _pop_param_children(model::AbstractNeuronModel, r) = _param_children(model)
 _pop_param_children(model, r) = Any[]
 
@@ -196,8 +196,8 @@ function Base.show(io::IO, s::AbstractSynapseModel)
     return nothing
 end
 
-# A PoissonSource (streaming Poisson drive) renders as its driving statistics --- rate + #sources over the
-# wrapped synapse --- not a field dump of the inner synapse + extconn CSR. It inherits the inner synapse's
+# A PoissonSource (streaming Poisson drive) renders as its driving statistics (rate + #sources over the
+# wrapped synapse), not a field dump of the inner synapse + extconn CSR. It inherits the inner synapse's
 # kind tag (COBA / CUBA / delta / …).
 _synkind(s::PoissonSource) = _synkind(s.synapse)
 function Base.show(io::IO, ::MIME"text/plain", s::PoissonSource)

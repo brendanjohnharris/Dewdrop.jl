@@ -4,7 +4,7 @@
 # index width, mean degree) and the solution (firing fraction per step), and emits at most one
 # message per distinct suggestion per session (so a parameter sweep is not spammed). Silenceable
 # globally (`Dewdrop.set_advice!(false)`) or per call (`solve(...; advise = false)`). The advice is
-# hedged --- these are rules of thumb, not guarantees.
+# hedged: these are rules of thumb, not guarantees.
 
 const _ADVISE = Ref(true)
 const _ADVISED = Set{Symbol}()
@@ -30,12 +30,12 @@ reset_advice!() = (empty!(_ADVISED); _RUNTIME_DONE[] = false; nothing)
     return true
 end
 
-# --- problem-side facts (no device reads) ---
+# problem-side facts (no device reads)
 _is_gpu(prob::DewdropNetwork) = prob.arch isa GPU
 _conns(prob::DewdropNetwork) = (p.conn for p in prob.projections)
 _total_edges(prob::DewdropNetwork) = sum(nedges, _conns(prob); init = 0)
 
-# --- solution-side firing fraction per step (one device reduction; gated behind `advise`) ---
+# solution-side firing fraction per step (one device reduction; gated behind `advise`)
 # Duck-typed over DewdropSolution / BatchedSolution (both carry `spike_count` + `nsteps`); for the
 # batched case `length` counts all N×B cells, giving the per-cell-per-step fraction.
 _firing_fraction(sol) =
@@ -67,7 +67,7 @@ function _advise_static(prob::DewdropNetwork)
 end
 
 # Runtime suggestions (regime-dependent): need the measured firing fraction. `scatter` is the run's REQUESTED
-# scatter (`:auto` if unset), resolved to the actual choice --- so we don't re-suggest compaction to a run
+# scatter (`:auto` if unset), resolved to the actual choice; so we don't re-suggest compaction to a run
 # that already opted into it.
 function _advise_runtime(prob::DewdropNetwork, frac::Real, scatter::Symbol = :auto)
     _is_gpu(prob) || return nothing
@@ -75,21 +75,21 @@ function _advise_runtime(prob::DewdropNetwork, frac::Real, scatter::Symbol = :au
     md = ne == 0 ? 0.0 : ne / prob.n   # reuse ne; avoids a second edge-count walk
     pct = round(frac * 100; digits = 2)
     # only suggest compaction if this run's ACTUAL scatter is the edge scatter (not when it already resolved
-    # to compacted --- whether via `:auto` past the L2-spill crossover, or an explicit `scatter = :compacted`).
+    # to compacted: whether via `:auto` past the L2-spill crossover, or an explicit `scatter = :compacted`).
     if ne > 1_000_000 && frac < 0.02 && _resolve_scatter(scatter, prob.arch, prob.projections) === :edge
         _emit(
             :compaction,
             "sparse firing ($(pct)% of neurons per step) over a large network " *
                 "(nedges = $ne): the scatter wastes most of its threads on silent synapses. The " *
                 "compacted scatter (`solve(...; scatter = :compacted)`) processes only active " *
-                "synapses --- measured up to ~30× faster in this regime."
+                "synapses: measured up to ~30× faster in this regime."
         )
     elseif md > 500 && frac > 0.05
         _emit(
             :gather,
             "dense connectivity (mean degree ≈ $(round(Int, md))) at high firing ($(pct)%/step): " *
                 "the atomic edge-parallel scatter is contention-bound here. A gather/SpMV backend " *
-                "(atomic-free, target-parallel) is the structural fit --- not yet implemented."
+                "(atomic-free, target-parallel) is the structural fit: not yet implemented."
         )
     elseif prob.n < 5000 && frac < 0.01
         _emit(
@@ -105,7 +105,7 @@ end
 
 # CPU suggestion (static, free): at large N the dense per-neuron phases dominate the step. The default
 # `Auto` backend now routes EVERY canonical CPU network through the `Fused` step (the single-pass tight
-# loop --- bit-identical, ~2× the per-phase `Serial` baseline; it gates its own threading on
+# loop: bit-identical, ~2× the per-phase `Serial` baseline; it gates its own threading on
 # work-per-thread, so small nets run single-threaded and large ones thread), so nothing is needed there.
 # The remaining lever is SIMD: `backend = Turbo()` (LoopVectorization) vectorises the membrane `exp` for
 # ~compiled-C++ throughput, at the cost of bit-identicality (spike-identical). Point users to it when

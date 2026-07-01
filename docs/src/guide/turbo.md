@@ -8,7 +8,7 @@ The [`Turbo`](@ref) backend is the fastest CPU path: it vectorises the dense per
 (notably the membrane `exp`) with [LoopVectorization](https://github.com/JuliaSIMD/LoopVectorization.jl)'s
 `@turbo`, reaching compiled-C++ throughput. It is **opt-in** because it adds the LoopVectorization
 dependency and is not bit-identical to the other backends (SIMD `exp` differs from scalar `libm` at
-the ULP level --- results are *spike*-identical, not byte-identical).
+the ULP level: results are *spike*-identical, not byte-identical).
 
 ```julia
 using Dewdrop
@@ -31,8 +31,8 @@ extension). Requesting `Turbo()` for an unsupported model errors at `init` with 
 |---|:--:|---|
 | [`LIF`](@ref) | ✅ | CUBA & COBA (reads `gtot`) |
 | [`AdEx`](@ref) | ✅ | the exponential-IF membrane; CUBA & COBA |
-| `AdaptLIF` | ❌ | not yet --- use `Fused` (contributions welcome) |
-| `FNSNeuron` | ❌ | not yet --- use `Fused` |
+| `AdaptLIF` | ❌ | not yet; use `Fused` (contributions welcome) |
+| `FNSNeuron` | ❌ | not yet; use `Fused` |
 | `Heterogeneous` / `MultiModel` | ❌ | per-neuron / per-group resolution is not vectorised; use `Fused` |
 | `@neuron` models | ❌ by default | add a specialization (below) |
 

@@ -1,11 +1,11 @@
-# * Per-neuron heterogeneous parameters --- `Heterogeneous(base; field = array, …)` wraps a
+# * Per-neuron heterogeneous parameters: `Heterogeneous(base; field = array, …)` wraps a
 # scalar neuron model and overrides chosen parameters with per-neuron arrays. Storage is a FROZEN
 # ARRAY (computed once at construction, read many times), not a procedural in-kernel draw: a per-neuron
 # parameter is time-constant, so recomputing it every step would be pure waste; an array is general
 # (block E/I, parametric distributions, or loaded data), trivially reproducible, and Adapt-movable.
 # Reproducible distributions are obtained by FILLING the array via the counter-based RNG (`per_neuron`).
 #
-# Mechanism: the engine resolves a per-neuron SCALAR base model in the hot loop --- `_resolve(h, i)`
+# Mechanism: the engine resolves a per-neuron SCALAR base model in the hot loop; `_resolve(h, i)`
 # rebuilds `base` with the i-th value of each overridden field (ConstructionBase.setproperties, isbits
 # in/out → allocation-free + GPU-safe). The existing model hooks then run unchanged on the resolved
 # model. A heterogeneous model routes through the fused megakernel (which has the per-neuron index),
@@ -44,7 +44,7 @@ float_type(h::Heterogeneous) = float_type(h.base)
 
 # the per-neuron scalar model: rebuild `base` with the i-th value of each overridden field, via the
 # base's positional constructor (`@generated` so it specialises per (base type, override keys) and
-# inlines to a plain isbits constructor call --- allocation-free + GPU-kernel-safe). Generic
+# inlines to a plain isbits constructor call: allocation-free + GPU-kernel-safe). Generic
 # `_resolve(m, i) = m` (in Adaptation.jl) keeps scalar models bit-identical and zero-cost.
 @generated function _resolve(h::Heterogeneous{M, NT}, i) where {M, NT}
     overkeys = NT.parameters[1]                              # the overridden field names

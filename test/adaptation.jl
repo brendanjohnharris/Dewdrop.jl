@@ -8,7 +8,7 @@ using JLArrays
 # split: w from the old V, then V from the new w) plus a spike-triggered increment `w += b`. LIF
 # and every `@neuron` model keep the V-only fast path bit-identical (the empty-aux dispatch).
 
-# --- AdEx fine-dt reference (forward Euler on the AdEx ODE) for an independent dynamics check ---
+# AdEx fine-dt reference (forward Euler on the AdEx ODE) for an independent dynamics check
 function adex_reference_spikes(m, I, dt, tend)
     V = m.EL; w = 0.0; refr = 0.0; spikes = Float64[]
     for k in 1:round(Int, tend / dt)

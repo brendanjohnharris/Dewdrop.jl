@@ -2,7 +2,7 @@ using Dewdrop
 using Test
 
 # Hierarchical `show` (src/Show.jl): every Dewdrop object renders cleanly in the REPL, reflecting
-# the structure it actually has --- a leaf model as a flat parameter sheet, a composite model or a
+# the structure it actually has: a leaf model as a flat parameter sheet, a composite model or a
 # whole network/solution as an indented tree. All assertions use `:color => false` for deterministic,
 # escape-code-free strings, and lean on robust substrings (not exact column positions).
 

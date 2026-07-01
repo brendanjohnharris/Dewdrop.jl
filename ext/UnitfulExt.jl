@@ -4,12 +4,12 @@ module UnitfulExt
 # and stripped to Dewdrop's coherent canonical float system at construction, so the engine state
 # stays plain isbits floats (the GPU contract). Activated automatically by `using Unitful`.
 #
-# Canonical system (coherent --- the dynamics carry no stray factors):
+# Canonical system (coherent: the dynamics carry no stray factors):
 #   time ms · voltage mV · conductance nS · current pA · capacitance pF · resistance GΩ · rate kHz
 #   R·I = GΩ·pA = mV   ·   R·g = GΩ·nS = 1   ·   R·C = GΩ·pF = ms   ·   rate·dt = kHz·ms = 1
 #
 # `ustrip(unit, x)` converts `x` to `unit` and drops it, THROWING a `DimensionError` if `x` has
-# the wrong dimension --- so a mis-dimensioned input is rejected at the boundary. `float` keeps
+# the wrong dimension, so a mis-dimensioned input is rejected at the boundary. `float` keeps
 # the canonical system in floating point even for integer-valued quantities.
 
 using Dewdrop

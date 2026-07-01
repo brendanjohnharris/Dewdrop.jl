@@ -1,4 +1,4 @@
-# * Event-driven STDP --- pair-based spike-timing-dependent plasticity with analytic
+# * Event-driven STDP: pair-based spike-timing-dependent plasticity with analytic
 # between-spike trace decay. A plastic projection wraps a base synapse state (CUBA/COBA/delta ---
 # the transmission is orthogonal to the learning) and adds its OWN mutable per-edge weight array
 # (CSR-parallel), leaving the shared `SparseCSR` immutable (so the same connectome stays sharable,
@@ -11,7 +11,7 @@
 # Plasticity uses ACTUAL spike times (`integ.spiked` this step); the conduction delay is purely a
 # transmission detail. Trace decay folds into :integrate (broadcast `_decay!` / fused `_syn_one`),
 # the bump into :propagate, so the decay→update→bump order falls out of the phase order with NO new
-# schedule phase --- and the fused fast path stays engaged for non-plastic networks.
+# schedule phase; the fused fast path stays engaged for non-plastic networks.
 
 using KernelAbstractions: @kernel, @index, @Const, get_backend
 import KernelAbstractions as _KA
@@ -61,7 +61,7 @@ struct PlasticState{B <: AbstractSynapseState, W, XP, XO, R, T} <: AbstractSynap
 end
 Adapt.@adapt_structure PlasticState
 
-# --- build the runtime state (called from `init`, dispatched on the projection's plasticity) ---
+# build the runtime state (called from `init`, dispatched on the projection's plasticity)
 _make_synstate(arch, syn, conn, ::Nothing, ::Type{T}, N, dt) where {T} = _make_synstate(arch, syn, conn, T, N, dt)
 function _make_synstate(arch, syn, conn, rule::AbstractPlasticityRule, ::Type{T}, N, dt) where {T}
     npre(conn) == npost(conn) ||
@@ -73,7 +73,7 @@ function _make_synstate(arch, syn, conn, rule::AbstractPlasticityRule, ::Type{T}
     return PlasticState(base, w, xpre, xpost, rule, T(trace_decay_pre(rule, dt)), T(trace_decay_post(rule, dt)))
 end
 
-# --- phase dispatch: transmission delegates to the base; learning is layered on ---
+# phase dispatch: transmission delegates to the base; learning is layered on
 @inline _deliver!(syn::PlasticState, integ) = _deliver!(syn.base, integ)
 @inline _accumulate!(syn::PlasticState, gtot, itot, V) = _accumulate!(syn.base, gtot, itot, V)
 # broadcast-path decay (:integrate): decay the base synaptic state AND the eligibility traces
@@ -91,7 +91,7 @@ end
     return _syn_one(s.base, i, n, v, gtot, itot)
 end
 
-# --- the plastic scatter: deposit (current weight) + STDP weight update, one thread per edge ---
+# the plastic scatter: deposit (current weight) + STDP weight update, one thread per edge
 @kernel function _plastic_scatter_kernel!(
         slots, weight, @Const(spiked), @Const(src), @Const(post), @Const(delay),
         @Const(x_pre), @Const(x_post), Aplus, Aminus, wmin, wmax, now, L,
@@ -136,7 +136,7 @@ end
 
 # CPU fast path: a serial per-edge walk (no KA launch round-trip → allocation-free, deterministic).
 # Each edge is visited once, so the weight write order is fixed and the ring deposit accumulates in a
-# fixed edge order (bit-reproducible, no atomics) --- matching the device kernel for exact weights.
+# fixed edge order (bit-reproducible, no atomics): matching the device kernel for exact weights.
 function _plastic_scatter!(::_KA.CPU, syn::PlasticState, spiked, now::Int)
     base = syn.base
     buf, conn, rule = base.buf, base.conn, syn.rule

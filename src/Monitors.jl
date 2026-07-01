@@ -2,14 +2,14 @@
 # A network is recorded by a NamedTuple of monitors, materialised from a `record = (...)` spec
 # and held in the integrator. The `:record` phase unrolls them (tuple-recursion, dispatch-free,
 # like the projection tuple). Each monitor stages into an arch-resident WINDOW buffer that
-# flushes to a host store in windows --- O(1) host transfers per window, the GPU-resident
+# flushes to a host store in windows: O(1) host transfers per window, the GPU-resident
 # recording mechanism. Four axes: WHAT (state/synaptic/accumulator var, spikes,
 # or a Probe fn) × WHERE (`:all` or an index subset) × HOW (per-unit, or a scalar Aggregate) ×
 # WHEN (stride). The `:record` slot runs after `:reset`, so traces are the post-reset state.
 
 using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
 
-# --- Source descriptors: WHAT to read (type-stable; the field/projection is a type parameter) ---
+# Source descriptors: WHAT to read (type-stable; the field/projection is a type parameter)
 struct StateSrc{V} end                      # state.state.<V> (a model statevar column)
 struct SynSrc{P, V} end                     # syns[P].<V>     (synaptic state of projection P)
 struct AccumSrc{V} end                      # integ.<V>       (:gtot / :itot)
@@ -27,8 +27,8 @@ end
 @inline _select(arr, ::Colon) = arr
 @inline _select(arr, idx) = @view arr[idx]
 
-# --- WindowBuffer: an arch-resident (n_out × Wcols) staging window flushed to a host
-# (n_out × ncols) store every Wcols columns (the host store is the final result). ---
+# WindowBuffer: an arch-resident (n_out × Wcols) staging window flushed to a host
+# (n_out × ncols) store every Wcols columns (the host store is the final result).
 const _DEFAULT_WINDOW = 1024
 
 mutable struct WindowBuffer{W <: AbstractMatrix, H <: AbstractMatrix}
@@ -79,7 +79,7 @@ end
     return nothing
 end
 
-# --- Runtime monitors ---
+# Runtime monitors
 # Per-unit: stage the selected source values verbatim (Trace / Spikes / Probe).
 struct PerUnitMonitor{S, I, B <: WindowBuffer}
     src::S
@@ -133,7 +133,7 @@ function _aggregate!(buf::WindowBuffer{<:Array}, vals, m::AggMonitor, col)
 end
 
 # GPU path: a single-thread in-kernel reduction writing the device window slot directly (no
-# host round-trip --- the GPU-resident aggregate). A parallel reduction is a possible refinement.
+# host round-trip: the GPU-resident aggregate). A parallel reduction is a possible refinement.
 @kernel function _agg_kernel!(window, col, @Const(vals), n, mean::Bool)
     acc = zero(eltype(window))
     @inbounds for k in eachindex(vals)
@@ -150,7 +150,7 @@ function _aggregate!(buf::WindowBuffer, vals, m::AggMonitor{S, I, B, R}, col) wh
 end
 
 # Compile-time unroll over the monitors (dispatch-free + allocation-free, like the projection
-# tuple). Recurse on the VALUES TUPLE, not the NamedTuple --- `Base.tail` on a NamedTuple of
+# tuple). Recurse on the VALUES TUPLE, not the NamedTuple: `Base.tail` on a NamedTuple of
 # non-isbits monitors materialises intermediate NamedTuples (heap); on the backing tuple the
 # compiler elides them when inlined.
 @inline _record_all!(ms::NamedTuple, integ) = _rec_tuple!(values(ms), integ)
@@ -163,7 +163,7 @@ end
 # Default finalize: flush the monitor's windowed store. Streaming reducers (no window) override to a no-op.
 @inline _finalize!(m) = (flush!(m.buf); nothing)
 
-# --- Specs (user-facing) → materialised at `init` into runtime monitors ---
+# Specs (user-facing) → materialised at `init` into runtime monitors
 """
     Trace(var; of=:all, projection=nothing, every=1)
 
@@ -193,7 +193,7 @@ Spikes(; of = :all, every::Integer = 1) = Spikes(of, Int(every))
     Aggregate(inner, reducer; every=1)
 
 Reduce an inner [`Trace`](@ref)/[`Spikes`](@ref) over its selected units to one scalar per step.
-`reducer` is `sum` (or `:sum`) or `:mean` --- e.g. `Aggregate(Spikes(), sum)` is the population
+`reducer` is `sum` (or `:sum`) or `:mean`: e.g. `Aggregate(Spikes(), sum)` is the population
 spike count per step; `Aggregate(Trace(:V), :mean)` the population mean V. Arbitrary reductions go
 through [`Probe`](@ref).
 """
@@ -210,7 +210,7 @@ _reducer_sym(::typeof(sum)) = :sum
     Probe(f; n, every=1)
 
 Record an arbitrary derived quantity: `f(integrator)` must return a length-`n` vector each step
-(must be GPU-kernel-safe --- broadcast/reduction, no scalar indexing --- when run on a device).
+(must be GPU-kernel-safe, i.e. broadcast/reduction, no scalar indexing, when run on a device).
 """
 struct Probe{F}
     f::F

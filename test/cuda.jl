@@ -13,7 +13,7 @@ using CUDA
     end
 
     if !CUDA.functional()
-        @info "CUDA not functional on this host --- skipping GPU device simulations"
+        @info "CUDA not functional on this host: skipping GPU device simulations"
     else
         m = LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 10.0, R = 1.0, tref = 2.0)
 

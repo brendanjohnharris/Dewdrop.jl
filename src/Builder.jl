@@ -1,4 +1,4 @@
-# * Network builder --- a small, fluent, mutating helper for constructing networks
+# * Network builder: a small, fluent, mutating helper for constructing networks
 # with named subpopulations. The builder accumulates an ordered list of populations
 # (`population!`), projections (`project!`), and an external drive (`drive!`), then `build`
 # assembles them into a flat `DewdropNetwork`: the populations are concatenated into one SoA in
@@ -9,7 +9,7 @@
 # group need the MultiModel engine and currently error.
 #
 # The accumulated populations/projections are heterogeneous (any model, any CUBA/COBA/delta
-# synapse), so `build` is the single dynamic boundary --- it materialises everything into concretely
+# synapse), so `build` is the single dynamic boundary: it materialises everything into concretely
 # typed tuples via a function barrier, keeping the simulation hot loop fully type-stable.
 
 # a deferred projection: `src => dst` over a synapse, with the connectivity built at `build` time
@@ -45,7 +45,7 @@ end
     network(; arch=CPU(), tspan) -> NetworkBuilder
     network(model, NE, NI; arch=CPU(), tspan) -> NetworkBuilder
 
-Begin building a network. The keyword form starts empty --- add named populations with
+Begin building a network. The keyword form starts empty; add named populations with
 [`population!`](@ref). The 3-argument form is sugar for the common E/I case: it adds an `:E`
 population of `NE` and an `:I` population of `NI`, both of `model` (one shared model → the
 homogeneous fast path).
@@ -152,8 +152,8 @@ end
 
 Attach a streaming external Poisson drive to the `target` sub-population: `n_ext` virtual Poisson sources
 (rate `rate` Hz) wired to `target` by `fixed_prob(p)`, delivering through any `synapse` model (the
-postsynaptic kinetics). Appended as a drive projection --- a [`PoissonSource`](@ref) over an empty outer
-CSR --- materialised at [`build`](@ref) once `target`'s global range is known. `adjust` (e.g.
+postsynaptic kinetics). Appended as a drive projection (a [`PoissonSource`](@ref) over an empty outer
+CSR), materialised at [`build`](@ref) once `target`'s global range is known. `adjust` (e.g.
 [`correlate_weights`](@ref)) optionally rescales the external weights.
 """
 function drive!(
@@ -178,7 +178,7 @@ function drive!(
 end
 export drive!
 
-# --- model merge ------------------------------------------------------------------------------
+# model merge
 # Merge the per-group models into one engine model. A single group, or several groups with the
 # identical model, stays a bare model (homogeneous fast path). Same-type groups that differ in some
 # field values collapse to a `Heterogeneous` whose overridden fields are block per-neuron arrays.
@@ -200,7 +200,7 @@ function _combine_models(models::Vector, sizes::Vector{Int}, arch::AbstractArchi
     return on_architecture(arch, Heterogeneous(first(models); NamedTuple(overrides)...))
 end
 
-# --- input merge ------------------------------------------------------------------------------
+# input merge
 # A single scalar if every group shares the same scalar input; otherwise a length-N block vector.
 function _combine_inputs(inputs::Vector, sizes::Vector{Int}, ::Type{T}) where {T}
     if all(x -> x isa Number, inputs) && all(==(first(inputs)), inputs)
@@ -230,7 +230,7 @@ function _build_projection(spec::_ProjSpec, reg::NamedTuple, positions, arch, N:
     kw = spec.kw
     it = get(kw, :index_type, Int)   # opt-in narrow connectome indices (e.g. Int32 halves the scatter bandwidth)
     # Build the connectome on the HOST (the top-k heap is host-side regardless of `arch`), run any `adjust`
-    # weight hook host-side, then move the finished CSR onto `arch` at the end (the Projection below) --- so
+    # weight hook host-side, then move the finished CSR onto `arch` at the end (the Projection below); so
     # adjusters like `correlate_weights` never touch a device array, with no host↔device round-trip.
     conn = if haskey(kw, :connectivity) && kw.connectivity !== nothing
         kw.connectivity
@@ -257,7 +257,7 @@ function _build_projection(spec::_ProjSpec, reg::NamedTuple, positions, arch, N:
     end
     # optional post-build hook: `project!(…; adjust = conn -> …)` runs over the materialised connectivity
     # (e.g. in-degree-scaled / spatially-correlated weights). A 2-arg adjuster `(conn, ctx)` additionally
-    # receives the projection's resolved `(; sources, targets)` ranges --- e.g. `correlate_weights`, which
+    # receives the projection's resolved `(; sources, targets)` ranges: e.g. `correlate_weights`, which
     # normalises the in-degree over the destination sub-population.
     adj = get(kw, :adjust, nothing)
     adj === nothing || _apply_adjust(adj, conn, sources, targets)
@@ -296,13 +296,13 @@ materialise the projections. `input` overrides the per-population inputs with a 
 """
 # The single assembly path, shared by `build(::NetworkBuilder)` and `materialize(::FrozenBuilder)` (the
 # deferred spec; see NetworkSpec.jl). Concatenates the populations, merges models/inputs, materialises the
-# projections, and records the named-projection labels --- parameterised by `tspan` (so a frozen spec can
+# projections, and records the named-projection labels: parameterised by `tspan` (so a frozen spec can
 # override the builder's default duration). The dynamic boundary (heterogeneous models/projspecs) is here.
 function _build_network(
         arch, tspan, names, models, sizes, inputs, positions_in, projspecs, drive;
         input = nothing, schedule::Schedule = default_schedule()
     )
-    isempty(names) && error("network has no populations --- add them with `population!`")
+    isempty(names) && error("network has no populations: add them with `population!`")
     N = sum(sizes)
     reg = merge((all = 1:N,), _registry(names, sizes))   # include the implicit :all so projections can target it
     model = _combine_models(models, sizes, arch)

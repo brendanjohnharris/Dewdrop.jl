@@ -18,7 +18,7 @@
 # synaptic weights trainable in recurrent nets; an Enzyme weak-dep extension with the atomic-scatter
 # reverse rule; and the GPU path (Enzyme through the KA megakernel — the open hardware question).
 
-# --- the surrogate: a smooth, in-[0,1] replacement for the Heaviside threshold at the model's Vθ ---
+# the surrogate: a smooth, in-[0,1] replacement for the Heaviside threshold at the model's Vθ
 """
     threshold_voltage(model) -> V
 
@@ -59,7 +59,7 @@ stand-in for the spike indicator, with steepness `β`. As `β → ∞` it approa
         v_adv, w_adv = _advance_unit(m_i, v, w0, gtot, itot, dt)
         v = ifelse(r > z, reset_value(m_i), v_adv + _noise_kick(noise, n, i, dt, m_i))
         r = max(r - dt, z)
-        # --- surrogate spike block (the ONLY difference from `_fused_unit!`) ---
+        # surrogate spike block (the ONLY difference from `_fused_unit!`)
         s = oftype(v, r ≤ z) * surrogate_spike(m_i, v, β)            # refractory-gated smooth spike ∈ [0,1)
         v = v - s * (v - reset_value(m_i))                           # soft reset (→ hard reset as s → 1)
         w_new = _diff_spike_aux(m_i, w_adv, s)                       # soft adaptation increment

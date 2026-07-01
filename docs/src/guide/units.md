@@ -69,8 +69,8 @@ the identity on plain numbers and dimension-converting on `Quantity` inputs. Two
 - Units never enter a kernel. They live only at the API boundary; the SoA state, connectome, and
   recorded traces are always plain isbits floats (the GPU requirement).
 
-A synaptic weight has no fixed dimension of its own --- it is a voltage jump for a delta synapse,
-a current for CUBA, a conductance for COBA --- so `to_weight` reads the weight's *own*
+A synaptic weight has no fixed dimension of its own (it is a voltage jump for a delta synapse,
+a current for CUBA, a conductance for COBA), so `to_weight` reads the weight's *own*
 dimension to decide. A `Quantity` in mV, pA, or nS is accepted; anything else is an error.
 
 ```julia

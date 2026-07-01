@@ -5,7 +5,7 @@ module DewdropLoopVectorizationExt
 # model families. The orchestration (deliver / accumulate / decay / scatter) stays in the core
 # `_turbo_step!`; only the per-neuron dense update is vectorised here. The kernels REPLICATE the
 # engine's scalar math exactly (the w-first split, the exact-propagator `_coba_step`, the AdEx cutoff)
-# so results are spike-identical --- they differ only at the `exp` ULP (SLEEF SIMD exp vs scalar
+# so results are spike-identical; they differ only at the `exp` ULP (SLEEF SIMD exp vs scalar
 # `libm`), which is why `Turbo` is opt-in and never an `Auto` default.
 #
 # To give a NEW model a Turbo specialization: define `Dewdrop.turbo_kernel(::Type{MyModel}) =
@@ -18,7 +18,7 @@ using LoopVectorization
 import Dewdrop
 import Dewdrop: AdEx, LIF, turbo_kernel, _ADEX_EXP_CAP
 
-# --- registration: which built-in models have a Turbo specialization ---
+# Registration: which built-in models have a Turbo specialization
 turbo_kernel(::Type{<:AdEx}) = _turbo_adex!
 turbo_kernel(::Type{<:LIF}) = _turbo_lif!
 

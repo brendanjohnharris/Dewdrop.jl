@@ -8,7 +8,7 @@ Plasticity in Dewdrop is *event-driven*: weights change only on spikes, and the 
 trace decay is folded analytically into the existing synaptic phases. There is no extra schedule
 phase and no continuous integration of the learning variables; a static network pays nothing.
 
-The one rule is [`STDP`](@ref) --- pair-based, additive spike-timing-dependent plasticity. It is
+The one rule is [`STDP`](@ref): pair-based, additive spike-timing-dependent plasticity. It is
 *orthogonal to transmission*: an STDP rule wraps any base synapse ([`CurrentSynapse`](@ref),
 [`ConductanceSynapse`](@ref), [`DeltaSynapse`](@ref), ...), so the kinetics that deliver a spike and
 the rule that adjusts its weight are chosen independently.
@@ -50,7 +50,7 @@ arrays.
 The weight update rides the *edge scatter*: one thread owns one synapse, so the per-edge weight write
 needs no atomic. This is why **a plastic projection requires `scatter = :edge`**. The compacted
 scatter walks only the out-edges of neurons that actually spiked, so it never visits an edge on the
-step its *postsynaptic* neuron fires --- it cannot drive the potentiation branch. The requirement is
+step its *postsynaptic* neuron fires; it cannot drive the potentiation branch. The requirement is
 enforced at [`init`](@ref): requesting `scatter = :compacted` with any plastic projection throws. The
 default `scatter = :auto` already resolves to `:edge` whenever a plastic projection is present, so you
 normally need not set it.

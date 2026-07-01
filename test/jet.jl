@@ -15,20 +15,20 @@ using Test
 end
 
 # Static analysis (JET), two layers:
-#   1. whole-package ERROR analysis (test_package) --- catches undefined methods etc.
+#   1. whole-package ERROR analysis (test_package): catches undefined methods etc.
 #   2. OptAnalyzer assertions that PIN hot-path type-stability / dispatch-freedom.
 #
 # JET tracks Julia's inference internals and is version-sensitive, so this whole block is
 # version-gated and ISOLATED in its own file: a JET/Julia upgrade can never turn the
 # version-stable @allocated/@inferred backbone (engine.jl/rng.jl/gpu_readiness.jl) red.
 # Every assertion is scoped with target_modules=(Dewdrop,) so only dispatch failures
-# attributable to Dewdrop's OWN methods count --- this filters Adapt / StructArrays /
+# attributable to Dewdrop's OWN methods count; this filters Adapt / StructArrays /
 # Random123 / Base.Broadcast inference noise while keeping a genuine non-concrete result
 # INSIDE a Dewdrop method visible (it is attributed to that method).
 if VERSION >= v"1.10"
     @testset "code quality (JET)" begin
         @testset "error analysis (concrete entry points)" begin
-            # Concrete-call error analysis over the real entry points --- preferred here over
+            # Concrete-call error analysis over the real entry points; preferred here over
             # test_package, whose ABSTRACT analysis of the backend-generic `scatter!` kernel
             # launcher reports a GPU-branch false positive (an abstract GPU `Kernel` has no
             # matching `kwcall`) that occurs for NO concrete CPU/GPU call, as the connected
@@ -57,7 +57,7 @@ if VERSION >= v"1.10"
 
             # THE load-bearing assertion: the whole fixed-step is dispatch-free. Pins that
             # the @generated schedule unroll fully resolves and the fused SoA broadcasts
-            # stay concrete. Complements @allocated(step!)==0 (boxing) in engine.jl --- this
+            # stay concrete. Complements @allocated(step!)==0 (boxing) in engine.jl; this
             # catches runtime dispatch that need not allocate (e.g. a Nothing-returning one).
             JET.@test_opt target_modules = (Dewdrop,) step!(integ)
 

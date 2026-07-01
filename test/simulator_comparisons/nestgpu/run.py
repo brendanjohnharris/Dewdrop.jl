@@ -14,7 +14,7 @@ itself. The connectome is the language-agnostic splitmix64 graph, byte-identical
 import os
 import sys
 
-# --- self-contained env: locate the source-built NEST GPU + put CUDA on the loader path (re-exec once) ---
+# self-contained env: locate the source-built NEST GPU + put CUDA on the loader path (re-exec once)
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _INSTALL = os.path.join(_HERE, "install")
 os.environ.setdefault("NESTGPU_LIB", os.path.join(_INSTALL, "lib64", "nestgpu", "libnestgpukernel.so"))
@@ -78,7 +78,7 @@ def make_net(N):
     neurons = ngpu.Create("aeif_psc_exp", N)
     ngpu.SetStatus(neurons, _PARAMS)
     # heterogeneous v0 (breaks initial synchrony); NEST GPU sets a scalar var per-node via its GPU RNG
-    # "normal" distribution (it has no "uniform") --- centred in the spec's [-70,-50] band. The steady-state
+    # "normal" distribution (it has no "uniform"), centred in the spec's [-70,-50] band. The steady-state
     # rate is an attractor (validated invariant to v0 across all simulators), so this only shapes the transient.
     ngpu.SetStatus(neurons, {"V_m": {"distribution": "normal", "mu": -60.0, "sigma": 5.0}})
     pre, post = connectome(N, NW["K"], NW["seed"])

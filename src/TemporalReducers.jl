@@ -1,6 +1,6 @@
 # * Streaming temporal reducers (M-stream).
 # Consume ONE (n_out × B) sample per step and accumulate a reduced temporal statistic on-device, so a
-# long per-(neuron, member) trace is NEVER materialised --- not on the host, not on the device. This is
+# long per-(neuron, member) trace is NEVER materialised: not on the host, not on the device. This is
 # the streaming analogue of running a windowed/lag estimator over a fully recorded trace; the only memory
 # that scales with the run is a fixed ring/segment buffer (O(max lag) or O(nfft)), not O(nsteps). The
 # `update!`/`result` pair is backend-generic (KernelAbstractions + AbstractFFTs), so the same code runs on
@@ -9,7 +9,7 @@
 using KernelAbstractions: @kernel, @index, @Const, get_backend
 using FFTW: rfft, plan_rfft
 
-# --- StreamingMADev: p=1 mean absolute displacement at integer lags ------------------------------------
+# StreamingMADev: p=1 mean absolute displacement at integer lags
 # The streaming form of `TimeseriesTools.madev(x, lags; p = 1)` = `mean_t |x(t) − x(t+k)|` over the `n−k`
 # valid pairs, per lag `k`. A ring of the last `maxlag + 1` samples per (n_out, B) lets each new sample
 # x(s) accumulate `|x(s) − x(s−k)|` for every lag `k < s`; `result` divides by the pair count `nseen − k`.
@@ -65,7 +65,7 @@ function result(m::StreamingMADev, nseen::Integer)
     return out
 end
 
-# --- StreamingWelch: averaged Welch periodogram (power spectrum) ---------------------------------------
+# StreamingWelch: averaged Welch periodogram (power spectrum)
 # The streaming form of `TimeseriesTools.spectrum(x .- mean(x), f_min)` (a Hann-windowed, 50%-overlap Welch
 # periodogram, Parseval-normalised). Segments complete at the same step for every (neuron, member), so each
 # completed segment is transformed with ONE batched `rfft` along the time axis (FFTW on CPU, CUFFT on GPU).
@@ -174,7 +174,7 @@ function result(m::StreamingWelch, nseen::Integer)
     return out
 end
 
-# --- StreamingRate: per-(neuron, member) mean firing rate -----------------------------------------------
+# StreamingRate: per-(neuron, member) mean firing rate
 # Total spikes / observation time: a single (n_out, B) cumulative count, finalised as `count / (nseen·dt)`
 # (the per-cell `firing_rate` convention, duration = nsteps·dt). `xt` is the per-step Bool spike slice.
 struct StreamingRate{C, T}
@@ -191,7 +191,7 @@ end
 update!(m::StreamingRate, xt::AbstractMatrix, ::Integer = 0) = (m.count .+= xt; m)
 result(m::StreamingRate, nseen::Integer) = Array(m.count) ./ (nseen * m.dt)   # (n_out, B) rate
 
-# --- StreamingFano: per-(neuron, member) Fano factor curve over count windows ---------------------------
+# StreamingFano: per-(neuron, member) Fano factor curve over count windows
 # The streaming form of `TimeseriesTools.fano_factor(spikes, τs)` = `var(counts; mean=m)/m` (Bessel-corrected)
 # of spike counts in width-`τ` windows, per timescale `τ`. Windows are a FIXED grid aligned to the recording
 # start (origin 0): window j of τ is `[jτ, (j+1)τ)`. We keep a cumulative per-neuron count `cum`; when a
@@ -260,7 +260,7 @@ function result(m::StreamingFano, nseen::Integer)
     return out
 end
 
-# --- User-facing temporal-monitor specs (materialised into batched monitors; BATCHED solve path only) ---
+# User-facing temporal-monitor specs (materialised into batched monitors; BATCHED solve path only)
 # These hook the per-step recording loop and fold each sample into a streaming reducer, so the long trace is
 # never stored. Parameters are in RECORDED-SAMPLE units (lags, transient = step counts; the caller converts
 # physical time → steps), except `Welch.f_min`, a frequency resolved against the recorded rate fs = 1/(every·dt).

@@ -6,9 +6,9 @@ CurrentModule = Dewdrop
 
 Dewdrop separates two orthogonal choices:
 
-- **Architecture** (`arch = CPU()` / `GPU()`, set on the [`DewdropNetwork`](@ref)) --- *where* the
+- **Architecture** (`arch = CPU()` / `GPU()`, set on the [`DewdropNetwork`](@ref)): *where* the
   state lives.
-- **Execution backend** (`backend = …`, passed to `solve`/`init`) --- *how* each step runs.
+- **Execution backend** (`backend = …`, passed to `solve`/`init`): *how* each step runs.
 
 ```julia
 solve(prob, FixedStep(0.1); backend = Fused())
@@ -21,9 +21,9 @@ bit-reproducible. The default, `Auto`, picks a good one for you.
 
 | backend | what it does | bit-reproducible? | needs | use when |
 |---|---|---|---|---|
-| [`Auto`](@ref) | picks the best available (see below) | inherits the chosen one | --- | the default; almost always |
-| [`Serial`](@ref) | per-phase broadcasts, single-threaded dense phases | **yes**, allocation-free | --- | small nets, exact reproducibility, debugging |
-| [`Fused`](@ref) | one fused pass/step: a tight threaded CPU loop, or the GPU megakernel | **yes** (bit-identical to `Serial`) | --- | large CPU nets; **required** on GPU and for `Heterogeneous`/`MultiModel` |
+| [`Auto`](@ref) | picks the best available (see below) | inherits the chosen one | none | the default; almost always |
+| [`Serial`](@ref) | per-phase broadcasts, single-threaded dense phases | **yes**, allocation-free | none | small nets, exact reproducibility, debugging |
+| [`Fused`](@ref) | one fused pass/step: a tight threaded CPU loop, or the GPU megakernel | **yes** (bit-identical to `Serial`) | none | large CPU nets; **required** on GPU and for `Heterogeneous`/`MultiModel` |
 | [`Turbo`](@ref) | SIMD-vectorised dense step | no (spike-identical) | `using LoopVectorization` + a model with a Turbo specialization | maximum CPU throughput on supported, dense-dominated models |
 
 ## How `Auto` chooses
@@ -33,7 +33,7 @@ bit-reproducible. The default, `Auto`, picks a good one for you.
 - `Fused` on a **GPU** (the megakernel is the GPU path);
 - `Fused` for a **`Heterogeneous`/`MultiModel`** model (per-neuron / per-group resolution needs it);
 - `Fused` for a **large multithreaded CPU** network (`N ≥ 10_000`, `Threads.nthreads() > 1`, canonical
-  schedule) --- the threaded fused step is ~2× the per-phase `Serial` baseline and bit-identical;
+  schedule): the threaded fused step is ~2× the per-phase `Serial` baseline and bit-identical;
 - `Serial` otherwise (small / single-threaded CPU nets, where the per-phase path's low overhead wins).
 
 `Turbo` is never chosen automatically (it is not bit-identical); request it explicitly.
@@ -58,7 +58,7 @@ the per-neuron compute dominates the sparse scatter.
 
 - `Serial` and `Fused` are **bit-identical** to each other at any fixed thread count (the dense update
   is per-neuron-independent, so even threaded it is order-free). The one order-dependent operation is
-  the *threaded* atomic synaptic scatter --- identical across backends, but not bit-reproducible across
+  the *threaded* atomic synaptic scatter: identical across backends, but not bit-reproducible across
   thread counts (run single-threaded for byte-exact reproducibility; the dynamics are statistically
   identical otherwise).
 - `Turbo` is **spike-identical** but not bit-identical: SIMD `exp` (SLEEF) differs from scalar `libm`

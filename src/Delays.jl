@@ -1,4 +1,4 @@
-# * Per-synapse conduction delays --- a NEST-style ring buffer of postsynaptic
+# * Per-synapse conduction delays: a NEST-style ring buffer of postsynaptic
 # accumulators. A spike scattered at step `now` along a synapse with integer delay `d` is
 # deposited into ring slot (now + d) mod L for its postsynaptic target, and delivered when
 # the clock reaches that step. Because the delay is read per synapse, arbitrarily distinct
@@ -7,7 +7,7 @@
 #
 # Layout is (N_post, L): a fixed column per time slot, so collecting the due increments is a
 # contiguous column read (coalescing-friendly on GPU). Deposit is a scatter-add into a
-# column --- a host loop here, a single Atomix.@atomic kernel on the device.
+# column: a host loop here, a single Atomix.@atomic kernel on the device.
 
 """
     DelayBuffer(arch, T, N, maxdelay)
@@ -92,7 +92,7 @@ end
 """
     deliver_due_dual!(a, b, buf, now)
 
-Add the increments due at step `now` into BOTH `a` and `b` in place, then clear that slot --- the
+Add the increments due at step `now` into BOTH `a` and `b` in place, then clear that slot; the
 deliver for a dual-state synapse (e.g. the dual-exponential's `g_rise`/`g_decay`, which receive the
 same kick). Reads the due column once.
 """

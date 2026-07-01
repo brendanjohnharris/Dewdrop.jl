@@ -94,7 +94,7 @@ end
     # flat-spectrum, CV≈1 AI state is a large-N phenomenon (the asynchronous region of Brunel's
     # phase diagram shrinks at finite N). At reduced scale the network is either mean-driven
     # (this point: moderate CV, flattest spectrum) or, at lower drive, drops into the
-    # synchronous SI-slow regime --- a clean asynchronous state in between needs N≫10^4. We
+    # synchronous SI-slow regime; a clean asynchronous state in between needs N≫10^4. We
     # therefore validate AI as the *most asynchronous* of the four regimes (flattest spectrum,
     # no synchronous bands) and demonstrate a genuine high-CV AI state with conductance synapses
     # in the Vogels-Abbott COBA test (CV ≈ 1.4).

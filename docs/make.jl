@@ -6,10 +6,10 @@ using DocumenterVitepress
 using Downloads
 using YAML
 
-# --- Fathom auto-generated colours ---------------------------------------------------------------
+# Fathom auto-generated colours
 # Fetch the Fathom palette (colors.yaml) at build time and regenerate the CSS custom-property palette
 # the docs theme reads. The semantic light/dark mapping lives in `style.css`, which `@import`s this
-# file --- so the docs theme tracks the Fathom palette automatically (mirrors TimeseriesDocs.jl).
+# file, so the docs theme tracks the Fathom palette automatically (mirrors TimeseriesDocs.jl).
 function generate_palette_css(;
         url = "https://raw.githubusercontent.com/brendanjohnharris/Fathom.jl/main/test/colors.yaml",
         out = joinpath(@__DIR__, "src", ".vitepress", "theme", "palette.css"),

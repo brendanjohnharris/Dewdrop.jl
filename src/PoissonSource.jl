@@ -1,14 +1,14 @@
-# * Generic streaming Poisson drive --- `PoissonSource{S}` wraps ANY synapse model `S` and turns it into an
+# * Generic streaming Poisson drive: `PoissonSource{S}` wraps ANY synapse model `S` and turns it into an
 # external drive of virtual Poisson sources (rate `rate` Hz), wired to post-neurons by `extconn`. Each step
-# it generates the sources' Poisson spikes and scatters them --- through the SAME `scatter!` + delay-buffer +
-# `_deliver!` pipeline the network uses for real spikes --- into the wrapped synapse's state. So the
+# it generates the sources' Poisson spikes and scatters them (through the SAME `scatter!` + delay-buffer +
+# `_deliver!` pipeline the network uses for real spikes) into the wrapped synapse's state. So the
 # postsynaptic kinetics are exactly `S`'s (delta / CUBA / COBA / dual-exp / …): the source is the input
 # statistics + wiring, the synapse is the response. Streaming (O(N) state, no precomputed conductance
-# matrix), and --- because it routes through `scatter!` --- CPU and device alike.
+# matrix), and (because it routes through `scatter!`) CPU and device alike.
 #
 # The state DELEGATES `_deliver!`/`_accumulate!`/`_decay!`/`_syn_one` to the wrapped synapse's state
 # (`inner`); only `_synprestep!` is new (generate + scatter the Poisson events). The outer `conn` is an empty
-# CSR, so the per-state network scatter (`scatter!(syn.buf, syn.conn, …)`) is a no-op --- the real wiring
+# CSR, so the per-state network scatter (`scatter!(syn.buf, syn.conn, …)`) is a no-op; the real wiring
 # lives in `extconn`, used only by the once-per-step generator. The generic replacement for the bespoke
 # `PoissonDualExpDrive`: that one hard-codes the dual-exp deliver/accumulate/decay bodies; this delegates.
 
@@ -18,7 +18,7 @@
 An external drive of virtual Poisson sources wired to the network by `extconn` (an `n_ext × N` CSR carrying
 per-edge weights and delays), delivering through any postsynaptic `synapse` model. Each step generates the
 sources' Poisson spikes (rate `rate` Hz; per-source per-step probability `rate·dt/1000`) and scatters them
-into `synapse`'s conductance state via the standard delay-buffer pipeline --- no precomputed conductance
+into `synapse`'s conductance state via the standard delay-buffer pipeline: no precomputed conductance
 matrix. The postsynaptic kinetics are exactly `synapse`'s, so the same drive composes with `DeltaSynapse`,
 `CurrentSynapse`, `ConductanceSynapse`, `DualExpSynapse`, …. Add to a network as
 `Projection(PoissonSource(...), empty_csr)`.
@@ -34,7 +34,7 @@ PoissonSource(synapse::AbstractSynapseModel, extconn; rate, seed = 0x9e3779b97f4
 export PoissonSource
 
 # State: the wrapped synapse's real state (`inner`) + the Poisson generator (extconn, firing mask, p_spike,
-# seed). `conn`/`buf` are exposed so the engine's per-state network scatter finds them --- `conn` is empty
+# seed). `conn`/`buf` are exposed so the engine's per-state network scatter finds them: `conn` is empty
 # (a no-op), `buf` aliases `inner.buf` (the deposit target shared with the delegated `_deliver!`).
 struct PoissonSourceState{IS <: AbstractSynapseState, EC, CC, BUF, MV, T} <: AbstractSynapseState
     inner::IS
@@ -56,7 +56,7 @@ end
 
 # Batched (N,B) drive state (see `BatchedPoissonSourceState` in src/Batch.jl): build the batched inner synapse
 # (its (N,B,L) ring receives the deposits), the (n_ext, B) firing mask, and the constant (n_ext, B) source-row
-# index that makes the per-step counter-RNG draw SHARED across the B columns --- same drive realization per
+# index that makes the per-step counter-RNG draw SHARED across the B columns: same drive realization per
 # member, the right default for a parameter sweep at a fixed connectome.
 function _make_batched_synstate(arch, syn::PoissonSource, conn, ::Type{T}, N, B, dt) where {T}
     ext = _resolve_delays(syn.extconn, dt)
@@ -68,14 +68,14 @@ function _make_batched_synstate(arch, syn::PoissonSource, conn, ::Type{T}, N, B,
 end
 
 # Once-per-step: which virtual sources fire (counter RNG keyed by (seed, step, source)), then scatter their
-# events through `extconn` into the wrapped synapse's buffer --- the SAME `scatter!` that delivers network
+# events through `extconn` into the wrapped synapse's buffer: the SAME `scatter!` that delivers network
 # spikes (so the CPU/device paths and per-edge delays are shared, not re-implemented).
 @inline function _synprestep!(s::PoissonSourceState, integ)
     n = integ.n
     idx = eachindex(s.spiked)
     @. s.spiked = draw_uniform(Float64, s.seed, n, idx) < s.p_spike
     # `sync = false`: this scatter and the next read of `s.buf` (the fused step's inline deliver) run on the SAME
-    # device stream, so ordering already guarantees visibility --- no host sync needed. The `scatter!` default
+    # device stream, so ordering already guarantees visibility: no host sync needed. The `scatter!` default
     # `sync = true` would `synchronize()` the device EVERY step (and twice over for a 2-drive net),
     # draining the pipeline the fused path builds (Fused.jl:197 passes `sync = false` for the same reason) and
     # leaving the GPU step launch-bound / slower than CPU. Behaviour-identical; the buffer contents are the same.

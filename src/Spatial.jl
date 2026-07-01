@@ -6,7 +6,7 @@
 # target, so the geometric skip used by `fixed_prob` does not apply) but stays seed-reproducible
 # via the counter-based RNG keyed by (pre, post).
 
-# --- Position layouts: a vector of `NTuple{D,Float64}` coordinates ---
+# Position layouts: a vector of `NTuple{D,Float64}` coordinates
 """
     line_positions(n; spacing=1.0)
 
@@ -18,8 +18,8 @@ line_positions(n::Integer; spacing = 1.0) = [(spacing * (i - 1),) for i in 1:n]
     grid_positions(nx, ny; spacing=1.0, centered=false)
 
 `nx*ny` neurons on a rectangular grid (x varies fastest: neuron `(j-1)*nx + i` sits at
-`((i-1)·spacing, (j-1)·spacing)`). With `centered=true` the points are cell-centred ---
-`((i-0.5)·spacing, (j-0.5)·spacing)` --- tiling `[0, nx·spacing] × [0, ny·spacing]` symmetrically,
+`((i-1)·spacing, (j-1)·spacing)`). With `centered=true` the points are cell-centred
+(`((i-0.5)·spacing, (j-0.5)·spacing)`), tiling `[0, nx·spacing] × [0, ny·spacing]` symmetrically,
 the convention for a periodic box (e.g. a spatial E/I sheet).
 """
 function grid_positions(nx::Integer, ny::Integer; spacing = 1.0, centered::Bool = false)
@@ -49,7 +49,7 @@ export line_positions, grid_positions, ring_positions
     return sqrt(s)
 end
 
-# --- Connection kernels: distance → probability in [0, 1] ---
+# Connection kernels: distance → probability in [0, 1]
 """
     gaussian_kernel(σ; pmax=1.0)
 
@@ -126,7 +126,7 @@ function random_positions(N::Integer, domain::Tuple; seed::Unsigned, sort::Bool 
 end
 export random_positions
 
-# --- Fixed-count distance connectivity (Gumbel-max top-k) ---
+# Fixed-count distance connectivity (Gumbel-max top-k)
 # A bounded min-heap retaining the `K` largest-score items streamed past it: the Gumbel-max trick
 # samples exactly `K` edges without replacement, weighted ∝ kernel(distance), in O(pairs) time and
 # O(K) memory (the full score matrix is never materialised). The min-heap root is the smallest kept
@@ -181,7 +181,7 @@ Distance-dependent connectivity with an EXACT total edge `count`: samples `count
 without replacement, with probability ∝ `kernel(distance(positions[pre], positions[post]))`, via the
 Gumbel-max top-k trick (`score = log p + Gumbel`, keep the top `count`), reproducibly from the
 counter-based RNG. Unlike per-pair Bernoulli [`distance_prob`](@ref) (random edge count), this fixes
-the count exactly --- a fixed-degree connectivity. `sources`/`targets` restrict the pair set; pairs
+the count exactly: a fixed-degree connectivity. `sources`/`targets` restrict the pair set; pairs
 with zero kernel probability are never selected. O(|sources|·|targets|) time, O(count) memory.
 """
 function distance_fixed_count(

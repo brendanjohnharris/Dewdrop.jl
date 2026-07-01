@@ -7,7 +7,7 @@ using JLArrays
 # network, integrated by the EXACT Ornstein--Uhlenbeck discretization (the noise analogue of the
 # engine's exact drift propagator). Opt-in and compiling away when absent (the `Nothing`
 # strong-zero idiom). The increment is the counter-based Gaussian `draw_normal`, keyed by
-# (seed, step, neuron) --- pure, allocation-free, GPU-safe, reproducible.
+# (seed, step, neuron): pure, allocation-free, GPU-safe, reproducible.
 
 _meanvar(x) = (μ = sum(x) / length(x); (μ, sum(y -> (y - μ)^2, x) / length(x)))
 
@@ -49,7 +49,7 @@ end
 @testset "WhiteNoise OU stationary variance (exact, dt-invariant)" begin
     # A purely subthreshold LIF (threshold pushed to +∞, no input) is an Ornstein--Uhlenbeck
     # process with stationary variance σ²τ/2. The exact-OU noise scaling reproduces this EXACTLY
-    # at any dt; the literal Euler--Maruyama scaling σ√dt would be dt-biased --- the dt-invariance
+    # at any dt; the literal Euler--Maruyama scaling σ√dt would be dt-biased; the dt-invariance
     # assertion is what pins the discretization choice.
     τ = 20.0
     m = LIF(; τ = τ, EL = -65.0, Vθ = 1.0e6, Vr = -65.0, R = 1.0, tref = 0.0)
@@ -114,7 +114,7 @@ end
         noise = WhiteNoise(2.0; seed = UInt64(99))
     )
     # draw_normal is a pure function and JLArrays is CPU-backed, so the fused megakernel matches
-    # the broadcast path (same libm exp/log/cos/sqrt) --- bit-identical spikes, V within ULPs.
+    # the broadcast path (same libm exp/log/cos/sqrt): bit-identical spikes, V within ULPs.
     cpu = init(prob, FixedStep(dt))
     gpu = adapt(JLArray, init(prob, FixedStep(dt)))
     for _ in 1:500

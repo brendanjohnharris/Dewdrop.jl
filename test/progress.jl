@@ -3,7 +3,7 @@ using Test
 using Logging
 
 # Progress bar (src/Progress.jl): `solve(prob, alg; progress = …)` emits the ProgressLogging
-# convention --- a `@logmsg LogLevel(-1) name progress=frac _id=id` per update --- so VSCode /
+# convention (a `@logmsg LogLevel(-1) name progress=frac _id=id` per update) so VSCode /
 # TerminalLoggers render a live bar and a bare script silently filters it. We do NOT depend on any
 # progress package; the producer side is a logging convention, captured here with a `TestLogger`.
 #

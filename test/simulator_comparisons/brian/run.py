@@ -1,6 +1,6 @@
 """
 Brian2 / brian2cuda implementation of the shared simulator-comparison problem (../spec.toml).
-Python-only --- no Julia here; this just generates the standard data CSVs that
+Python-only: no Julia here; this just generates the standard data CSVs that
 ../compare_simulators.jl reads. Standalone:
 
     python run.py                  # every device, write out/values.csv + out/performance.csv
@@ -36,7 +36,7 @@ DT = P["dt"]
 MASK = (1 << 64) - 1
 
 
-# --- language-agnostic connectome (splitmix64 fixed in-degree; identical to dewdrop/run.jl) ---
+# language-agnostic connectome (splitmix64 fixed in-degree; identical to dewdrop/run.jl)
 def _splitmix64(s):
     s = (s + 0x9E3779B97F4A7C15) & MASK
     z = s

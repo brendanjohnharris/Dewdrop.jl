@@ -18,8 +18,8 @@ exact propagator (the Rotter--Diesmann exponential step) applies over a time ste
 That is the same step every built-in linear model uses, and it is what lets conductance synapses fold
 in as an effective leak. You do not write `dV/dt`; you declare its two consequences directly:
 
-- `@asymptote` --- the steady-state potential `V∞` for total input current `I` (must be linear in `I`).
-- `@resistance` --- `dV∞/dI`, the slope coupling [`ConductanceSynapse`](@ref) / COBA input to the membrane.
+- `@asymptote`: the steady-state potential `V∞` for total input current `I` (must be linear in `I`).
+- `@resistance`: `dV∞/dI`, the slope coupling [`ConductanceSynapse`](@ref) / COBA input to the membrane.
 
 Nonlinear membranes (Izhikevich's quadratic term, AdEx's exponential spike initiation) cannot be
 expressed this way yet; full `dV/dt` parsing is a later front-end. For those, drop to the
@@ -58,7 +58,7 @@ using Dewdrop
     @parameters  τ=20.0 EL=-60.0 Vθ=-50.0 Vr=-60.0 R=1.0 tref=5.0 Ibias=0.0
     @state       V refrac
     @asymptote   EL + R * (I + Ibias)     # linear in I; Ibias is a constant offset
-    @resistance  R                        # dV∞/dI --- independent of Ibias
+    @resistance  R                        # dV∞/dI, independent of Ibias
     @timeconstant τ
     @threshold   V ≥ Vθ
     @reset       Vr
@@ -73,7 +73,7 @@ parameter promotes to a common float type:
 model = BiasLIF(; τ = 15.0, Ibias = 0.2)     # other parameters take their declared defaults
 ```
 
-It now behaves like any built-in model --- pass it to [`DewdropNetwork`](@ref) (or the fluent
+It now behaves like any built-in model: pass it to [`DewdropNetwork`](@ref) (or the fluent
 [builder](networks.md)) and [`solve`](@ref):
 
 ```julia
@@ -92,7 +92,7 @@ core never special-cases your type; it dispatches on these methods. For a `V`-on
 
 - `statevars(::Type{YourModel})` returning the state column names (a `Tuple` of `Symbol`s);
 - [`float_type`](@ref)`(::YourModel)` returning the parameter/state float type;
-- `membrane_step(m, V, gtot, itot, dt)` --- one subthreshold step from `V` given accumulated
+- `membrane_step(m, V, gtot, itot, dt)`: one subthreshold step from `V` given accumulated
   conductance `gtot` and total current `itot` (this is where your nonlinear update lives; the linear
   models route through the shared exact-COBA step internally);
 - [`threshold`](@ref), [`reset_value`](@ref), [`refractory`](@ref) as for the macro.

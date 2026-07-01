@@ -9,12 +9,12 @@ end
 
 Dewdrop separates two ways of computing statistics from a run:
 
-- **Post-hoc host observables** ([`src/Stats.jl`](https://github.com/brendanjohnharris/Dewdrop.jl/blob/main/src/Stats.jl))
-  --- pure functions of a [`DewdropSolution`](@ref) (or a raw raster matrix) that run on the host
+- **Post-hoc host observables** ([`src/Stats.jl`](https://github.com/brendanjohnharris/Dewdrop.jl/blob/main/src/Stats.jl)):
+  pure functions of a [`DewdropSolution`](@ref) (or a raw raster matrix) that run on the host
   *after* the integration finishes, from the recorded [`Trace`](@ref)/[`Spikes`](@ref) data and the
   per-neuron positions.
 - **Streaming device reducers** ([`MADev`](@ref), [`Welch`](@ref), [`SpikeRate`](@ref),
-  [`Fano`](@ref)) --- monitors that fold each per-step sample into a fixed-size accumulator *during*
+  [`Fano`](@ref)): monitors that fold each per-step sample into a fixed-size accumulator *during*
   the run, on whatever [architecture](backends.md) the state lives on, so the full trace is never
   materialised.
 
@@ -105,8 +105,8 @@ reduced result on-device; the only memory that scales with run length is a fixed
 (`O(maxlag)` or `O(nfft)`), never `O(nsteps)`. They are the on-device analogues of the corresponding
 `TimeseriesTools` estimators, and run on CPU or GPU through the same code.
 
-Use them when the trace itself is too large to store --- a long run over many (neuron, member) cells
---- and you only want the temporal statistic. They are available on the batched solve path (see
+Use them when the trace itself is too large to store (a long run over many (neuron, member) cells)
+and you only want the temporal statistic. They are available on the batched solve path (see
 [batching](batching.md)); the result is shaped `(n_out, B)` over the selected units and batch
 members, with a trailing axis for the per-lag / per-frequency / per-timescale parameter.
 

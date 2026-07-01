@@ -93,7 +93,7 @@ end
 
 @testset "STDP: CPU broadcast ≡ JLArray fused (learned weights + spikes)" begin
     # a small recurrent net that actually fires, with plastic synapses; the fused megakernel decays
-    # the traces in-kernel and the plastic scatter updates the weights --- both must match the CPU
+    # the traces in-kernel and the plastic scatter updates the weights; both must match the CPU
     # broadcast path bit-for-bit (exactly-representable weights -> order-independent atomic deposit).
     m = LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 0.0, R = 1.0, tref = 2.0)
     rule = Dewdrop.STDP(; Aplus = 0.5, Aminus = 0.25, τplus = 20.0, τminus = 20.0, wmin = 0.0, wmax = 64.0)

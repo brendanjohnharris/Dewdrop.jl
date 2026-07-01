@@ -4,16 +4,16 @@
 # (whose source did not spike) exit early. At realistic firing (rate*dt ≈ 0.1-1% of neurons per
 # step) that is mostly wasted threads. The compacted scatter instead processes ONLY active
 # synapses, in two phases:
-#   1. compactify --- build a dense list `active` of the spiking neurons (atomic-append), with the
+#   1. compactify: build a dense list `active` of the spiking neurons (atomic-append), with the
 #      count in `na`. One pass over N; cheap at sparse firing.
-#   2. a 2-LEVEL scatter --- launch (maxdeg × na) threads, thread (j, a) handling the j-th edge of
+#   2. a 2-LEVEL scatter: launch (maxdeg × na) threads, thread (j, a) handling the j-th edge of
 #      active neuron `active[a]` (rows shorter than maxdeg early-exit). Every launched group maps
 #      to a real spiking neuron, so the device does work proportional to ACTIVE synapses, not all
-#      synapses --- measured up to ~30× over edge-parallel at high degree + sparse firing.
+#      synapses: measured up to ~30× over edge-parallel at high degree + sparse firing.
 #
 # Cost: the launch needs the active count `na` on the HOST (to size the 2-level grid), i.e. one
-# device→host read per step. That reintroduces a per-step sync (which the fused device step removed)
-# --- negligible when the step is scatter-bound (the regime where compaction is used), but a net
+# device→host read per step. That reintroduces a per-step sync (which the fused device step removed):
+# negligible when the step is scatter-bound (the regime where compaction is used), but a net
 # loss in the launch-bound small-N regime, so this path is OPT-IN (`solve(...; scatter = :compacted)`)
 # and the performance advisor only suggests it when the regime fits.
 
@@ -58,7 +58,7 @@ end
 end
 
 # Read the active count to the host WITHOUT scalar indexing (a 1-element bulk DtoH, then host index
-# --- `na[1]` directly would scalar-index, forbidden under CUDA / JLArrays allowscalar(false)).
+# (`na[1]` directly would scalar-index, forbidden under CUDA / JLArrays allowscalar(false)).
 @inline _read_na(na) = @inbounds Array(na)[1]
 
 # Scatter only the active synapses into the ring (the compacted analogue of `scatter!`).

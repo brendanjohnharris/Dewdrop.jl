@@ -1,4 +1,4 @@
-# * Event-driven sparse scatter --- the spike-propagation hot path, written ONCE as a
+# * Event-driven sparse scatter: the spike-propagation hot path, written ONCE as a
 # KernelAbstractions kernel so the same source runs on CPU (`@threads`) and GPU (PTX/AIR).
 # One thread per presynaptic neuron; spiking neurons walk their CSR row and deposit each
 # synapse's weight into the delay ring buffer at (now + per-synapse delay), accumulating with
@@ -11,10 +11,10 @@ import Atomix
 
 # EDGE-PARALLEL scatter (the GPU occupancy fix): ONE thread per synapse, not per presynaptic
 # neuron. The old per-neuron kernel exposed only (spiking-neuron) parallelism and walked each row
-# serially (a few hundred busy threads, the rest idle --- the profiled 97-99% bottleneck). Here
+# serially (a few hundred busy threads, the rest idle; the profiled 97-99% bottleneck). Here
 # every synapse is an independent thread with uniform work (one conditional atomic), so the device
 # is saturated. The presynaptic source is read from the materialised `src` array (sorted, so the
-# idle-thread reads stay coalesced) --- measured 1.7-4x over per-neuron, and far better than a
+# idle-thread reads stay coalesced): measured 1.7-4x over per-neuron, and far better than a
 # per-edge binary search of rowptr (whose O(log npre) work dominates at large nedges).
 @kernel function _scatter_edge_kernel!(
         slots, @Const(spiked), @Const(src), @Const(post), @Const(weight), @Const(delay), now, L
@@ -81,7 +81,7 @@ function scatter!(
     else
         # partitioned over presynaptic neurons across threads; disjoint rows, but two threads may
         # hit the same (target, slot), so accumulate atomically. Order-independent and correct,
-        # though (like the GPU path) not bit-identical across thread counts --- run single-threaded
+        # though (like the GPU path) not bit-identical across thread counts: run single-threaded
         # for bit-reproducibility, multi-threaded for speed (statistically identical).
         @inbounds Threads.@threads for pre in eachindex(spiked)
             spiked[pre] || continue

@@ -10,7 +10,7 @@
 ![Experimental](https://img.shields.io/badge/%F0%9F%A7%AA_status-experimental-orange)
 ![AI-driven](https://img.shields.io/badge/%F0%9F%A4%96_development-AI--driven-8957e5)
 
-A GPU-aware spiking neural network simulator for Julia.
+A spiking neural network simulator for Julia with a focus on speed and GPU compatibility.
 
 Dewdrop ports and consolidates ideas from gold-standard simulators ([Brian2](https://github.com/brian-team/brian2), [NEST](https://github.com/nest/nest-simulator), [BrainPy](https://github.com/brainpy/BrainPy)) into a fast, fixed-step, struct-of-arrays engine that's fully Julia.
 

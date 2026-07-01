@@ -24,7 +24,7 @@ export CPU
     GPU()
 
 Device architecture; simulation state lives in GPU arrays and the same KernelAbstractions
-kernels run on the device. Requires a GPU package extension --- `using CUDA` enables it (the
+kernels run on the device. Requires a GPU package extension; `using CUDA` enables it (the
 extension maps [`array_type`](@ref)`(GPU())` to `CuArray`).
 """
 struct GPU <: AbstractArchitecture end
@@ -49,7 +49,7 @@ on_architecture(arch::AbstractArchitecture, x) = adapt(array_type(arch), x)
 """
     architecture(x) -> AbstractArchitecture
 
-The architecture that owns array `x` --- the inverse of [`on_architecture`](@ref).
+The architecture that owns array `x`: the inverse of [`on_architecture`](@ref).
 Recurses through Base wrapper arrays (`SubArray`, `ReshapedArray`, `PermutedDimsArray`)
 to their parent; GPU array types extend this in the GPU package extension. Used by
 tests and the reinit path to recover an array's device.

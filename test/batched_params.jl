@@ -1,7 +1,7 @@
 using Dewdrop
 using Test
 
-# Generic per-member ("(N,B)") batched parameters --- the shared-connectome ensemble extended so a
+# Generic per-member ("(N,B)") batched parameters: the shared-connectome ensemble extended so a
 # parameter may carry a per-member batch axis, resolved at the EXISTING `_resolve(m,i,b)` /
 # `_bsyn_one(s,i,b)` seams (no new kernels). Built model-agnostically. Cases:
 #   (a) a single-group `Heterogeneous` model runs in the (N,B) batch (per-neuron resolve under the batch axis);
@@ -117,7 +117,7 @@ _run(model, N; kw...) = solve(_net(model, N), FixedStep(0.1); progress = false, 
 
     @testset "(f) batched :itot/:gtot recording ≡ scalar (materialised in-kernel)" begin
         # recording the E INPUT current (`itot`); the batched kernel must materialise itot/gtot
-        # per (neuron, member) --- like the scalar fused path --- so each column's recorded trace equals the
+        # per (neuron, member) (like the scalar fused path) so each column's recorded trace equals the
         # standalone fused solve. (Previously rejected as kernel-local.)
         N = 8; B = 3
         lif = LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 100.0, tref = 2.0)

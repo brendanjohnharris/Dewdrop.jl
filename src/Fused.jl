@@ -1,4 +1,4 @@
-# * Fused device step --- the launch-bound fix for the GPU hot path.
+# * Fused device step: the launch-bound fix for the GPU hot path.
 #
 # At small/medium N the per-step cost is dominated by KERNEL LAUNCHES, not compute: the
 # broadcast-per-phase engine issues ~10 dense launches per step (deliver, drive, accumulate,
@@ -95,7 +95,7 @@ end
 @inline _drive_kick(d::PoissonDrive, n, i, dt) = d.weight * draw_poisson(d.rate * dt, d.seed, n, i)
 
 # SDE noise increment for neuron `i` at step `n` (a strong-zero `false` when no noise, so it adds
-# nothing and preserves `v`'s type --- the deterministic path stays bit-identical). Matches the
+# nothing and preserves `v`'s type; the deterministic path stays bit-identical). Matches the
 # broadcast `_apply_noise!`: the exact-OU scale times one counter-based normal.
 @inline _noise_kick(::Nothing, n, i, dt, m) = false
 @inline function _noise_kick(noise::WhiteNoise, n, i, dt, m)
@@ -147,18 +147,18 @@ end
 end
 
 # The GPU megakernel: one thread per neuron, `offset` shifts a group's launch into its flat range.
-# (`@index(Global)` on its own line --- inlining the `+ offset` breaks KA's cartesian-context macro.)
+# (`@index(Global)` on its own line: inlining the `+ offset` breaks KA's cartesian-context macro.)
 @kernel function _fused_kernel!(V, refrac, spiked, spike_count, input, itotarr, gtotarr, syns, m, dt, n, drive, noise, aux, offset)
     g = @index(Global)
     i = g + offset
     _fused_unit!(V, refrac, spiked, spike_count, input, itotarr, gtotarr, syns, m, dt, n, drive, noise, aux, i)
 end
 
-# Launch the fused kernel (no synchronisation --- it pipelines with the scatter and monitors on
+# Launch the fused kernel (no synchronisation: it pipelines with the scatter and monitors on
 # the device stream; host syncs happen at the windowed flush and at host reads). A single (scalar)
 # model is one launch over `1:N` (offset 0); a `MultiModel` launches the SAME kernel once per group
 # over the group's range with the group's concrete model (so each launch is monomorphic). The aux
-# column is selected per group --- `nothing` for a V-only group keeps its byte-identical fast path.
+# column is selected per group; `nothing` for a V-only group keeps its byte-identical fast path.
 function _launch_fused!(integ::DewdropIntegrator)
     st = integ.state.state
     backend = get_backend(st.V)
@@ -203,8 +203,8 @@ function _fused_step!(integ::DewdropIntegrator)
     return nothing
 end
 
-# --- CPU tight step (backend = Fused): the SAME `_fused_unit!` body as the megakernel, driven by a
-# plain Julia loop instead of KA --- it drops the per-workitem KA machinery (measured ~2× over the
+# CPU tight step (backend = Fused): the SAME `_fused_unit!` body as the megakernel, driven by a
+# plain Julia loop instead of KA; it drops the per-workitem KA machinery (measured ~2× over the
 # KA.CPU megakernel and the multi-pass broadcast). Threaded when >1 thread; each neuron writes only
 # its own state, so the dense loop is bit-identical regardless of thread count (only the existing
 # threaded atomic scatter is order-dependent, unchanged). One range per group (MultiModel).
@@ -226,7 +226,7 @@ end
 end
 # Thread the dense loop only with enough work per thread to amortise the per-step `@threads` dispatch
 # (~tens of µs/step of task spawn+sync). Below this, the dispatch dominates and a small net runs FASTER
-# single-threaded --- the small-N "floor" (e.g. ~0.16 s flat for N ≤ 4000 at 16 threads). Heuristic:
+# single-threaded: the small-N "floor" (e.g. ~0.16 s flat for N ≤ 4000 at 16 threads). Heuristic:
 # ≥ `_TIGHT_MIN_PER_THREAD` neurons per thread. Bit-identical either way (the dense update is
 # per-neuron-independent), so this only changes speed, never results.
 const _TIGHT_MIN_PER_THREAD = 256
@@ -249,7 +249,7 @@ function _tight_range!(m, integ::DewdropIntegrator, st, lo::Int, hi::Int)
 end
 
 # `backend = Turbo`: the deliver / accumulate / decay / scatter / monitor work stays scalar (it is not
-# vectorisable --- ring buffers, the projection tuple, the sparse scatter), and ONLY the dense
+# vectorisable: ring buffers, the projection tuple, the sparse scatter), and ONLY the dense
 # membrane + threshold + reset + count phase is replaced by a SIMD `@turbo` kernel chosen per model
 # (`turbo_kernel`, registered by the LoopVectorization extension). So this orchestration lives in the
 # core; the vectorised kernels live in the extension. `_check_backend` (init) guarantees a supported
@@ -274,7 +274,7 @@ _run_step!(::Schedule{DEFAULT_PHASES}, integ::DewdropIntegrator) =
 @inline _step_backend!(::Fused, ::_KA.CPU, integ::DewdropIntegrator) = _tight_step!(integ)
 @inline _step_backend!(::Turbo, ::_KA.CPU, integ::DewdropIntegrator) = _turbo_step!(integ)
 
-# --- Periodic device synchronisation (safety valve for long runs) ---
+# Periodic device synchronisation (safety valve for long runs)
 # The fused/batched device steps pipeline on one stream with NO per-step host sync, so a long
 # run with no monitor flush (which would otherwise drain the stream every window) can deep-queue
 # kernels and pressure the driver's command buffer. Draining every `sync_every` steps bounds the

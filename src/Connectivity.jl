@@ -1,6 +1,6 @@
 # * Connectivity interface
-# Connectivity is an interface --- `for_each_post(f, conn, pre)` walks a presynaptic
-# neuron's out-edges --- backed by CSR-parallel arrays over *source* neurons, never a
+# Connectivity is an interface: `for_each_post(f, conn, pre)` walks a presynaptic
+# neuron's out-edges, backed by CSR-parallel arrays over *source* neurons, never a
 # dense [post x pre] matrix. Per-synapse weight and delay (in integer time steps)
 # live in CSR-parallel arrays. This keeps event-driven sparse scatter and (later)
 # procedural/JIT-regenerated connectivity expressible, and makes the whole structure
@@ -44,8 +44,8 @@ end
 Adapt.@adapt_structure SparseCSR
 export SparseCSR
 
-# --- Delay units. A synaptic delay is a PHYSICAL TIME (ms) by default --- the same units as `dt` and
-# every other quantity --- resolved to integer steps at the solve `dt`, so its meaning is dt-independent.
+# Delay units. A synaptic delay is a PHYSICAL TIME (ms) by default (the same units as `dt` and
+# every other quantity), resolved to integer steps at the solve `dt`, so its meaning is dt-independent.
 # `steps(n)` is the escape for an exact step count. The connectome stores the delay AS GIVEN (Float ms or
 # Int steps); `init` resolves it via [`_resolve_delays`](@ref) once `dt` is known (the hot-path scatter
 # always reads the resolved integer-step connectome). ---
@@ -56,7 +56,7 @@ end
     steps(n)
 
 An explicit synaptic delay of `n` integer time steps (units of `dt`), bypassing the default millisecond
-interpretation --- e.g. `delay = steps(5)`. A bare number is a delay in milliseconds. Requires `n ≥ 1`
+interpretation: e.g. `delay = steps(5)`. A bare number is a delay in milliseconds. Requires `n ≥ 1`
 (the fixed-step engine delivers in the next step, so it cannot represent a within-step delay).
 """
 steps(n::Integer) = n ≥ 1 ? Steps(Int(n)) :
@@ -83,7 +83,7 @@ function SparseCSR(
         counts[e[1]] += 1
     end
     # `index_type = Int32` halves the rowptr/post/delay bandwidth on the scatter (the
-    # bandwidth-bound hot path) --- safe whenever nedges < 2^31. Counts/positions are computed in
+    # bandwidth-bound hot path): safe whenever nedges < 2^31. Counts/positions are computed in
     # `Int` and stored narrowed.
     rowptr = Vector{IT}(undef, npre + 1)
     rowptr[1] = 1
@@ -160,23 +160,23 @@ end
 """
     correlate_weights!(conn, J; targets = 1:npost(conn), jitter = 0.05, seed, count_empty = true) -> conn
 
-Rescale a connectome's weights in place to **in-degree-normalised** values --- the standard
+Rescale a connectome's weights in place to **in-degree-normalised** values: the standard
 balanced-network `1/√k` scaling. Each edge into post-neuron `p` gets mean weight `wₘ = J_rec / √k[p]`
 (with `k[p]` the in-degree of `p` over `targets`), plus a relative Gaussian jitter `N(0,1)·jitter·wₘ`
 drawn reproducibly from the counter RNG keyed by edge index and `seed`. The recurrent scale is
 
-    J_rec = J · Σ k[p] / Σ √max(k[p], 1)      (`count_empty = true`, the default --- BrainPy's convention)
+    J_rec = J · Σ k[p] / Σ √max(k[p], 1)      (`count_empty = true`, the default: BrainPy's convention)
 
 so a uniformly-connected target population (all `k[p] = k`) gives every weight ≈ `J`. With the default
 `count_empty = true` a zero-in-degree target contributes `√1 = 1` to the denominator, exactly reproducing
 BrainPy's vectorised `√max(k,1)` (it avoids a NaN and slightly shrinks every weight). With
 `count_empty = false` the denominator sums `√k[p]` over **connected** targets only (`k[p] ≥ 1`), so isolated
-neurons don't affect the scale --- the more principled form; the two agree when every target is wired (a
+neurons don't affect the scale: the more principled form; the two agree when every target is wired (a
 dense spatial sheet). `targets` is the post sub-population the in-degrees are counted over (a contiguous
 global-index range), so a projection into a sub-population normalises against that sub-population.
 Reproducible from the seed. The in-degree count and per-edge weight assignment are inherently serial, so
-they run on a host copy of the post indices --- a no-op for a CPU connectome, a single bulk device→host copy
-for a GPU one --- and the result is written back in one bulk `copyto!`, so it works on a GPU connectome too.
+they run on a host copy of the post indices (a no-op for a CPU connectome, a single bulk device→host copy
+for a GPU one), and the result is written back in one bulk `copyto!`, so it works on a GPU connectome too.
 """
 function correlate_weights!(
         conn::SparseCSR, J::Real; targets = 1:npost(conn),
@@ -230,7 +230,7 @@ export correlate_weights
 Random connectivity in which each `(pre, post)` edge is present with probability `p`,
 sampled reproducibly from the counter-based RNG keyed by `(pre, post)` (so a given `seed`
 yields a fixed, copyable connectome). `weight` and `delay` may be scalars or functions of
-the presynaptic index `pre` --- the latter gives excitatory/inhibitory neurons signed
+the presynaptic index `pre`: the latter gives excitatory/inhibitory neurons signed
 weights. `sources` / `targets` restrict the presynaptic / postsynaptic neuron sets (for
 named-subpopulation projections, e.g. `:E => :I`); flat `pre` / `post` indices stay
 absolute (`1:npre` / `1:npost`). Returns a [`SparseCSR`](@ref).

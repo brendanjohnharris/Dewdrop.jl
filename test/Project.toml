@@ -19,5 +19,9 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 TimeseriesBase = "c2aba7f5-82a4-4c45-a741-402bb41ee238"
 Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 
-[sources]
-Fathom = {rev = "main", url = "https://www.github.com/brendanjohnharris/Fathom.jl"}
+[extras]
+CUDA_Runtime_jll = "76a88914-d11a-5bdc-97e0-2f5a05c973a2"
+
+[sources.Fathom]
+rev = "main"
+url = "https://www.github.com/brendanjohnharris/Fathom.jl"

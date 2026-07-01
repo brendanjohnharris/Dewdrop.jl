@@ -29,12 +29,12 @@ Base.length(::Schedule{P}) where {P} = length(P)
 Base.:(==)(::Schedule{P}, ::Schedule{Q}) where {P, Q} = P == Q
 
 # Canonical within-step order:
-#   deliver   --- move due conductance increments from the delay ring buffer into inputs
-#   integrate --- advance neuron + synapse state by dt (exact linear propagator)
-#   threshold --- detect threshold crossings into a spike mask (respecting refractory)
-#   reset     --- reset V, arm refractory, apply spike-triggered adaptation increment
-#   propagate --- scatter each spike into the delay ring buffer at (now + delay)
-#   record    --- snapshot monitored variables
+#   deliver:   move due conductance increments from the delay ring buffer into inputs
+#   integrate: advance neuron + synapse state by dt (exact linear propagator)
+#   threshold: detect threshold crossings into a spike mask (respecting refractory)
+#   reset:     reset V, arm refractory, apply spike-triggered adaptation increment
+#   propagate: scatter each spike into the delay ring buffer at (now + delay)
+#   record:    snapshot monitored variables
 const DEFAULT_PHASES = (:deliver, :integrate, :threshold, :reset, :propagate, :record)
 
 """

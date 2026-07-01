@@ -1,0 +1,12 @@
+[compat]
+SpikingNeuralNetworks = "1.2"
+
+[deps]
+Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+SpikingNeuralNetworks = "9d8b7fda-1049-58bc-9481-071a9f369938"
+TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
+
+[extras]
+CUDA_Runtime_jll = "76a88914-d11a-5bdc-97e0-2f5a05c973a2"

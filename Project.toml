@@ -1,7 +1,24 @@
+authors = ["brendanjohnharris <bhar9988@uni.sydney.edu.au> and contributors"]
 name = "Dewdrop"
 uuid = "4456f7f7-597c-4333-80f0-10ee3d430c1b"
 version = "0.0.1-DEV"
-authors = ["brendanjohnharris <bhar9988@uni.sydney.edu.au> and contributors"]
+
+[compat]
+Adapt = "4.5"
+Atomix = "1.1"
+CUDA = "5"
+CommonSolve = "0.2"
+DimensionalData = "0.30"
+FFTW = "1"
+KernelAbstractions = "0.9"
+Logging = "1.11"
+LoopVectorization = "0.12"
+Random123 = "1.7"
+StructArrays = "0.7"
+TimeseriesBase = "0.2, 0.3"
+UUIDs = "1.11"
+Unitful = "1"
+julia = "1.12"
 
 [deps]
 Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
@@ -14,32 +31,18 @@ Random123 = "74087812-796a-5b5d-8853-05524746bad3"
 StructArrays = "09ab397b-f2b6-538f-b94a-2f83cf4a842a"
 UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 
-[weakdeps]
-CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
-DimensionalData = "0703355e-b756-11e9-17c0-8b28908087d0"
-LoopVectorization = "bdcacae8-1622-11e9-2a5c-532679323890"
-TimeseriesBase = "c2aba7f5-82a4-4c45-a741-402bb41ee238"
-Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
-
 [extensions]
 CUDAExt = "CUDA"
 DewdropLoopVectorizationExt = "LoopVectorization"
 TimeseriesBaseExt = ["TimeseriesBase", "DimensionalData"]
 UnitfulExt = "Unitful"
 
-[compat]
-Adapt = "4.5"
-Atomix = "1.1"
-CUDA = "5"
-CommonSolve = "0.2"
-FFTW = "1"
-DimensionalData = "0.30"
-KernelAbstractions = "0.9"
-Logging = "1.11"
-LoopVectorization = "0.12"
-Random123 = "1.7"
-StructArrays = "0.7"
-TimeseriesBase = "0.2, 0.3"
-UUIDs = "1.11"
-Unitful = "1"
-julia = "1.12"
+[extras]
+CUDA_Runtime_jll = "76a88914-d11a-5bdc-97e0-2f5a05c973a2"
+
+[weakdeps]
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+DimensionalData = "0703355e-b756-11e9-17c0-8b28908087d0"
+LoopVectorization = "bdcacae8-1622-11e9-2a5c-532679323890"
+TimeseriesBase = "c2aba7f5-82a4-4c45-a741-402bb41ee238"
+Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"

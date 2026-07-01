@@ -44,7 +44,7 @@ nb = network(AdEx(; C = 281.0, gL = 30.0, EL = -70.6, VT = -50.4, ΔT = 2.0, Vr 
 [`population!`](@ref) takes a `name`, a neuron `model` (see [neuron models](models.md)), and a count
 `N`. `input` is a per-population constant current (a scalar, or a length-`N` vector); `positions`
 (optional) are consumed by distance-kernel projections (see [connectivity & space](connectivity.md)). The
-name `:all` is reserved --- it always denotes the whole network.
+name `:all` is reserved: it always denotes the whole network.
 
 ```julia
 lif = LIF(; τ = 20.0, EL = -65.0, Vθ = -50.0, Vr = -65.0, R = 1.0, tref = 2.0)
@@ -87,7 +87,7 @@ drive!(nb, PoissonDrive(rate = 10.0, weight = 0.1))
 
 The synapse form wires `n_ext` virtual Poisson sources (rate `rate`) onto a `target` subpopulation by
 [`fixed_prob`](@ref), delivering through any synapse model (the postsynaptic kinetics). This is a
-streaming drive --- no precomputed event matrix:
+streaming drive: no precomputed event matrix:
 
 ```julia
 drive!(nb, :E, ConductanceSynapse(τ = 5.0, Erev = 0.0); rate = 8.0, n_ext = 1000, p = 0.02, weight = 0.4)
@@ -134,7 +134,7 @@ that fits (see [neuron models](models.md)):
 So an `:E`/`:I` pair built from one shared model stays the homogeneous fast path (byte-identical to a
 hand-built [`DewdropNetwork`](@ref)); giving `:E` and `:I` different parameters collapses them to a
 [`Heterogeneous`](@ref); giving them different model types ([`AdEx`](@ref) vs [`LIF`](@ref)) produces a
-[`MultiModel`](@ref). The merge is automatic --- you build with whatever models you declared.
+[`MultiModel`](@ref). The merge is automatic; you build with whatever models you declared.
 
 ## Deferred network specs
 
@@ -149,7 +149,7 @@ sol2 = solve(spec, FixedStep(0.1); tspan = (0.0, 5000.0))   # override per solve
 ```
 
 [`defer`](@ref) captures an arbitrary constructor `f` and its kwargs as a spec, materialised by calling
-`f(; kw…, tspan, dt)` --- for constructors whose assembly genuinely needs `dt` (e.g. a streaming
+`f(; kw…, tspan, dt)`: for constructors whose assembly genuinely needs `dt` (e.g. a streaming
 spatial drive). Put `seed`/`arch` in the captured kwargs; do not put `tspan`/`dt` there (they are
 injected at materialise time). [`materialize`](@ref) is the explicit `(spec, run-params) -> network`
 seam if you want to inspect the built network without solving.

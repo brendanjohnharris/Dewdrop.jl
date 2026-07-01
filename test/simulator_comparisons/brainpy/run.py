@@ -1,5 +1,5 @@
 """
-BrainPy implementation of the shared simulator-comparison problem (../spec.toml). Python-only --- no
+BrainPy implementation of the shared simulator-comparison problem (../spec.toml). Python-only: no
 Julia here; it just generates the standard data CSVs that ../compare_simulators.jl reads. Standalone:
 
     python run.py                  # every device, write out/values.csv + out/performance.csv

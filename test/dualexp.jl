@@ -63,8 +63,8 @@ end
     @test maximum(sol.record.g.data[2, :]) > 0      # dual-exp conductance delivered to neuron 2
     @test mean(sol.record.V.data[2, :]) > m.EL      # neuron 2 depolarised above rest by excitation
 
-    # the `:gtot` membrane accumulator is materialised on every SCALAR backend --- the fused step writes
-    # it per-neuron in-kernel (Fused.jl), matching the Serial broadcast path --- so recording it works and
+    # the `:gtot` membrane accumulator is materialised on every SCALAR backend; the fused step writes
+    # it per-neuron in-kernel (Fused.jl), matching the Serial broadcast path; so recording it works and
     # agrees across backends. (Only the (N,B) batched path leaves it kernel-local; rejected there, see batch.jl.)
     solF = solve(prob, FixedStep(dt); backend = Fused(), record = (g = Trace(:gtot),))
     solS = solve(prob, FixedStep(dt); backend = Serial(), record = (g = Trace(:gtot),))

@@ -1,5 +1,5 @@
 """
-GeNN implementation of the shared simulator-comparison problem (../spec.toml). Python-only --- no Julia
+GeNN implementation of the shared simulator-comparison problem (../spec.toml). Python-only: no Julia
 here; it generates the standard data CSVs that ../compare_simulators.jl reads. Standalone:
 
     python run.py                  # the (gpu) sweep → out/values.csv + out/performance.csv
@@ -7,7 +7,7 @@ here; it generates the standard data CSVs that ../compare_simulators.jl reads. S
     python run.py correctness      # the statistics run
 
 GeNN (https://github.com/genn-team/genn) is a GPU code-GENERATOR for spiking networks: it emits + compiles
-bespoke CUDA per model, and is among the fastest GPU SNN simulators --- the key GPU rival to Dewdrop's own
+bespoke CUDA per model, and is among the fastest GPU SNN simulators: the key GPU rival to Dewdrop's own
 GPU backend. The neuron is a CUSTOM AdEx model (GeNN has no built-in AdEx) integrated forward-Euler at the
 spec's dt; synapses are `ExpCurr` (current-based exponential = CUBA) with `StaticPulseConstantWeight`, split
 into one E population (weight GE) and one I population (weight −GI). The connectome is the language-agnostic
@@ -62,7 +62,7 @@ def connectome(N, K, seed):
     return np.asarray(pre, dtype=np.int64), np.asarray(post, dtype=np.int64)
 
 
-# --- the AdEx neuron as a GeNN custom model (forward-Euler; Iexp capped to stay finite pre-cutoff) ---
+# the AdEx neuron as a GeNN custom model (forward-Euler; Iexp capped to stay finite pre-cutoff)
 def _adex_model():
     import pygenn
     return pygenn.create_neuron_model(

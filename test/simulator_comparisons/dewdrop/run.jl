@@ -19,7 +19,7 @@ const HERE = @__DIR__
 const SPEC = TOML.parsefile(joinpath(HERE, "..", "spec.toml"))
 const OUT = joinpath(HERE, "out")
 
-# --- language-agnostic connectome (splitmix64 fixed in-degree; identical across simulators) ---
+# language-agnostic connectome (splitmix64 fixed in-degree; identical across simulators)
 @inline function _splitmix64(s::UInt64)
     s += 0x9e3779b97f4a7c15
     z = s
@@ -43,7 +43,7 @@ function connectome(N::Int, K::Int, seed::Int)
     return pre, post
 end
 
-# --- build the AdEx E/I network from the spec ---
+# build the AdEx E/I network from the spec
 function build_prob(N::Int, arch, ::Type{T}, ::Type{IT}, tspan) where {T, IT}
     nn, sy, nw = SPEC["neuron"], SPEC["synapse"], SPEC["network"]
     NE = round(Int, nw["ne_frac"] * N)
@@ -65,7 +65,7 @@ end
 _rss_mb() = parse(Int, split(read("/proc/self/statm", String))[2]) * 4096 / 1.0e6
 _peak_mb() = Sys.maxrss() / 1.0e6
 
-# this process's GPU *device* memory (MB) via nvidia-smi --- the network's GPU footprint, not host RSS
+# this process's GPU *device* memory (MB) via nvidia-smi: the network's GPU footprint, not host RSS
 function _gpu_proc_mem_mb()
     try
         out = read(`nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader,nounits`, String)
@@ -79,7 +79,7 @@ function _gpu_proc_mem_mb()
     return 0.0
 end
 
-# --- a single throughput config: build, warm up, time, measure → one RESULT line ---
+# a single throughput config: build, warm up, time, measure → one RESULT line
 function run_single(backend::Symbol, device::Symbol, N::Int)
     bk = backend === :serial ? Serial() : backend === :fused ? Fused() : Turbo()
     arch = device === :gpu ? GPU() : CPU()
@@ -97,7 +97,7 @@ function run_single(backend::Symbol, device::Symbol, N::Int)
     return nothing
 end
 
-# --- statistics (Float64, CPU, Serial) at N_correctness → one CORR line ---
+# statistics (Float64, CPU, Serial) at N_correctness → one CORR line
 function run_correctness()
     N = Int(SPEC["problem"]["N_correctness"]); Tc = Float64(SPEC["problem"]["T_correctness"])
     prob, ne = build_prob(N, CPU(), Float64, Int, (0.0, Tc))
@@ -129,7 +129,7 @@ writecsv(path, header, rows) = open(path, "w") do io
     end
 end
 
-# --- orchestrate: a subprocess per config, collect RESULT/CORR lines, write the standard CSVs ---
+# orchestrate: a subprocess per config, collect RESULT/CORR lines, write the standard CSVs
 function main()
     mkpath(OUT)
     Ns = Int.(SPEC["problem"]["Ns"])

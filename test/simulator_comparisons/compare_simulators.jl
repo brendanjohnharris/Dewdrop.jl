@@ -4,7 +4,7 @@ exec julia +1.12 --project="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/
 =#
 # Aggregate + compare every simulator's output. MODULAR: it discovers each subdirectory that contains
 # an `out/performance.csv` (dewdrop/, brian/, brainpy/, … and any future nest/, neuron/), so adding a
-# simulator is just dropping in its directory + data --- no change here. It (1) VERIFIES every
+# simulator is just dropping in its directory + data: no change here. It (1) VERIFIES every
 # simulator ran the same problem (identical connectome `nedges`; statistically-matching rate / CV-ISI),
 # and (2) PLOTS the SCALING of wall time and memory vs network size N across CPU and GPU backends.
 #
@@ -20,7 +20,7 @@ using Fathom
 const HERE = @__DIR__
 set_theme!(fathom())
 
-# --- discover simulator directories (those with out/performance.csv) ---
+# discover simulator directories (those with out/performance.csv)
 function simulator_dirs()
     dirs = String[]
     for d in readdir(HERE; join = true)
@@ -29,7 +29,7 @@ function simulator_dirs()
     return sort(dirs)
 end
 
-# --- load performance (simulator, backend, device, N, wall_s, mem_mb) + values (N, rate, cv, nedges) ---
+# load performance (simulator, backend, device, N, wall_s, mem_mb) + values (N, rate, cv, nedges)
 struct Series
     sim::String; backend::String; device::String; Ns::Vector{Int}; wall::Vector{Float64}; mem::Vector{Float64}
 end
@@ -64,7 +64,7 @@ function load_values()
     return vals
 end
 
-# --- (1) verify: same connectome (nedges) + statistically-matching rate / CV-ISI ---
+# (1) verify: same connectome (nedges) + statistically-matching rate / CV-ISI
 function verify(vals)
     println("="^66)
     println("Same-simulation check (N = $(isempty(vals) ? "?" : first(values(vals)).N))")
@@ -91,17 +91,29 @@ function verify(vals)
     return println("="^66)
 end
 
-# --- (2) plot scaling: wall time + memory vs N, log-log, CPU & GPU ---
+# (2) plot scaling: wall time + memory vs N, log-log, CPU & GPU
 const SIMCOLOR = Dict(
     "dewdrop" => Fathom.baikal, "brian" => Fathom.bermejo,
-    "brainpy" => Fathom.qinghai, "nest" => Fathom.seohae, "genn" => Fathom.ianthina
+    "brainpy" => Fathom.qinghai, "nest" => Fathom.seohae, "genn" => Fathom.ianthina,
+    "snn" => Fathom.mesopelagic
 )
 _color(sim) = get(SIMCOLOR, sim, Fathom.ianthina)
 
+# dewdrop's backends share its colour, so distinguish them by linestyle. On the CPU axis the BEST
+# (fastest) backend, Turbo, is the solid blue line; Fused is dashed and Serial dotted. The GPU axis has a
+# single dewdrop line (the Fused megakernel), drawn solid as the primary GPU path. Other sims stay solid.
+const DEWSTYLE_CPU = Dict("turbo" => :solid, "fused" => :dash, "serial" => :dot)
+function _linestyle(sim, backend, device)
+    sim == "dewdrop" || return :solid
+    device == "gpu" && return :solid
+    return get(DEWSTYLE_CPU, backend, :solid)
+end
+
 # Apples-to-apples layout: legend across the top, CPU methods (time + memory) on row 2, GPU on row 3.
-# Within a row every series is the same device, so colour = simulator suffices (a sim's CPU/GPU lines
-# share its colour); dewdrop is drawn thicker/opaque to stand out, others thinner/translucent. CPU and
-# GPU never share an axis, so their very different scales don't squash.
+# Within a row every series is the same device, so colour = simulator; dewdrop is drawn thicker/opaque to
+# stand out (others thinner/translucent), and its multiple CPU backends are further split by linestyle
+# (Turbo solid, Fused dashed, Serial dotted). CPU and GPU never share an axis, so their very different
+# scales don't squash.
 function plot_scaling(series)
     fig = SixPanel()
     cpu = filter(s -> s.device != "gpu", series)
@@ -122,11 +134,12 @@ function plot_scaling(series)
             lbl = s.backend == s.sim ? s.sim : "$(s.sim) $(s.backend)"
             isdew = s.sim == "dewdrop"          # dewdrop emphasised: thicker, fully opaque
             c = isdew ? _color(s.sim) : (_color(s.sim), 0.6)
-            lw = isdew ? 3.5 : 1.8
-            h = lines!(axt, s.Ns, s.wall; color = c, linewidth = lw)
+            lw = isdew ? 7.0 : 3.6
+            ls = _linestyle(s.sim, s.backend, s.device)   # dewdrop backends split by linestyle; others solid
+            h = lines!(axt, s.Ns, s.wall; color = c, linewidth = lw, linestyle = ls)
             push!(handles, h); push!(labels, lbl)
             pos = s.mem .> 0
-            any(pos) && lines!(axm, s.Ns[pos], s.mem[pos]; color = c, linewidth = lw)
+            any(pos) && lines!(axm, s.Ns[pos], s.mem[pos]; color = c, linewidth = lw, linestyle = ls)
         end
         return handles, labels
     end
@@ -145,7 +158,7 @@ end
 
 function main()
     series = load_performance()
-    isempty(series) && error("no <sim>/out/performance.csv found in $HERE --- run each simulator first")
+    isempty(series) && error("no <sim>/out/performance.csv found in $HERE; run each simulator first")
     verify(load_values())
     return plot_scaling(series)
 end

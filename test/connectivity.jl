@@ -87,7 +87,7 @@ end
 end
 
 # correlate_weights!: in-degree-normalised (1/√k) weights with relative Gaussian jitter, reproducible from
-# the seed --- the generic primitive spatial E/I models consume. See networkspec.jl for the curried
+# the seed: the generic primitive spatial E/I models consume. See networkspec.jl for the curried
 # `correlate_weights` used through the builder's `adjust` hook.
 @testset "correlate_weights! (in-degree normalisation)" begin
     arch = Dewdrop.CPU()
@@ -125,7 +125,7 @@ end
 end
 
 # correlate_weights! on a DEVICE connectome (GPU build path): the in-degree count + per-edge weight
-# assignment are serial, so they run on a host copy of `post` with a single bulk write-back --- never
+# assignment are serial, so they run on a host copy of `post` with a single bulk write-back, never
 # scalar-indexing the device array. A JLArray connectome (which bans scalar indexing, like CUDA) exercises
 # this; the result must be identical to the host path.
 @testset "correlate_weights! on a device connectome (no scalar indexing)" begin
