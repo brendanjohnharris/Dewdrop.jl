@@ -41,6 +41,23 @@ sol   = solve(prob, FixedStep(0.1); record = (spikes = Spikes(),))
 times, ids = raster(sol)
 ```
 
+## Progress bars
+
+`solve` reports progress as [ProgressLogging](https://github.com/JuliaLogging/ProgressLogging.jl) log
+records; render them as a bar by making a progress-aware logger active:
+
+```julia
+using Logging, TerminalLoggers
+global_logger(TerminalLogger())
+```
+
+On the GPU there is a world-age pitfall: a *custom* global logger (like `TerminalLogger`) can crash the
+first kernel compilation with `min_enabled_level ... method too new`. Avoid it either by registering the
+logger **early** (in `startup.jl`, before the GPU stack loads) or by keeping a stdlib `ConsoleLogger`
+global and scoping the progress logger with `with_logger(TerminalLogger()) do … end`. See
+[Running on the GPU](https://brendanjohnharris.github.io/Dewdrop.jl/dev/guide/gpu) for the mechanism and
+both recipes.
+
 ## Status
 
 Experimental, but broad. Implemented and tested:

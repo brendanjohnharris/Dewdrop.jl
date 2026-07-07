@@ -116,3 +116,59 @@ regime suggests a faster path: Float64 state (suggests Float32), 64-bit indices 
 `index_type = Int32`), sparse firing over a large connectome (suggests `scatter = :compacted`), or a
 small quiet network that is launch-bound (suggests `batch = B`). Silence it with
 `Dewdrop.set_advice!(false)` or `solve(...; advise = false)`.
+
+## Progress bars during GPU compilation
+
+`solve` reports progress as [ProgressLogging](https://github.com/JuliaLogging/ProgressLogging.jl)-style
+log records (`@logmsg` at `LogLevel(-1)`), which a progress-aware logger such as
+`TerminalLoggers.TerminalLogger` renders as a bar. That is independent of the architecture --- but there
+is a world-age pitfall specific to GPU runs.
+
+During the first kernel compilation, GPUCompiler introspects the **global** logger to gauge its
+debug-remark level, through a fixed-world `invoke(Logging.min_enabled_level, Tuple{typeof(logger)}, logger)`.
+If the global logger is a *custom* logger (e.g. `TerminalLogger`) whose `min_enabled_level` method was
+registered at a world *newer* than the kernel-compile world, that `invoke` throws:
+
+```
+MethodError: no method matching invoke min_enabled_level(::TerminalLogger)
+  ... method too new to be called from this world context.
+```
+
+and compilation dies right after "Building network". (A stdlib `ConsoleLogger` never triggers this: its
+`min_enabled_level` lives in the `Logging` stdlib, so it is visible at any compile world.) The crash comes
+*only* from a custom logger sitting in the global slot when kernels compile; there are two ways to keep the
+bar without it.
+
+### 1. Register the progress logger early (e.g. in `startup.jl`)
+
+Load `TerminalLoggers` and set it global *before* the GPU stack (CUDA / GPUCompiler) loads, so its
+`min_enabled_level` method predates the kernel-compile world. Guard on `jl_generating_output` so you never
+mutate global logging state while precompiling:
+
+```julia
+# ~/.julia/config/startup.jl
+if ccall(:jl_generating_output, Cint, ()) == 0 && (isinteractive() || stderr isa Base.TTY)
+    Base.eval(Main, quote            # one eval so global_logger sees the fresh import
+        using TerminalLoggers, Logging
+        global_logger(TerminalLogger())
+    end)
+end
+```
+
+### 2. Keep the global logger world-safe and scope the progress logger
+
+Leave `global_logger()` as a stdlib `ConsoleLogger` (always visible to GPUCompiler) and wrap the run in
+`with_logger`. GPUCompiler reads the safe global logger; `solve`'s progress records dispatch to the scoped
+`TerminalLogger`, so the bar still renders:
+
+```julia
+using Logging, TerminalLoggers
+with_logger(TerminalLogger()) do
+    solve(prob, FixedStep(0.1); progress = :auto)
+end
+```
+
+Approach 2 is robust by construction (it never puts a custom logger in the global slot); approach 1 is
+convenient when you always want the bar and are willing to register the logger first. Note that
+`invokelatest` on the `solve` call does *not* help --- GPUCompiler captures the compile world through a
+generated-function path, not the runtime world.
