@@ -168,9 +168,13 @@ function _block_diagonal(nets::AbstractVector{<:DewdropNetwork})
     end
     projs = Tuple(projlist)
     subpops = NamedTuple(Symbol("member", b) => (offs[b] + 1):(offs[b] + Ns[b]) for b in 1:B)
+    # Carry the network `drive` field and the SDE `noise` term onto the stacked network. Both are keyed by
+    # global neuron index, so a uniform member drive/noise applies correctly across every block; per-member
+    # DIFFERING drive/noise fields are not block-expressible (attach a per-member drive as a projection via
+    # `drive!` / `PoissonSource`, which offsets per member). Previously `noise` was silently dropped.
     return DewdropNetwork(
         model, Ntot; input = input, tspan = first(nets).tspan, arch = arch,
-        projections = projs, drive = first(nets).drive, subpops = subpops
+        projections = projs, drive = first(nets).drive, noise = first(nets).noise, subpops = subpops
     )
 end
 

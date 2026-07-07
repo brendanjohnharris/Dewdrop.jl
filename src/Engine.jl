@@ -26,65 +26,40 @@ Projection(synapse::AbstractSynapseModel, conn::AbstractConnectivity; plasticity
     Projection(synapse, conn, plasticity)
 export Projection
 
-# Runtime synaptic state assembled at `init`, dispatched on the synapse model:
+# Runtime synaptic state, assembled at `init`. ONE generic state for every synapse; the per-synapse
+# physics lives entirely in the descriptor methods (src/Synapses.jl: `_syn_accumulators`, `_syn_coeffs`,
+# `_syn_membrane`, `_syn_decay`, `_syn_couple`), from which the serial / fused / batched paths are generated.
 abstract type AbstractSynapseState end
 
-# Current-based (CUBA): a per-neuron synaptic current accumulator, its delay ring buffer,
-# the connectivity, and the precomputed synaptic decay coefficient.
-struct SynapseState{IS, B, C, T} <: AbstractSynapseState
-    Isyn::IS
-    buf::B
+# The per-target accumulators (`acc`, a NamedTuple of (N,) arrays keyed by `_syn_accumulators`), the delay
+# ring, the connectivity, the synapse model (dispatches the descriptor hooks; frozen ≠ exact dual by model
+# type), and the derived coefficients (a NamedTuple, from `_syn_coeffs`). Distinct model params ⇒ distinct
+# concrete `SynState` per synapse; isbits + Adapt-movable (`acc`/`coeffs` are NamedTuples of concrete arrays
+# / scalars, each its own field type).
+struct SynState{S <: AbstractSynapseModel, ACC <: NamedTuple, R, C, K} <: AbstractSynapseState
+    model::S
+    acc::ACC
+    buf::R
     conn::C
-    decay::T
+    coeffs::K
 end
-Adapt.@adapt_structure SynapseState
+Adapt.@adapt_structure SynState
 
-# Conductance-based (COBA): a per-neuron conductance accumulator + reversal potential; the
-# synaptic current is g·(Erev − V), contributing to BOTH the effective leak and the drive.
-struct COBAState{G, B, C, T} <: AbstractSynapseState
-    g::G
-    buf::B
-    conn::C
-    decay::T
-    Erev::T
+# Read / write the accumulators at neuron `i` as a plain tuple. `map` over the NamedTuple's values unrolls
+# at compile time (isbits tuple in/out, allocation-free, GPU-kernel-safe — the same shape as `_resolve`).
+@inline _read_acc(acc::NamedTuple, i) = map(a -> (@inbounds a[i]), values(acc))
+@inline function _write_acc!(acc::NamedTuple, i, vals::Tuple)
+    map((a, x) -> (@inbounds a[i] = x), values(acc), vals)
+    return nothing
 end
-Adapt.@adapt_structure COBAState
 
-# Delta (instantaneous voltage-jump): just the delay buffer + connectivity (no current, no decay).
-struct DeltaSynapseState{B, C} <: AbstractSynapseState
-    buf::B
-    conn::C
+# The shared per-target physics (index-free, so the fused and batched paths call it identically): kick every
+# accumulator by the delivered `due`, read the membrane coupling, and decay. Returns (Δgtot, Δitot, newacc).
+@inline function _syn_kinetics(model, acc0::Tuple, due, coeffs, v)
+    acc = map(a -> a + due, acc0)
+    Δg, Δi = _syn_membrane(model, acc, coeffs, v)
+    return (Δg, Δi, _syn_decay(model, acc, coeffs))
 end
-Adapt.@adapt_structure DeltaSynapseState
-
-# Dual-exponential COBA: two per-target conductance accumulators (`g_rise`, `g_decay`), each kicked
-# by the delivered weight and decaying with its own coefficient; the conductance is `a·(g_decay − g_rise)`.
-# Two integration variants share kinetics (deliver/decay) but differ only in how the conductance enters
-# the membrane (see `_accumulate!`): `DualExpCOBAState` is EXACT COBA (g shunts via `gtot`);
-# `FrozenDualExpCOBAState` is FROZEN-CURRENT (g·(Erev−V) injected as current, no shunt). Same fields.
-abstract type AbstractDualExpState <: AbstractSynapseState end
-struct DualExpCOBAState{G, B, C, T} <: AbstractDualExpState
-    g_rise::G
-    g_decay::G
-    buf::B
-    conn::C
-    decay_r::T
-    decay_d::T
-    a::T
-    Erev::T
-end
-Adapt.@adapt_structure DualExpCOBAState
-struct FrozenDualExpCOBAState{G, B, C, T} <: AbstractDualExpState
-    g_rise::G
-    g_decay::G
-    buf::B
-    conn::C
-    decay_r::T
-    decay_d::T
-    a::T
-    Erev::T
-end
-Adapt.@adapt_structure FrozenDualExpCOBAState
 
 """
     PoissonDrive(; rate, weight, seed=0)
@@ -338,67 +313,63 @@ function _init_voltage!(V, EL, v0::Tuple{<:Real, <:Real}, ::Type{T}, seed) where
     return V
 end
 
-function _make_synstate(arch, syn::CurrentSynapse, conn, ::Type{T}, N, dt) where {T}
-    Isyn = fill!(allocate(arch, T, N), zero(T))
+# One generic synapse-state builder: allocate the accumulators named by `_syn_accumulators`, size the delay
+# ring, and derive the coefficients. (`PoissonSource` and plastic projections keep their own more-specific
+# `_make_synstate` methods, which wrap this.)
+function _make_synstate(arch, m::AbstractSynapseModel, conn, ::Type{T}, N, dt) where {T}
+    names = _syn_accumulators(typeof(m))
+    acc = NamedTuple{names}(ntuple(_ -> fill!(allocate(arch, T, N), zero(T)), length(names)))
     buf = DelayBuffer(arch, T, N, maximum(conn.delay; init = 0))   # empty projection → L=1 no-op
-    return SynapseState(Isyn, buf, conn, synapse_decay(syn, dt))
+    return SynState(m, acc, buf, conn, _syn_coeffs(m, dt, T))
 end
-function _make_synstate(arch, syn::ConductanceSynapse, conn, ::Type{T}, N, dt) where {T}
-    g = fill!(allocate(arch, T, N), zero(T))
-    buf = DelayBuffer(arch, T, N, maximum(conn.delay; init = 0))   # empty projection → L=1 no-op
-    return COBAState(g, buf, conn, synapse_decay(syn, dt), T(syn.Erev))
-end
-function _make_synstate(arch, ::DeltaSynapse, conn, ::Type{T}, N, dt) where {T}
-    buf = DelayBuffer(arch, T, N, maximum(conn.delay; init = 0))   # empty projection → L=1 no-op
-    return DeltaSynapseState(buf, conn)
-end
-# Both dual-exp synapses share kinetics (g_rise/g_decay + dual decay) and differ only in which state
-# type carries them (exact-COBA shunt vs frozen current; see `_accumulate!`). `State` is the concrete
-# constructor, passed as a value → each call specialises, so the built type/values are unchanged.
-function _make_dualexp_state(State, arch, syn, conn, ::Type{T}, N, dt) where {T}
-    g_rise = fill!(allocate(arch, T, N), zero(T))
-    g_decay = fill!(allocate(arch, T, N), zero(T))
-    buf = DelayBuffer(arch, T, N, maximum(conn.delay; init = 0))   # empty projection → L=1 no-op
-    return State(
-        g_rise, g_decay, buf, conn,
-        T(exp(-dt / syn.τr)), T(exp(-dt / syn.τd)), T(_dualexp_a(syn.τr, syn.τd)), T(syn.Erev)
-    )
-end
-_make_synstate(arch, syn::DualExpSynapse, conn, ::Type{T}, N, dt) where {T} =
-    _make_dualexp_state(DualExpCOBAState, arch, syn, conn, T, N, dt)
-_make_synstate(arch, syn::FrozenDualExpSynapse, conn, ::Type{T}, N, dt) where {T} =
-    _make_dualexp_state(FrozenDualExpCOBAState, arch, syn, conn, T, N, dt)
 
 # Within-step phases. Synapse work iterates the projection tuple, dispatching each
 # operation on the per-projection synaptic-state type (compile-time unrolled), so a
 # population can carry any mix of CUBA / COBA / delta projections, and an unconnected
 # population (`syns === ()`) compiles the synapse work away entirely. ---
 
-# Per-projection: apply this step's delivered increments (from the ring buffer).
-@inline _deliver!(syn::SynapseState, integ) = (deliver_due!(syn.Isyn, syn.buf, integ.n); nothing)
-@inline _deliver!(syn::COBAState, integ) = (deliver_due!(syn.g, syn.buf, integ.n); nothing)
-@inline _deliver!(syn::DeltaSynapseState, integ) = (deliver_due!(integ.state.state.V, syn.buf, integ.n); nothing)
-@inline _deliver!(syn::AbstractDualExpState, integ) = (deliver_due_dual!(syn.g_rise, syn.g_decay, syn.buf, integ.n); nothing)
+# Per-projection serial (broadcast) phases, generated from the descriptor and dispatched on the coupling
+# mode + accumulator arity. Broadcasts stay `@.` (GPU-safe); the membrane math lives ONLY in `_syn_membrane`
+# (broadcast through `_syn_Δgtot` / `_syn_Δitot`), so serial ≡ fused by construction. Byte-identical to the
+# prior hand-written hooks (same operations, same order).
 
-# Per-projection: accumulate the input current (itot) and conductance (gtot) for this step.
-@inline _accumulate!(syn::SynapseState, gtot, itot, V) = (@. itot += syn.Isyn; nothing)
-@inline _accumulate!(syn::COBAState, gtot, itot, V) = (@. gtot += syn.g; @. itot += syn.g * syn.Erev; nothing)
-@inline _accumulate!(syn::DeltaSynapseState, gtot, itot, V) = nothing  # applied directly to V at deliver
-@inline function _accumulate!(syn::DualExpCOBAState, gtot, itot, V)    # exact COBA: g = a·(g_decay − g_rise) shunts
-    @. gtot += syn.a * (syn.g_decay - syn.g_rise)
-    @. itot += syn.a * (syn.g_decay - syn.g_rise) * syn.Erev
+# deliver: a voltage-jump synapse adds the due increment straight to V; an accumulator synapse fills its
+# 1 or 2 accumulators from the ring (the same `deliver_due!` / `deliver_due_dual!` as before).
+@inline _deliver!(s::SynState, integ) = _syn_deliver!(_syn_couple(typeof(s.model)), s, integ)
+@inline _syn_deliver!(::Val{:jump}, s, integ) = (deliver_due!(integ.state.state.V, s.buf, integ.n); nothing)
+@inline _syn_deliver!(::Union{Val{:current}, Val{:conductance}}, s, integ) = (_deliver_acc!(values(s.acc), s.buf, integ.n); nothing)
+@inline _deliver_acc!(a::Tuple{Any}, buf, n) = deliver_due!(a[1], buf, n)
+@inline _deliver_acc!(a::Tuple{Any, Any}, buf, n) = deliver_due_dual!(a[1], a[2], buf, n)
+
+# accumulate: broadcast the two halves of `_syn_membrane` into gtot / itot. `m` broadcasts as a scalar (via
+# `broadcastable`), `Ref(coeffs)` too; the accumulator arrays splat in. The recompute of the conductance
+# amplitude across the gtot / itot broadcasts mirrors the prior COBA / dual two-broadcast form exactly.
+@inline _syn_Δgtot(m, c, v, acc...) = _syn_membrane(m, acc, c, v)[1]
+@inline _syn_Δitot(m, c, v, acc...) = _syn_membrane(m, acc, c, v)[2]
+@inline _accumulate!(s::SynState, gtot, itot, V) = _syn_accumulate!(_syn_couple(typeof(s.model)), s, gtot, itot, V)
+@inline _syn_accumulate!(::Val{:jump}, s, gtot, itot, V) = nothing   # applied directly to V at deliver
+@inline function _syn_accumulate!(::Val{:current}, s, gtot, itot, V)
+    itot .+= _syn_Δitot.(s.model, Ref(s.coeffs), V, values(s.acc)...)
     return nothing
 end
-@inline function _accumulate!(syn::FrozenDualExpCOBAState, gtot, itot, V)   # frozen current g·(Erev − V), no shunt
-    @. itot += syn.a * (syn.g_decay - syn.g_rise) * (syn.Erev - V)
+@inline function _syn_accumulate!(::Val{:conductance}, s, gtot, itot, V)
+    c = Ref(s.coeffs)
+    gtot .+= _syn_Δgtot.(s.model, c, V, values(s.acc)...)
+    itot .+= _syn_Δitot.(s.model, c, V, values(s.acc)...)
     return nothing
 end
 
-# Per-projection: decay the synaptic state by one step.
-@inline _decay!(syn::SynapseState) = (@. syn.Isyn *= syn.decay; nothing)
-@inline _decay!(syn::COBAState) = (@. syn.g *= syn.decay; nothing)
-@inline _decay!(syn::DeltaSynapseState) = nothing
-@inline _decay!(syn::AbstractDualExpState) = (@. syn.g_rise *= syn.decay_r; @. syn.g_decay *= syn.decay_d; nothing)
+# decay: diagonal (each channel × its own coefficient). Extract the coefficients via `_syn_decay` on a unit
+# tuple (`true` is a strong one → the stored coefficient, bit-identical), then `@.` multiply each accumulator.
+@inline _decay!(s::SynState) = _syn_decay!(values(s.acc), s.model, s.coeffs)
+@inline _syn_decay!(::Tuple{}, m, c) = nothing
+@inline function _syn_decay!(a::Tuple, m, c)
+    d = _syn_decay(m, map(_ -> true, a), c)
+    _decay_each!(a, d)
+    return nothing
+end
+@inline _decay_each!(a::Tuple{Any}, d) = (@. a[1] *= d[1]; nothing)
+@inline _decay_each!(a::Tuple{Any, Any}, d) = (@. a[1] *= d[1]; @. a[2] *= d[2]; nothing)
 
 # Compile-time tuple unrolls (dispatch on each element's concrete type → no runtime dispatch).
 @inline _deliver_all!(::Tuple{}, integ) = nothing

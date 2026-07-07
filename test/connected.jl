@@ -33,15 +33,15 @@ using JLArrays
     while integ.spike_count[1] == 0
         step!(integ)
     end
-    @test integ.syns[1].Isyn[2] == 0.0                     # not yet delivered (delayed)
+    @test integ.syns[1].acc.Isyn[2] == 0.0                 # not yet delivered (delayed)
     for _ in 1:(delay + 5)
         step!(integ)
     end
-    @test integ.syns[1].Isyn[2] > 0.0                      # delivered after the conduction delay
+    @test integ.syns[1].acc.Isyn[2] > 0.0                  # delivered after the conduction delay
 
     # GPU-readiness: the connected step runs under JLArray + allowscalar(false)
     gpu = adapt(JLArray, init(prob, FixedStep(dt)))
-    @test gpu.syns[1].Isyn isa JLArray
+    @test gpu.syns[1].acc.Isyn isa JLArray
     cpu = init(prob, FixedStep(dt))
     for _ in 1:60
         step!(gpu); step!(cpu)

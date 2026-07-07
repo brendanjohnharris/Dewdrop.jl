@@ -52,6 +52,7 @@ modules = TURBO_EXT === nothing ? [Dewdrop] : [Dewdrop, TURBO_EXT]
 pages = [
     "Home" => "index.md",
     "Getting started" => "guide/getting-started.md",
+    "A full tour" => "guide/tour.md",
     "Guides" => [
         "Building networks" => "guide/networks.md",
         "Neuron & synapse models" => "guide/models.md",

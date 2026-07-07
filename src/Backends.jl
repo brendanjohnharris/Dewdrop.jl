@@ -66,8 +66,9 @@ it with any AD tool: `ForwardDiff` for a few parameters, `Enzyme` reverse-mode f
 `β` is the surrogate steepness (larger → closer to the true Heaviside, but stiffer gradients). The
 gradients are *approximate* gradients of the true discrete dynamics (standard surrogate-gradient
 training), so this is a distinct numerical path you opt into — every other backend is unaffected and
-stays bit-identical. CPU-only and single-population for now; synaptic-weight training (a
-surrogate-weighted scatter) and a GPU path are the documented next steps.
+stays bit-identical. **Connected networks are supported**: a surrogate-weighted scatter deposits
+`weight·s_pre`, so gradients flow to both the synaptic weights (build the connectome with a `Dual`/`Active`
+weight eltype) and the presynaptic voltages. CPU-only; a GPU surrogate-AD path is the documented next step.
 """
 struct Differentiable{T <: Real} <: SimBackend
     β::T
@@ -142,10 +143,10 @@ function _check_backend(b::SimBackend, prob)
 end
 
 # The dense membrane accumulators `:gtot`/`:itot` are materialised into `integ.gtot`/`integ.itot` by the
-# Serial/Turbo paths (`_accum_all!`) AND by the fused tight loop / GPU megakernel (`_fused_unit!` writes
-# the per-neuron values back before the membrane step). The ensemble-BATCHED path is the exception (it
-# keeps them per-lane in registers; Batch.jl errors there). Reject recording them on a backend that
-# would leave them zero, with a clear pointer, rather than return wrong data. Synaptic state
+# Serial/Turbo paths (`_accum_all!`), the fused tight loop / GPU megakernel (`_fused_unit!`), AND the
+# ensemble-batched megakernel (`_batched_fused_kernel!` writes them per column). The `Differentiable`
+# surrogate step is the exception (it does not materialise them). Reject recording `:gtot`/`:itot` on a
+# backend that would leave them zero, with a clear pointer, rather than return wrong data. Synaptic state
 # (`Trace(:g_decay; projection = i)`) is materialised on every backend regardless.
 @inline _populates_accum(b::SimBackend) = (b isa Serial) || (b isa Turbo) || (b isa Fused)
 function _check_accum_record(bk::SimBackend, record)
@@ -170,8 +171,8 @@ function _check_backend(b::Differentiable, prob)
         throw(ArgumentError("backend = Differentiable() is CPU-only for now (a GPU surrogate-AD path is the documented next step); run the forward pass on the GPU with Fused()"))
     prob.schedule == default_schedule() ||
         throw(ArgumentError("backend = Differentiable() requires the canonical schedule"))
-    isempty(prob.projections) ||
-        throw(ArgumentError("backend = Differentiable() currently supports unconnected populations only; synaptic-weight training needs a surrogate-weighted scatter (the next step)"))
+    any(p -> p.plasticity !== nothing, prob.projections) &&
+        throw(ArgumentError("backend = Differentiable() does not support plastic (STDP) projections: the plastic scatter is a separately-gated path. Train weights via the surrogate-weighted scatter instead (Dual-typed connectome weights)."))
     _is_hetero(prob.model) &&
         throw(ArgumentError("backend = Differentiable() does not yet support Heterogeneous / MultiModel models"))
     return nothing

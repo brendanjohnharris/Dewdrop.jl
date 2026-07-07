@@ -14,9 +14,11 @@
 # column via `Population`/`allocate`, so a `Dual`-typed model gives a `Dual`-typed run with no further
 # change. Pair with `ForwardDiff` (few parameters) or `Enzyme` reverse-mode (many; the scalable path).
 #
-# NEXT STEPS (designed, not yet built): a surrogate-WEIGHTED scatter (`accum += weight·s`) to make
-# synaptic weights trainable in recurrent nets; an Enzyme weak-dep extension with the atomic-scatter
-# reverse rule; and the GPU path (Enzyme through the KA megakernel — the open hardware question).
+# The surrogate-WEIGHTED scatter (`slots += weight·s_pre`, `_surrogate_scatter!` below) makes synaptic
+# weights trainable in CONNECTED / recurrent nets: build the connectome with a `Dual`/`Active` weight eltype
+# and the gradient flows to the weights (and, through `s_pre`, back to the presynaptic voltages). NEXT STEPS
+# (designed, not yet built): an Enzyme weak-dep extension for scalable reverse-mode (many weights); and the
+# GPU path (Enzyme through the KA megakernel — the open hardware question).
 
 # the surrogate: a smooth, in-[0,1] replacement for the Heaviside threshold at the model's Vθ
 """
@@ -73,9 +75,33 @@ stand-in for the spike indicator, with steepness `β`. As `β → ∞` it approa
     return nothing
 end
 
+# Surrogate-weighted scatter: the connected-training seam. Deposit `weight·s_pre` into the delay ring,
+# UNGATED — a serial per-edge walk (the differentiable path is CPU-only and single-threaded, so no atomics,
+# AD-safe). The regular `scatter!` gates on `spiked[pre] || continue`, which a real-valued / `Dual` surrogate
+# spike cannot take; here `iszero(s)` short-circuits the exact-zero (refractory / far-subthreshold) case,
+# recovering the spike sparsity without a boolean gate. Differentiable through BOTH `weight[e]` (→ trainable
+# synapses, when the connectome weight is a `Dual`/`Active` eltype) AND the presynaptic surrogate spike
+# `s_pre` (→ gradients flow back to V_pre); the scatter's adjoint is a gather, handled implicitly by the AD.
+@inline function _surrogate_scatter!(buf::DelayBuffer, conn::SparseCSR, spiked, now::Integer)
+    slots, L = buf.slots, buf.L
+    rowptr, post, weight, delay = conn.rowptr, conn.post, conn.weight, conn.delay
+    n = Int(now)
+    @inbounds for pre in eachindex(spiked)
+        s = spiked[pre]
+        iszero(s) && continue
+        for e in rowptr[pre]:(rowptr[pre + 1] - 1)
+            slots[post[e], mod(n + delay[e], L) + 1] += weight[e] * s
+        end
+    end
+    return nothing
+end
+@inline _surrogate_propagate!(syn::AbstractSynapseState, integ) = (_surrogate_scatter!(syn.buf, syn.conn, integ.spiked, integ.n); nothing)
+@inline _surrogate_propagate_all!(::Tuple{}, integ) = nothing
+@inline _surrogate_propagate_all!(s::Tuple, integ) = (_surrogate_propagate!(first(s), integ); _surrogate_propagate_all!(Base.tail(s), integ))
+
 # Surrogate dense pass: single-threaded (clean for AD; the differentiable nets are small), then the
-# propagate (a no-op for an unconnected population — the seam where a surrogate-weighted scatter will go)
-# and monitors. Mirrors `_tight_step!`.
+# surrogate-weighted scatter (a no-op for an unconnected population; the trainable-synapse seam for a
+# connected one) and monitors. Mirrors `_tight_step!`.
 function _diff_step!(integ::DewdropIntegrator)
     st = integ.state.state
     m = integ.model
@@ -86,7 +112,7 @@ function _diff_step!(integ::DewdropIntegrator)
     @inbounds for i in 1:length(V)
         _diff_unit!(V, refrac, spiked, spike_count, input, syns, m, dt, n, drive, noise, aux, β, i)
     end
-    _propagate_step!(integ.compaction, integ)                       # no-op (unconnected); scatter seam
+    _surrogate_propagate_all!(integ.syns, integ)                    # ungated weighted deposit (connected training)
     _record_all!(integ.monitors, integ)
     return nothing
 end

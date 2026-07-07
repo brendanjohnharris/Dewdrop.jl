@@ -47,56 +47,38 @@ function BatchedRing(arch, ::Type{T}, N::Integer, B::Integer, maxdelay::Integer)
     return BatchedRing(fill!(allocate(arch, T, Int(N), Int(B), L), zero(T)), L)
 end
 
-# Batched synaptic states (mirror the scalar ones; accumulators (N,B), ring (N_post,B,L),
-# connectivity SHARED)
-struct BatchedCUBA{IS, R, C, T} <: AbstractSynapseState
-    Isyn::IS
+# Batched synaptic state: ONE generic state (the (N,B) analogue of the scalar `SynState`) — accumulators
+# `(N,B)`, ring `(N_post,B,L)`, SHARED connectivity, the synapse model (dispatches the descriptor hooks),
+# and the coefficients. The coefficients are EITHER a uniform NamedTuple (the no-sweep default — a scalar
+# per coefficient, held by value in the isbits struct → GPU-uniform, byte-identical to a scalar solve) OR a
+# `ColCoeffs` of length-B per-column device vectors (a per-member parameter sweep). The per-synapse physics
+# is the SAME `_syn_kinetics` the scalar path uses, so batchability of ANY parameter is generic — no
+# per-synapse batched type, no `_col`, no per-parameter plumbing.
+struct BatchedSyn{S <: AbstractSynapseModel, ACC <: NamedTuple, R, C, K} <: AbstractSynapseState
+    model::S
+    acc::ACC
     buf::R
     conn::C
-    decay::T
+    coeffs::K
 end
-Adapt.@adapt_structure BatchedCUBA
-struct BatchedCOBA{G, R, C, T} <: AbstractSynapseState
-    g::G
-    buf::R
-    conn::C
-    decay::T
-    Erev::T
-end
-Adapt.@adapt_structure BatchedCOBA
-struct BatchedDelta{R, C} <: AbstractSynapseState
-    buf::R
-    conn::C
-end
-Adapt.@adapt_structure BatchedDelta
-struct BatchedDualExpCOBA{G, R, C, TR, TD, TA, TE} <: AbstractSynapseState
-    g_rise::G
-    g_decay::G
-    buf::R
-    conn::C
-    decay_r::TR   # scalar exp(-dt/τr), or a length-B per-member rise-decay factor (read via `_col`)
-    decay_d::TD   # scalar exp(-dt/τd), or a length-B per-member fall-decay factor (read via `_col`)
-    a::TA         # scalar, or a length-B per-member conductance scale (read via `_col`)
-    Erev::TE      # scalar, or a length-B per-member reversal potential
-end
-Adapt.@adapt_structure BatchedDualExpCOBA
-struct BatchedFrozenDualExpCOBA{G, R, C, TR, TD, TA, TE} <: AbstractSynapseState   # frozen-current variant (no shunt)
-    g_rise::G
-    g_decay::G
-    buf::R
-    conn::C
-    decay_r::TR   # scalar exp(-dt/τr), or a length-B per-member rise-decay factor (read via `_col`)
-    decay_d::TD   # scalar exp(-dt/τd), or a length-B per-member fall-decay factor (read via `_col`)
-    a::TA         # scalar, or a length-B per-member conductance scale (read via `_col`)
-    Erev::TE      # scalar, or a length-B per-member reversal potential
-end
-Adapt.@adapt_structure BatchedFrozenDualExpCOBA
+Adapt.@adapt_structure BatchedSyn
 
-# Per-member scalar accessor: a shared scalar (the default; bit-identical, zero-cost) or a length-B
-# vector read at the member column `b`. Lets ANY batched-synapse scalar param vary per member (e.g. a
-# per-member conductance scale `a`, the generic `delta`-style gain), at the `_bsyn_one(s,i,b)` seam.
-@inline _col(x::Number, b) = x
-@inline _col(x::AbstractVector, b) = @inbounds x[b]
+# Per-column coefficients (a per-member sweep): a NamedTuple of length-B device vectors, resolved to a
+# per-member scalar NamedTuple at column `b`. A plain NamedTuple (the no-sweep default) ignores `b` — the
+# same seam shape as `_resolve(m, i, b) = m` on the neuron side (bit-identical, zero-cost, GPU-uniform).
+struct ColCoeffs{NT <: NamedTuple}
+    cols::NT
+end
+Adapt.@adapt_structure ColCoeffs
+@inline _resolve_coeffs(c::NamedTuple, b) = c
+@inline _resolve_coeffs(c::ColCoeffs, b) = map(col -> (@inbounds col[b]), c.cols)
+
+# (N,B) accumulator read/write at cell (i,b) — the batched analogue of the scalar `_read_acc`/`_write_acc!`.
+@inline _read_acc(acc::NamedTuple, i, b) = map(a -> (@inbounds a[i, b]), values(acc))
+@inline function _write_acc!(acc::NamedTuple, i, b, vals::Tuple)
+    map((a, x) -> (@inbounds a[i, b] = x), values(acc), vals)
+    return nothing
+end
 
 # Batched streaming Poisson drive: the (N,B) analogue of `PoissonSourceState` (src/PoissonSource.jl).
 # Generates the `n_ext` virtual sources' Poisson events once per step (SHARED across the B columns; `srcidx`
@@ -132,66 +114,45 @@ end
 # deliver/accumulate/decay delegate to the wrapped (batched) synapse, exactly like the scalar PoissonSource.
 @inline _bsyn_one(s::BatchedPoissonSourceState, i, b, n, v, gtot, itot) = _bsyn_one(s.inner, i, b, n, v, gtot, itot)
 
-function _make_batched_synstate(arch, syn::CurrentSynapse, conn, ::Type{T}, N, B, dt) where {T}
-    Isyn = fill!(allocate(arch, T, Int(N), Int(B)), zero(T))
-    return BatchedCUBA(Isyn, BatchedRing(arch, T, N, B, maximum(conn.delay; init = 0)), conn, synapse_decay(syn, dt))
-end
-function _make_batched_synstate(arch, syn::ConductanceSynapse, conn, ::Type{T}, N, B, dt) where {T}
-    g = fill!(allocate(arch, T, Int(N), Int(B)), zero(T))
-    return BatchedCOBA(g, BatchedRing(arch, T, N, B, maximum(conn.delay; init = 0)), conn, synapse_decay(syn, dt), T(syn.Erev))
-end
-function _make_batched_synstate(arch, ::DeltaSynapse, conn, ::Type{T}, N, B, dt) where {T}
-    return BatchedDelta(BatchedRing(arch, T, N, B, maximum(conn.delay; init = 0)), conn)
-end
-function _make_batched_synstate(arch, syn::DualExpSynapse, conn, ::Type{T}, N, B, dt) where {T}
-    g_rise = fill!(allocate(arch, T, Int(N), Int(B)), zero(T))
-    g_decay = fill!(allocate(arch, T, Int(N), Int(B)), zero(T))
-    return BatchedDualExpCOBA(
-        g_rise, g_decay, BatchedRing(arch, T, N, B, maximum(conn.delay; init = 0)),
-        conn, T(exp(-dt / syn.τr)), T(exp(-dt / syn.τd)), T(_dualexp_a(syn.τr, syn.τd)), T(syn.Erev)
-    )
-end
-function _make_batched_synstate(arch, syn::FrozenDualExpSynapse, conn, ::Type{T}, N, B, dt) where {T}
-    g_rise = fill!(allocate(arch, T, Int(N), Int(B)), zero(T))
-    g_decay = fill!(allocate(arch, T, Int(N), Int(B)), zero(T))
-    return BatchedFrozenDualExpCOBA(
-        g_rise, g_decay, BatchedRing(arch, T, N, B, maximum(conn.delay; init = 0)),
-        conn, T(exp(-dt / syn.τr)), T(exp(-dt / syn.τd)), T(_dualexp_a(syn.τr, syn.τd)), T(syn.Erev)
-    )
+# One generic batched synapse-state builder (replaces the five hand-written `_make_batched_synstate` AND all
+# of `_with_member_params`/`_mp`/`_col`): allocate the `(N,B)` accumulators named by `_syn_accumulators`,
+# size the batched ring, and build the coefficients — uniform when nothing is swept, else per-column.
+# `over` is a NamedTuple keyed by a physical field or a coefficient name → length-B values. (`PoissonSource`
+# keeps its own more-specific method, which forwards `over` to the inner synapse.)
+function _make_batched_synstate(arch, m::AbstractSynapseModel, conn, ::Type{T}, N, B, dt, over) where {T}
+    names = _syn_accumulators(typeof(m))
+    acc = NamedTuple{names}(ntuple(_ -> fill!(allocate(arch, T, Int(N), Int(B)), zero(T)), length(names)))
+    buf = BatchedRing(arch, T, N, B, maximum(conn.delay; init = 0))
+    return BatchedSyn(m, acc, buf, conn, _build_coeffs(arch, m, dt, Int(B), over, T))
 end
 
-# Apply per-member synapse overrides (a NamedTuple like `(; a = avec)`, or `(; a, decay_r, decay_d)` for a
-# time-constant sweep) onto a freshly-built batched synstate: rebuild it with the chosen scalar fields
-# replaced by per-member (length-B) arrays. The dual-exp COBA family supports `a`/`Erev`/`decay_r`/`decay_d`;
-# the streaming-drive wrapper recurses the override into its inner synapse; others reject a non-empty override.
-@inline _with_member_params(st::AbstractSynapseState, over, arch, ::Type{T}) where {T} =
-    (isempty(over) || error("per-member synapse overrides not supported for $(nameof(typeof(st)))"); st)
-# Upload override field `k` (a per-member length-B array) to `arch`, or fall back to the built scalar default.
-@inline _mp(over, k::Symbol, arch, ::Type{T}, dflt) where {T} =
-    haskey(over, k) ? on_architecture(arch, collect(T, getproperty(over, k))) : dflt
-function _with_member_params(st::BatchedFrozenDualExpCOBA, over, arch, ::Type{T}) where {T}
-    isempty(over) && return st
-    return BatchedFrozenDualExpCOBA(
-        st.g_rise, st.g_decay, st.buf, st.conn,
-        _mp(over, :decay_r, arch, T, st.decay_r), _mp(over, :decay_d, arch, T, st.decay_d),
-        _mp(over, :a, arch, T, st.a), _mp(over, :Erev, arch, T, st.Erev),
-    )
+# The batch coefficients: the uniform per-synapse coefficients (byte-identical to the scalar path — the exact
+# `_syn_coeffs` wrapping, NO blanket `T`) when nothing is swept, else a `ColCoeffs` of length-B device
+# vectors. `over` may key on a PHYSICAL parameter (τ, τr, τd, Erev, …) or a derived coefficient (a, decay_r,
+# …); a physical sweep re-derives the coefficients per member through the synapse's own `_syn_coeffs`.
+function _build_coeffs(arch, m, dt, B::Int, over, ::Type{T}) where {T}
+    isempty(over) && return _syn_coeffs(m, dt, T)
+    rows = [_coeffs_col(m, dt, over, b, T) for b in 1:B]
+    ks = keys(first(rows))
+    return ColCoeffs(NamedTuple{ks}(ntuple(j -> on_architecture(arch, T[r[ks[j]] for r in rows]), length(ks))))
 end
-function _with_member_params(st::BatchedDualExpCOBA, over, arch, ::Type{T}) where {T}
-    isempty(over) && return st
-    return BatchedDualExpCOBA(
-        st.g_rise, st.g_decay, st.buf, st.conn,
-        _mp(over, :decay_r, arch, T, st.decay_r), _mp(over, :decay_d, arch, T, st.decay_d),
-        _mp(over, :a, arch, T, st.a), _mp(over, :Erev, arch, T, st.Erev),
-    )
+# Member `b`'s coefficient NamedTuple: rebuild the synapse model with its swept PHYSICAL fields, derive the
+# coefficients, then overlay any directly-swept COEFFICIENTS (e.g. `a`). An override key that is neither a
+# model field nor a coefficient is a clear error rather than a silent no-op.
+function _coeffs_col(m, dt, over, b, ::Type{T}) where {T}
+    physk = filter(k -> hasfield(typeof(m), k), keys(over))
+    coeffk = filter(k -> !hasfield(typeof(m), k), keys(over))
+    mb = isempty(physk) ? m : _rebuild_syn(m, NamedTuple{physk}(map(k -> over[k][b], physk)))
+    c = _syn_coeffs(mb, dt, T)
+    all(k -> haskey(c, k), coeffk) ||
+        error("syn_overrides key(s) $(filter(k -> !haskey(c, k), coeffk)) are neither a field of $(typeof(m)) nor a coefficient $(keys(c))")
+    return isempty(coeffk) ? c : merge(c, NamedTuple{Tuple(coeffk)}(map(k -> T(over[k][b]), coeffk)))
 end
-# The streaming Poisson drive wraps an inner synapse (its (N,B,L) ring is the deposit target); recurse the
-# override into that inner state so a τ / conductance sweep reaches the external drive too (`buf === inner.buf`).
-function _with_member_params(st::BatchedPoissonSourceState, over, arch, ::Type{T}) where {T}
-    isempty(over) && return st
-    inner = _with_member_params(st.inner, over, arch, T)
-    return BatchedPoissonSourceState(inner, st.extconn, st.conn, inner.buf, st.spiked, st.srcidx, st.p_spike, st.seed)
-end
+# Rebuild an isbits synapse model with the named fields overridden (positional; no extra dependency). Each
+# overridden value is converted to the field's type, so a Float64 sweep vector rebuilds a Float32 model
+# (the swept coefficients are re-derived in `_build_coeffs`'s eltype `T` regardless).
+@inline _rebuild_syn(m::M, nt::NamedTuple) where {M} =
+    M.name.wrapper(map(f -> haskey(nt, f) ? convert(fieldtype(M, f), nt[f]) : getfield(m, f), fieldnames(M))...)
 
 # Per-projection synaptic contribution for cell (i,b): deliver (read+clear the ring slot due at
 # step n) → accumulate (gtot/itot) → decay, unrolled over the projection tuple at compile time.
@@ -200,56 +161,23 @@ end
     v, gtot, itot = _bsyn_one(first(syns), i, b, n, v, gtot, itot)
     return _bsyn_contribute(Base.tail(syns), i, b, n, v, gtot, itot)
 end
-@inline function _bsyn_one(s::BatchedCUBA, i, b, n, v, gtot, itot)
+# Generic batched per-cell contribution (replaces the five hand-written bodies): read + clear the ring slot,
+# resolve this member's coefficients (uniform → the shared NamedTuple; swept → the per-column values), then
+# apply the SAME `_syn_kinetics` the scalar `_syn_one` uses — the whole point of the collapse. Byte-identical
+# to the prior `_col`-based bodies (a uniform coefficient equals `_col(scalar, b)`; a swept one equals
+# `_col(vector, b)`).
+@inline function _bsyn_one(s::BatchedSyn, i, b, n, v, gtot, itot)
     slot = mod(n, s.buf.L) + 1
     @inbounds due = s.buf.slots[i, b, slot]
     @inbounds s.buf.slots[i, b, slot] = zero(due)
-    @inbounds isyn = s.Isyn[i, b] + due
-    itot += isyn
-    @inbounds s.Isyn[i, b] = isyn * s.decay
-    return (v, gtot, itot)
+    return _bsyn_apply(_syn_couple(typeof(s.model)), s, i, b, due, v, gtot, itot)
 end
-@inline function _bsyn_one(s::BatchedCOBA, i, b, n, v, gtot, itot)
-    slot = mod(n, s.buf.L) + 1
-    @inbounds due = s.buf.slots[i, b, slot]
-    @inbounds s.buf.slots[i, b, slot] = zero(due)
-    @inbounds g = s.g[i, b] + due
-    gtot += g
-    itot += g * s.Erev
-    @inbounds s.g[i, b] = g * s.decay
-    return (v, gtot, itot)
-end
-@inline function _bsyn_one(s::BatchedDelta, i, b, n, v, gtot, itot)
-    slot = mod(n, s.buf.L) + 1
-    @inbounds due = s.buf.slots[i, b, slot]
-    @inbounds s.buf.slots[i, b, slot] = zero(due)
-    v += due
-    return (v, gtot, itot)
-end
-@inline function _bsyn_one(s::BatchedDualExpCOBA, i, b, n, v, gtot, itot)
-    slot = mod(n, s.buf.L) + 1
-    @inbounds due = s.buf.slots[i, b, slot]
-    @inbounds s.buf.slots[i, b, slot] = zero(due)
-    @inbounds gr = s.g_rise[i, b] + due
-    @inbounds gd = s.g_decay[i, b] + due
-    g = _col(s.a, b) * (gd - gr)
-    gtot += g
-    itot += g * _col(s.Erev, b)
-    @inbounds s.g_rise[i, b] = gr * _col(s.decay_r, b)
-    @inbounds s.g_decay[i, b] = gd * _col(s.decay_d, b)
-    return (v, gtot, itot)
-end
-@inline function _bsyn_one(s::BatchedFrozenDualExpCOBA, i, b, n, v, gtot, itot)   # frozen current, no shunt
-    slot = mod(n, s.buf.L) + 1
-    @inbounds due = s.buf.slots[i, b, slot]
-    @inbounds s.buf.slots[i, b, slot] = zero(due)
-    @inbounds gr = s.g_rise[i, b] + due
-    @inbounds gd = s.g_decay[i, b] + due
-    g = _col(s.a, b) * (gd - gr)
-    itot += g * (_col(s.Erev, b) - v)                               # frozen current g·(Erev − V); gtot untouched
-    @inbounds s.g_rise[i, b] = gr * _col(s.decay_r, b)
-    @inbounds s.g_decay[i, b] = gd * _col(s.decay_d, b)
-    return (v, gtot, itot)
+@inline _bsyn_apply(::Val{:jump}, s, i, b, due, v, gtot, itot) = (v + due, gtot, itot)
+@inline function _bsyn_apply(::Union{Val{:current}, Val{:conductance}}, s, i, b, due, v, gtot, itot)
+    c = _resolve_coeffs(s.coeffs, b)
+    Δg, Δi, newacc = _syn_kinetics(s.model, _read_acc(s.acc, i, b), due, c, v)
+    _write_acc!(s.acc, i, b, newacc)
+    return (v, gtot + Δg, itot + Δi)
 end
 
 # External input for cell (i,b): a shared scalar, a per-neuron (N,) vector, or a per-(neuron,batch) matrix.
@@ -580,8 +508,7 @@ function _batched_init(
     ov(j) = syn_overrides === nothing ? (;) : get(syn_overrides, j, (;))
     syns = ntuple(length(prob.projections)) do j
         p = prob.projections[j]
-        st = _make_batched_synstate(arch, p.synapse, _resolve_delays(p.conn, dt), T, N, B, dt)
-        _with_member_params(st, ov(j), arch, T)
+        _make_batched_synstate(arch, p.synapse, _resolve_delays(p.conn, dt), T, N, B, dt, ov(j))
     end
     inp = input === nothing ? prob.input : on_architecture(arch, to_current(input))
     str = on_architecture(arch, collect(Int, streams === nothing ? (0:(B - 1)) : streams))

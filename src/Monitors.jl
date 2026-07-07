@@ -11,14 +11,14 @@ using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
 
 # Source descriptors: WHAT to read (type-stable; the field/projection is a type parameter)
 struct StateSrc{V} end                      # state.state.<V> (a model statevar column)
-struct SynSrc{P, V} end                     # syns[P].<V>     (synaptic state of projection P)
+struct SynSrc{P, V} end                     # syns[P].acc.<V> (accumulator var of projection P)
 struct AccumSrc{V} end                      # integ.<V>       (:gtot / :itot)
 struct SpikeSrc end                         # integ.spiked
 struct ProbeSrc{F}                          # f(integ) → a vector
     f::F
 end
 @inline _read(::StateSrc{V}, integ) where {V} = getproperty(integ.state.state, V)   # StructArray column
-@inline _read(::SynSrc{P, V}, integ) where {P, V} = getfield(getfield(integ.syns, P), V)
+@inline _read(::SynSrc{P, V}, integ) where {P, V} = getproperty(getfield(integ.syns, P).acc, V)   # accumulator array under `.acc`
 @inline _read(::AccumSrc{:gtot}, integ) = integ.gtot
 @inline _read(::AccumSrc{:itot}, integ) = integ.itot
 @inline _read(::SpikeSrc, integ) = integ.spiked

@@ -28,14 +28,14 @@ end
     conn = fixed_prob(Dewdrop.CPU(), 1, 1, 1.0; weight = 1.0, delay = steps(1), seed = UInt64(1))
     st = Dewdrop._make_synstate(Dewdrop.CPU(), syn, conn, Float64, 1, dt)
     w = 2.0
-    st.g_rise[1] += w; st.g_decay[1] += w           # one delivered spike of weight w
-    a = st.a
-    g(k) = a * (st.g_decay[1] - st.g_rise[1])
+    st.acc.g_rise[1] += w; st.acc.g_decay[1] += w   # one delivered spike of weight w
+    a = st.coeffs.a
+    g(k) = a * (st.acc.g_decay[1] - st.acc.g_rise[1])
     gs = Float64[]
     for _ in 0:300
-        push!(gs, a * (st.g_decay[1] - st.g_rise[1]))
-        st.g_rise[1] *= st.decay_r
-        st.g_decay[1] *= st.decay_d
+        push!(gs, a * (st.acc.g_decay[1] - st.acc.g_rise[1]))
+        st.acc.g_rise[1] *= st.coeffs.decay_r
+        st.acc.g_decay[1] *= st.coeffs.decay_d
     end
     analytic = [w * a * (exp(-k * dt / 5.0) - exp(-k * dt / 1.0)) for k in 0:300]
     @test gs ≈ analytic

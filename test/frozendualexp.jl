@@ -20,7 +20,7 @@ dt = 0.1
     conn = fixed_prob(Dewdrop.CPU(), 1, 1, 1.0; weight = 1.0, delay = steps(1), seed = UInt64(1))
     sf = Dewdrop._make_synstate(Dewdrop.CPU(), fr, conn, Float64, 1, dt)
     se = Dewdrop._make_synstate(Dewdrop.CPU(), ex, conn, Float64, 1, dt)
-    @test (sf.a, sf.decay_r, sf.decay_d) == (se.a, se.decay_r, se.decay_d)   # identical PSG kinetics
+    @test (sf.coeffs.a, sf.coeffs.decay_r, sf.coeffs.decay_d) == (se.coeffs.a, se.coeffs.decay_r, se.coeffs.decay_d)   # identical PSG kinetics
     @test_throws Exception FrozenDualExpSynapse(; τr = 3.0, τd = 3.0, Erev = 0.0)   # τr == τd is singular
 end
 
@@ -32,16 +32,16 @@ end
     se = Dewdrop._make_synstate(Dewdrop.CPU(), ex, conn, Float64, 1, dt)
     w = 2.0
     for s in (sf, se)                                 # one delivered spike, then let the PSG rise
-        s.g_rise[1] += w; s.g_decay[1] += w
+        s.acc.g_rise[1] += w; s.acc.g_decay[1] += w
         for _ in 1:10
-            s.g_rise[1] *= s.decay_r; s.g_decay[1] *= s.decay_d
+            s.acc.g_rise[1] *= s.coeffs.decay_r; s.acc.g_decay[1] *= s.coeffs.decay_d
         end
     end
-    g = sf.a * (sf.g_decay[1] - sf.g_rise[1])
-    @test g > 0 && g ≈ se.a * (se.g_decay[1] - se.g_rise[1])   # identical conductance from identical kinetics
+    g = sf.coeffs.a * (sf.acc.g_decay[1] - sf.acc.g_rise[1])
+    @test g > 0 && g ≈ se.coeffs.a * (se.acc.g_decay[1] - se.acc.g_rise[1])   # identical conductance from identical kinetics
     V = [-60.0]
     ge, ie = [0.0], [0.0]; Dewdrop._accumulate!(se, ge, ie, V)   # EXACT: conductance shunts
-    @test ge[1] ≈ g && ie[1] ≈ g * se.Erev
+    @test ge[1] ≈ g && ie[1] ≈ g * se.coeffs.Erev
     gf, iff = [0.0], [0.0]; Dewdrop._accumulate!(sf, gf, iff, V)  # FROZEN: current g·(Erev − V), gtot untouched
     @test gf[1] == 0.0
     @test iff[1] ≈ g * (fr.Erev - V[1])

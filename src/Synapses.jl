@@ -111,3 +111,60 @@ function FrozenDualExpSynapse(; τr, τd, Erev)
     return FrozenDualExpSynapse(r, d, e)
 end
 export FrozenDualExpSynapse
+
+# * Single-source synapse descriptor. Every execution path (serial broadcast, fused megakernel,
+# batched (N,B) ensemble) is generated generically from five tiny trait methods per synapse; adding a
+# synapse is these methods, not four hand-copied kernels. Each method reproduces the prior code
+# byte-for-byte. The forward-compatible superset: `_syn_accumulators` allows K per-target channels,
+# `_syn_membrane` reads `v` (V-dependent/nonlinear currents, e.g. NMDA), `_syn_couple` marks the
+# coupling mode. Coefficient eltype wrapping matches the old `_make_synstate` exactly (a byte-identity
+# requirement: CUBA/COBA keep `synapse_decay` unwrapped; the dual-exp family wraps in `T`).
+
+# Per-target accumulator field names (`()` for a stateless voltage-jump synapse). K = length.
+_syn_accumulators(::Type{<:CurrentSynapse})       = (:Isyn,)
+_syn_accumulators(::Type{<:ConductanceSynapse})   = (:g,)
+_syn_accumulators(::Type{DeltaSynapse})           = ()
+_syn_accumulators(::Type{<:DualExpSynapse})       = (:g_rise, :g_decay)
+_syn_accumulators(::Type{<:FrozenDualExpSynapse}) = (:g_rise, :g_decay)
+
+# Coupling mode: how a delivered event enters the cell. Drives the serial deliver skeleton and the
+# fused voltage-jump short-circuit. `:current` feeds itot only; `:conductance` feeds gtot + itot;
+# `:jump` is an instantaneous voltage jump with no accumulator (delta).
+_syn_couple(::Type{<:CurrentSynapse})       = Val(:current)
+_syn_couple(::Type{<:ConductanceSynapse})   = Val(:conductance)
+_syn_couple(::Type{DeltaSynapse})           = Val(:jump)
+_syn_couple(::Type{<:DualExpSynapse})       = Val(:conductance)
+_syn_couple(::Type{<:FrozenDualExpSynapse}) = Val(:current)   # frozen current g·(Erev−V), no shunt
+
+# Per-step derived coefficients, wrapped to EXACTLY the current stored eltype (byte-identity).
+_syn_coeffs(s::CurrentSynapse, dt, ::Type{T}) where {T} = (; decay = synapse_decay(s, dt))
+_syn_coeffs(s::ConductanceSynapse, dt, ::Type{T}) where {T} = (; decay = synapse_decay(s, dt), Erev = T(s.Erev))
+_syn_coeffs(::DeltaSynapse, dt, ::Type{T}) where {T} = (;)
+_syn_coeffs(s::DualExpSynapse, dt, ::Type{T}) where {T} =
+    (; decay_r = T(exp(-dt / s.τr)), decay_d = T(exp(-dt / s.τd)), a = T(_dualexp_a(s.τr, s.τd)), Erev = T(s.Erev))
+_syn_coeffs(s::FrozenDualExpSynapse, dt, ::Type{T}) where {T} =
+    (; decay_r = T(exp(-dt / s.τr)), decay_d = T(exp(-dt / s.τd)), a = T(_dualexp_a(s.τr, s.τd)), Erev = T(s.Erev))
+
+# Membrane coupling: the (Δgtot, Δitot) this synapse contributes given its CURRENT accumulator values
+# `acc` (a tuple), coefficients `c`, and the (frozen) membrane potential `v`. `v` is threaded so a
+# V-dependent current (frozen COBA today; NMDA later) needs no new seam. The frozen-vs-exact dual split
+# is these two methods; `false` is a strong zero (gtot untouched, bit-identical + type-preserving).
+@inline _syn_membrane(::CurrentSynapse, acc, c, v) = (false, acc[1])
+@inline _syn_membrane(s::ConductanceSynapse, acc, c, v) = (acc[1], acc[1] * c.Erev)
+@inline _syn_membrane(::DeltaSynapse, acc, c, v) = (false, false)   # jump mode; never called in the hot path
+@inline function _syn_membrane(s::DualExpSynapse, acc, c, v)
+    g = c.a * (acc[2] - acc[1])
+    return (g, g * c.Erev)
+end
+@inline function _syn_membrane(s::FrozenDualExpSynapse, acc, c, v)
+    g = c.a * (acc[2] - acc[1])
+    return (false, g * (c.Erev - v))
+end
+
+# Per-accumulator decay: the new accumulator tuple. Diagonal (each channel × its own coefficient) for
+# every current synapse; a coupled `propagate` (GABA-B, alpha) would override this. Called with the real
+# accumulator values (fused path) or a unit tuple (serial path extracts the diagonal coefficients).
+@inline _syn_decay(::CurrentSynapse, acc, c) = (acc[1] * c.decay,)
+@inline _syn_decay(::ConductanceSynapse, acc, c) = (acc[1] * c.decay,)
+@inline _syn_decay(::DeltaSynapse, acc, c) = ()
+@inline _syn_decay(::Union{DualExpSynapse, FrozenDualExpSynapse}, acc, c) = (acc[1] * c.decay_r, acc[2] * c.decay_d)

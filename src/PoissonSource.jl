@@ -58,9 +58,9 @@ end
 # (its (N,B,L) ring receives the deposits), the (n_ext, B) firing mask, and the constant (n_ext, B) source-row
 # index that makes the per-step counter-RNG draw SHARED across the B columns: same drive realization per
 # member, the right default for a parameter sweep at a fixed connectome.
-function _make_batched_synstate(arch, syn::PoissonSource, conn, ::Type{T}, N, B, dt) where {T}
+function _make_batched_synstate(arch, syn::PoissonSource, conn, ::Type{T}, N, B, dt, over) where {T}
     ext = _resolve_delays(syn.extconn, dt)
-    inner = _make_batched_synstate(arch, syn.synapse, ext, T, N, B, dt)
+    inner = _make_batched_synstate(arch, syn.synapse, ext, T, N, B, dt, over)   # recurse the sweep into the inner synapse
     next = npre(ext)
     spiked = fill!(allocate(arch, Bool, next, Int(B)), false)
     srcidx = on_architecture(arch, repeat(1:next, 1, Int(B)))

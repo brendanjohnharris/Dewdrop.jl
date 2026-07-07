@@ -43,46 +43,20 @@ end
     return due
 end
 
-@inline function _syn_one(s::SynapseState, i, n, v, gtot, itot)        # CUBA (current)
+# Fused per-neuron synaptic contribution, generated from the descriptor (replaces the five hand-written
+# bodies): read + clear the ring slot, then apply the shared `_syn_kinetics` (deliver → membrane → decay),
+# or the voltage-jump short-circuit for a `:jump` synapse (delta). Byte-identical to the prior code: for
+# CUBA `Δgtot` is a strong-zero `false` (gtot untouched); the dual `g = a·(g_decay − g_rise)` is computed
+# once in `_syn_membrane`; frozen injects `g·(Erev − v)` into itot only.
+@inline function _syn_one(s::SynState, i, n, v, gtot, itot)
     due = _ring_take!(s.buf, i, n)
-    @inbounds isyn = s.Isyn[i] + due                                  # deliver
-    itot += isyn                                                      # accumulate
-    @inbounds s.Isyn[i] = isyn * s.decay                             # decay
-    return (v, gtot, itot)
+    return _syn_apply(_syn_couple(typeof(s.model)), s, i, due, v, gtot, itot)
 end
-@inline function _syn_one(s::COBAState, i, n, v, gtot, itot)           # COBA (conductance)
-    due = _ring_take!(s.buf, i, n)
-    @inbounds g = s.g[i] + due                                        # deliver
-    gtot += g                                                         # effective leak
-    itot += g * s.Erev                                               # reversal drive
-    @inbounds s.g[i] = g * s.decay                                   # decay
-    return (v, gtot, itot)
-end
-@inline function _syn_one(s::DeltaSynapseState, i, n, v, gtot, itot)   # delta (voltage jump)
-    due = _ring_take!(s.buf, i, n)
-    v += due
-    return (v, gtot, itot)
-end
-@inline function _syn_one(s::DualExpCOBAState, i, n, v, gtot, itot)    # dual-exp COBA (rise + decay)
-    due = _ring_take!(s.buf, i, n)
-    @inbounds gr = s.g_rise[i] + due                                  # deliver (both accumulators)
-    @inbounds gd = s.g_decay[i] + due
-    g = s.a * (gd - gr)                                               # conductance
-    gtot += g                                                         # effective leak
-    itot += g * s.Erev                                              # reversal drive
-    @inbounds s.g_rise[i] = gr * s.decay_r                           # decay
-    @inbounds s.g_decay[i] = gd * s.decay_d
-    return (v, gtot, itot)
-end
-@inline function _syn_one(s::FrozenDualExpCOBAState, i, n, v, gtot, itot)   # dual-exp frozen-current (no shunt)
-    due = _ring_take!(s.buf, i, n)
-    @inbounds gr = s.g_rise[i] + due                                  # deliver (both accumulators)
-    @inbounds gd = s.g_decay[i] + due
-    g = s.a * (gd - gr)                                               # conductance
-    itot += g * (s.Erev - v)                                         # frozen current g·(Erev − V); gtot untouched
-    @inbounds s.g_rise[i] = gr * s.decay_r                           # decay
-    @inbounds s.g_decay[i] = gd * s.decay_d
-    return (v, gtot, itot)
+@inline _syn_apply(::Val{:jump}, s, i, due, v, gtot, itot) = (v + due, gtot, itot)
+@inline function _syn_apply(::Union{Val{:current}, Val{:conductance}}, s, i, due, v, gtot, itot)
+    Δg, Δi, newacc = _syn_kinetics(s.model, _read_acc(s.acc, i), due, s.coeffs, v)
+    _write_acc!(s.acc, i, newacc)
+    return (v, gtot + Δg, itot + Δi)
 end
 
 # External input current for neuron `i` (scalar constant, or a per-unit array).

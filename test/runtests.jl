@@ -49,6 +49,7 @@ Dewdrop.set_advice!(false)   # silence the perf advisor during the suite; test/a
     include("turbo.jl")             # Turbo backend (LoopVectorization ext) ≡ Serial spike-identical; loads the ext
     include("differentiable.jl")    # Differentiable backend (surrogate-gradient): ForwardDiff gradient ≡ finite-diff, trains
     include("batch.jl")             # ensemble (tensor) batching ≡ scalar reference (CPU + JLArrays)
+    include("batched_params.jl")    # batched per-member parameters (neuron + synapse; generic physical-param sweeps)
     include("compaction.jl")        # compacted scatter ≡ edge/CPU reference (JLArrays, no GPU needed)
     include("cuda.jl")              # arch-seam check always; device sims guarded by CUDA.functional()
     include("advisor.jl")           # performance advisor heuristics (metadata-only; no GPU needed)
