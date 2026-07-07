@@ -121,7 +121,7 @@ small quiet network that is launch-bound (suggests `batch = B`). Silence it with
 
 `solve` reports progress as [ProgressLogging](https://github.com/JuliaLogging/ProgressLogging.jl)-style
 log records (`@logmsg` at `LogLevel(-1)`), which a progress-aware logger such as
-`TerminalLoggers.TerminalLogger` renders as a bar. That is independent of the architecture --- but there
+`TerminalLoggers.TerminalLogger` renders as a bar. That is independent of the architecture, but there
 is a world-age pitfall specific to GPU runs.
 
 During the first kernel compilation, GPUCompiler introspects the **global** logger to gauge its
