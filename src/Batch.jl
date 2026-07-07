@@ -69,26 +69,26 @@ struct BatchedDelta{R, C} <: AbstractSynapseState
     conn::C
 end
 Adapt.@adapt_structure BatchedDelta
-struct BatchedDualExpCOBA{G, R, C, T, TA, TE} <: AbstractSynapseState
+struct BatchedDualExpCOBA{G, R, C, TR, TD, TA, TE} <: AbstractSynapseState
     g_rise::G
     g_decay::G
     buf::R
     conn::C
-    decay_r::T
-    decay_d::T
-    a::TA       # scalar, or a length-B per-member conductance scale (read via `_col`)
-    Erev::TE    # scalar, or a length-B per-member reversal potential
+    decay_r::TR   # scalar exp(-dt/τr), or a length-B per-member rise-decay factor (read via `_col`)
+    decay_d::TD   # scalar exp(-dt/τd), or a length-B per-member fall-decay factor (read via `_col`)
+    a::TA         # scalar, or a length-B per-member conductance scale (read via `_col`)
+    Erev::TE      # scalar, or a length-B per-member reversal potential
 end
 Adapt.@adapt_structure BatchedDualExpCOBA
-struct BatchedFrozenDualExpCOBA{G, R, C, T, TA, TE} <: AbstractSynapseState   # frozen-current variant (no shunt)
+struct BatchedFrozenDualExpCOBA{G, R, C, TR, TD, TA, TE} <: AbstractSynapseState   # frozen-current variant (no shunt)
     g_rise::G
     g_decay::G
     buf::R
     conn::C
-    decay_r::T
-    decay_d::T
-    a::TA       # scalar, or a length-B per-member conductance scale (read via `_col`)
-    Erev::TE    # scalar, or a length-B per-member reversal potential
+    decay_r::TR   # scalar exp(-dt/τr), or a length-B per-member rise-decay factor (read via `_col`)
+    decay_d::TD   # scalar exp(-dt/τd), or a length-B per-member fall-decay factor (read via `_col`)
+    a::TA         # scalar, or a length-B per-member conductance scale (read via `_col`)
+    Erev::TE      # scalar, or a length-B per-member reversal potential
 end
 Adapt.@adapt_structure BatchedFrozenDualExpCOBA
 
@@ -160,22 +160,37 @@ function _make_batched_synstate(arch, syn::FrozenDualExpSynapse, conn, ::Type{T}
     )
 end
 
-# Apply per-member synapse overrides (a NamedTuple like `(; a = avec)`) onto a freshly-built batched
-# synstate: rebuild it with the chosen scalar fields replaced by per-member (length-B) arrays. Only the
-# scalar-parametrised dual-exp COBA family supports this; others reject a non-empty override.
+# Apply per-member synapse overrides (a NamedTuple like `(; a = avec)`, or `(; a, decay_r, decay_d)` for a
+# time-constant sweep) onto a freshly-built batched synstate: rebuild it with the chosen scalar fields
+# replaced by per-member (length-B) arrays. The dual-exp COBA family supports `a`/`Erev`/`decay_r`/`decay_d`;
+# the streaming-drive wrapper recurses the override into its inner synapse; others reject a non-empty override.
 @inline _with_member_params(st::AbstractSynapseState, over, arch, ::Type{T}) where {T} =
     (isempty(over) || error("per-member synapse overrides not supported for $(nameof(typeof(st)))"); st)
+# Upload override field `k` (a per-member length-B array) to `arch`, or fall back to the built scalar default.
+@inline _mp(over, k::Symbol, arch, ::Type{T}, dflt) where {T} =
+    haskey(over, k) ? on_architecture(arch, collect(T, getproperty(over, k))) : dflt
 function _with_member_params(st::BatchedFrozenDualExpCOBA, over, arch, ::Type{T}) where {T}
     isempty(over) && return st
-    a = haskey(over, :a) ? on_architecture(arch, collect(T, over.a)) : st.a
-    Erev = haskey(over, :Erev) ? on_architecture(arch, collect(T, over.Erev)) : st.Erev
-    return BatchedFrozenDualExpCOBA(st.g_rise, st.g_decay, st.buf, st.conn, st.decay_r, st.decay_d, a, Erev)
+    return BatchedFrozenDualExpCOBA(
+        st.g_rise, st.g_decay, st.buf, st.conn,
+        _mp(over, :decay_r, arch, T, st.decay_r), _mp(over, :decay_d, arch, T, st.decay_d),
+        _mp(over, :a, arch, T, st.a), _mp(over, :Erev, arch, T, st.Erev),
+    )
 end
 function _with_member_params(st::BatchedDualExpCOBA, over, arch, ::Type{T}) where {T}
     isempty(over) && return st
-    a = haskey(over, :a) ? on_architecture(arch, collect(T, over.a)) : st.a
-    Erev = haskey(over, :Erev) ? on_architecture(arch, collect(T, over.Erev)) : st.Erev
-    return BatchedDualExpCOBA(st.g_rise, st.g_decay, st.buf, st.conn, st.decay_r, st.decay_d, a, Erev)
+    return BatchedDualExpCOBA(
+        st.g_rise, st.g_decay, st.buf, st.conn,
+        _mp(over, :decay_r, arch, T, st.decay_r), _mp(over, :decay_d, arch, T, st.decay_d),
+        _mp(over, :a, arch, T, st.a), _mp(over, :Erev, arch, T, st.Erev),
+    )
+end
+# The streaming Poisson drive wraps an inner synapse (its (N,B,L) ring is the deposit target); recurse the
+# override into that inner state so a τ / conductance sweep reaches the external drive too (`buf === inner.buf`).
+function _with_member_params(st::BatchedPoissonSourceState, over, arch, ::Type{T}) where {T}
+    isempty(over) && return st
+    inner = _with_member_params(st.inner, over, arch, T)
+    return BatchedPoissonSourceState(inner, st.extconn, st.conn, inner.buf, st.spiked, st.srcidx, st.p_spike, st.seed)
 end
 
 # Per-projection synaptic contribution for cell (i,b): deliver (read+clear the ring slot due at
@@ -220,8 +235,8 @@ end
     g = _col(s.a, b) * (gd - gr)
     gtot += g
     itot += g * _col(s.Erev, b)
-    @inbounds s.g_rise[i, b] = gr * s.decay_r
-    @inbounds s.g_decay[i, b] = gd * s.decay_d
+    @inbounds s.g_rise[i, b] = gr * _col(s.decay_r, b)
+    @inbounds s.g_decay[i, b] = gd * _col(s.decay_d, b)
     return (v, gtot, itot)
 end
 @inline function _bsyn_one(s::BatchedFrozenDualExpCOBA, i, b, n, v, gtot, itot)   # frozen current, no shunt
@@ -232,8 +247,8 @@ end
     @inbounds gd = s.g_decay[i, b] + due
     g = _col(s.a, b) * (gd - gr)
     itot += g * (_col(s.Erev, b) - v)                               # frozen current g·(Erev − V); gtot untouched
-    @inbounds s.g_rise[i, b] = gr * s.decay_r
-    @inbounds s.g_decay[i, b] = gd * s.decay_d
+    @inbounds s.g_rise[i, b] = gr * _col(s.decay_r, b)
+    @inbounds s.g_decay[i, b] = gd * _col(s.decay_d, b)
     return (v, gtot, itot)
 end
 
