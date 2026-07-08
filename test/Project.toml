@@ -28,4 +28,5 @@ rev = "main"
 url = "https://www.github.com/brendanjohnharris/Fathom.jl"
 
 [sources.TimeseriesMakie]
-path = "../../TimeseriesMakie.jl"
+url = "https://www.github.com/brendanjohnharris/TimeseriesMakie.jl"
+rev = "main"
