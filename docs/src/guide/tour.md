@@ -149,13 +149,13 @@ end
 
 target = 18.0                       # raise the rate to this target
 w, η = 0.5, 3.0e-4
-hist = Float64[]
+hist, whist = Float64[], Float64[]
 for _ in 1:40
-    push!(hist, netrate(; w = w))
+    push!(hist, netrate(; w = w)); push!(whist, w)   # record rate and weight each step
     g = ForwardDiff.derivative(ww -> (netrate(; w = ww) - target)^2, w)
     global w = clamp(w - η * g, 0.0, 1.4)
 end
-push!(hist, netrate(; w = w))
+push!(hist, netrate(; w = w)); push!(whist, w)
 
 fig = OnePanel()
 ax = Axis(fig[1, 1]; xlabel = "Gradient-descent step", ylabel = "Population rate (Hz)")
@@ -169,6 +169,34 @@ The rate climbs from ≈ 7 Hz to the 18 Hz target as the recurrent weight is tun
 full surrogate-gradient training loop on a connected spiking network, in a few lines. For many trainable
 weights, swap `ForwardDiff` for `Enzyme` reverse-mode. See [choosing a backend](backends.md) for the
 backend family and its guarantees.
+
+The change is visible in the spiking itself. Solving the same network with a real (non-surrogate) spike
+at three weights along the trajectory shows the recurrent activity growing as training proceeds:
+
+```@example tour
+function netraster(w)                       # the same network, solved for its real spikes
+    m = LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 0.0, R = 1.0, tref = 0.0)
+    conn = fixed_prob(CPU(), 40, 40, 0.3; weight = w, delay = steps(1), seed = UInt64(1), allow_self = false)
+    p = DewdropNetwork(m, 40; input = 22.0, tspan = (0.0, 250.0),
+                        projections = (Projection(DeltaSynapse(), conn),))
+    return raster(solve(p, FixedStep(0.1); record = (spikes = Spikes(),)))
+end
+
+picks = [argmin(abs.(whist .- w)) for w in range(whist[1], whist[end]; length = 3)]   # steps spanning the weight's rise
+fig = Figure(size = (900, 280))
+for (k, s) in enumerate(picks)
+    t, id = netraster(whist[s])
+    ax = Axis(fig[1, k]; xlabel = "Time (ms)", ylabel = k == 1 ? "Neuron" : "",
+              title = "step $(s - 1),  w = $(round(whist[s]; digits = 2))")
+    scatter!(ax, t, id; color = Fathom.baikal, markersize = 5)
+    k > 1 && hideydecorations!(ax; grid = false)
+end
+addlabels!(fig)
+fig
+```
+
+Early on (a low weight) the network fires sparsely; as the weight grows the recurrent excitation lifts
+the whole population, and the raster fills in to match the rate trajectory above.
 
 ## Where to go next
 
