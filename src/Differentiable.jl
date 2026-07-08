@@ -47,19 +47,23 @@ stand-in for the spike indicator, with steepness `β`. As `β → ∞` it approa
 
 # One surrogate per-neuron step. Identical to `_fused_unit!` up to the spike block (marked below), which
 # swaps the hard threshold + reset + integer count for the smooth surrogate + soft reset + real count.
-@inline function _diff_unit!(V, refrac, spiked, spike_count, input, syns, m, dt, n, drive, noise, aux, β, i)
+@inline function _diff_unit!(V, refrac, spiked, spike_count, stimuli, syns, m, dt, n, t, aux, β, i)
     @inbounds begin
         v = V[i]
         r = refrac[i]
         z = zero(r)
         gtot = zero(eltype(V))
-        itot = oftype(gtot, _inputval(input, i))
+        x0 = stim_ctx(m, v, i, 1, n, t, dt, 0)
+        itot = oftype(gtot, _stim_itot(stimuli, gtot, x0))
         v, gtot, itot = _syn_contribute(syns, i, n, v, gtot, itot)   # no-op for an unconnected population
-        v += _drive_kick(drive, n, i, dt)
+        Δg, Δi = _stim_gtot(stimuli, x0)
+        gtot = _addcond(gtot, Δg)
+        itot = _addcond(itot, Δi)
+        v += _stim_kick(stimuli, x0)
         m_i = _resolve(m, i)
         w0 = _aux_read(aux, i)
         v_adv, w_adv = _advance_unit(m_i, v, w0, gtot, itot, dt)
-        v = ifelse(r > z, reset_value(m_i), v_adv + _noise_kick(noise, n, i, dt, m_i))
+        v = ifelse(r > z, reset_value(m_i), v_adv + _stim_noise(stimuli, stim_ctx(m_i, v_adv, i, 1, n, t, dt, 0)))
         r = max(r - dt, z)
         # surrogate spike block (the ONLY difference from `_fused_unit!`)
         s = oftype(v, r ≤ z) * surrogate_spike(m_i, v, β)            # refractory-gated smooth spike ∈ [0,1)
@@ -106,11 +110,11 @@ function _diff_step!(integ::DewdropIntegrator)
     st = integ.state.state
     m = integ.model
     V, refrac, spiked, spike_count = st.V, st.refrac, integ.spiked, integ.spike_count
-    input, syns, dt, n = integ.input, integ.syns, integ.dt, integ.n
-    drive, noise, aux = integ.drive, integ.noise, _aux_col(st, m)
+    stimuli, syns, dt, n = integ.stimuli, integ.syns, integ.dt, integ.n
+    t, aux = _step_time(integ), _aux_col(st, m)
     β = integ.backend.β
     @inbounds for i in 1:length(V)
-        _diff_unit!(V, refrac, spiked, spike_count, input, syns, m, dt, n, drive, noise, aux, β, i)
+        _diff_unit!(V, refrac, spiked, spike_count, stimuli, syns, m, dt, n, t, aux, β, i)
     end
     _surrogate_propagate_all!(integ.syns, integ)                    # ungated weighted deposit (connected training)
     _record_all!(integ.monitors, integ)

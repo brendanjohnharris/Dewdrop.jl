@@ -114,6 +114,29 @@ end
 # deliver/accumulate/decay delegate to the wrapped (batched) synapse, exactly like the scalar PoissonSource.
 @inline _bsyn_one(s::BatchedPoissonSourceState, i, b, n, v, gtot, itot) = _bsyn_one(s.inner, i, b, n, v, gtot, itot)
 
+# Batched SpikeSourceArray: the deterministic sibling of the batched Poisson source. The replay pattern is
+# SHARED across the B columns (like the Poisson source's shared draw); each step broadcasts this step's firing
+# column into the (n_ext, B) mask and scatters into all B columns of the inner ring.
+struct BatchedSpikeSourceArrayState{IS <: AbstractSynapseState, EC, CC, BUF, MV, SP} <: AbstractSynapseState
+    inner::IS
+    extconn::EC
+    conn::CC
+    buf::BUF          # === inner.buf (BatchedRing)
+    spiked::MV        # (n_ext, B) firing-mask scratch, filled from `spikes` each step
+    spikes::SP        # n_ext × nsteps shared replay pattern
+end
+Adapt.@adapt_structure BatchedSpikeSourceArrayState
+# `_make_batched_synstate(::SpikeSourceArray)` lives in PoissonSource.jl (which defines the model type, included
+# after this file); it constructs this state, exactly as the Poisson-source builder does.
+
+@inline function _batched_synprestep!(s::BatchedSpikeSourceArrayState, integ)
+    n = integ.n
+    s.spiked .= view(s.spikes, :, n + 1)                              # broadcast this step's column across all B columns
+    batched_scatter!(s.buf, s.extconn, s.spiked, n; sync = false)
+    return nothing
+end
+@inline _bsyn_one(s::BatchedSpikeSourceArrayState, i, b, n, v, gtot, itot) = _bsyn_one(s.inner, i, b, n, v, gtot, itot)
+
 # One generic batched synapse-state builder (replaces the five hand-written `_make_batched_synstate` AND all
 # of `_with_member_params`/`_mp`/`_col`): allocate the `(N,B)` accumulators named by `_syn_accumulators`,
 # size the batched ring, and build the coefficients — uniform when nothing is swept, else per-column.
@@ -180,28 +203,10 @@ end
     return (v, gtot + Δg, itot + Δi)
 end
 
-# External input for cell (i,b): a shared scalar, a per-neuron (N,) vector, or a per-(neuron,batch) matrix.
-@inline _binputval(input::Number, i, b) = input
-@inline _binputval(input::AbstractVector, i, b) = @inbounds input[i]
-@inline _binputval(input::AbstractMatrix, i, b) = @inbounds input[i, b]
-
-# Per-column external drive: column b draws Poisson events from stream `streams[b]` (the counter
-# RNG batch axis), so the B instances get independent, reproducible drive.
-@inline _bdrive_kick(::Nothing, n, i, b, dt, streams) = false
-@inline function _bdrive_kick(d::PoissonDrive, n, i, b, dt, streams)
-    @inbounds s = streams[b]
-    return d.weight * draw_poisson(d.rate * dt, d.seed, n, i, s)
-end
-
-# Per-column SDE noise increment for cell (i,b): column b draws its normal from stream `streams[b]`
-# (the counter RNG batch axis), so the B instances are independent. With `streams` all-zero, column
-# b reproduces the scalar (batch-0) draw: the bit-exact reference. Strong-zero `false` when no noise.
-@inline _bnoise_kick(::Nothing, n, i, b, dt, m, streams) = false
-@inline function _bnoise_kick(noise::WhiteNoise, n, i, b, dt, m, streams)
-    @inbounds str = streams[b]
-    s = _noise_scale(noise, m, dt)
-    return s * draw_normal(typeof(s), noise.seed, n, i, str)
-end
+# `_binputval` (the per-cell input reader) now lives in src/Stimuli.jl (shared with `ConstantCurrent`). Every
+# external input (input / drive / noise) is a stimulus in `integ.stimuli`, applied per cell via the ctx unrolls
+# below; the per-column stream is `streams[b]` (the counter-RNG batch axis) so the B instances stay independent
+# and reproducible (`streams` all-zero → column b reproduces the scalar batch-0 draw, the bit-exact reference).
 
 # Fused Mode A: per-MEMBER model parameters in the (N,B) megakernel. A `BatchedModel` carries per-member
 # override arrays (each length B); the kernel resolves the column's scalar model via `_resolve(m, i, b)`:
@@ -249,7 +254,7 @@ end
 
 # The batched fused dense step: deliver + drive + accumulate + membrane + decay + threshold +
 # reset + count for every (neuron,batch), in one launch over a 2-D (N,B) ndrange.
-@kernel function _batched_fused_kernel!(V, refrac, spiked, spike_count, itotarr, gtotarr, input, syns, m, dt, n, drive, streams, noise, aux)
+@kernel function _batched_fused_kernel!(V, refrac, spiked, spike_count, itotarr, gtotarr, stimuli, syns, m, dt, n, t, streams, aux)
     I = @index(Global, Cartesian)
     i = I[1]
     b = I[2]
@@ -258,17 +263,22 @@ end
         r = refrac[i, b]
         z = zero(r)
         gtot = zero(eltype(V))
-        itot = oftype(gtot, _binputval(input, i, b))
+        str = streams[b]                            # this column's counter-RNG stream (batch axis)
+        x0 = stim_ctx(m, v, i, b, n, t, dt, str)    # :current/:kick/:conductance ctx for cell (i,b)
+        itot = oftype(gtot, _stim_itot(stimuli, gtot, x0))          # itot base: first :current ASSIGNS (was `_binputval`)
         v, gtot, itot = _bsyn_contribute(syns, i, b, n, v, gtot, itot)
+        Δg, Δi = _stim_gtot(stimuli, x0)            # prescribed :conductance g(t) (no-op today; strong-zero identity)
+        gtot = _addcond(gtot, Δg)
+        itot = _addcond(itot, Δi)
         itotarr[i, b] = itot            # materialise the accumulators (one store each) so Trace(:itot)/:gtot
         gtotarr[i, b] = gtot            # record real values under the batched path (bit-identical to scalar fused)
-        v += _bdrive_kick(drive, n, i, b, dt, streams)
+        v += _stim_kick(stimuli, x0)                # :kick stimuli → v (per-column stream; was `_bdrive_kick`)
         m_i = _resolve(m, i, b)              # per-(neuron, member) model; `= m` for a scalar model
         # subthreshold (V, aux) advance + per-column SDE noise (refractory clamps V, no noise);
         # `aux` is `nothing` for a V-only model -> exactly the prior membrane_step (bit-identical).
         w0 = _aux_read(aux, i, b)
         v_adv, w_adv = _advance_unit(m_i, v, w0, gtot, itot, dt)
-        v = ifelse(r > z, reset_value(m_i), v_adv + _bnoise_kick(noise, n, i, b, dt, m_i, streams))
+        v = ifelse(r > z, reset_value(m_i), v_adv + _stim_noise(stimuli, stim_ctx(m_i, v_adv, i, b, n, t, dt, str)))
         r = max(r - dt, z)
         s = (r ≤ z) & threshold(m_i, v)
         v = ifelse(s, reset_value(m_i), v)
@@ -409,10 +419,10 @@ function _batched_propagate_step!(c::BatchedCompactionScratch, integ)
 end
 
 # Batched integrator (mutable cache; only n/t mutate)
-mutable struct BatchedIntegrator{M, ST, In, A, T, BL, C, IT, GT, SY, MO, DR, STR, CO, NO, PG}
+mutable struct BatchedIntegrator{M, ST, SM, A, T, BL, C, IT, GT, SY, MO, STR, CO, PG}
     const model::M
     const state::ST
-    const input::In
+    const stimuli::SM            # the unified AbstractStimulus tuple (input/drive/noise); see Stimuli.jl
     const dt::T
     n::Int
     t::T
@@ -425,12 +435,10 @@ mutable struct BatchedIntegrator{M, ST, In, A, T, BL, C, IT, GT, SY, MO, DR, STR
     const gtot::GT               # (N,B) conductance accumulator, materialised in-kernel (records :gtot)
     const syns::SY
     const monitors::MO
-    const drive::DR
     const streams::STR
     const batch::Int
     const sync_every::Int        # periodic device sync cadence (0 = never; host reads still sync)
     const compaction::CO         # BatchedCompactionScratch (scatter = :compacted) or `nothing`
-    const noise::NO              # WhiteNoise (SDE diffusion) or `nothing` (compiles away); see Noise.jl
     const progress::PG           # the `progress` kwarg spec (:auto/Bool/String/Int); host-side, read by solve!
 end
 Adapt.@adapt_structure BatchedIntegrator
@@ -521,9 +529,11 @@ function _batched_init(
     compaction = scatter === :compacted ? BatchedCompactionScratch(arch, N, B) :
         scatter === :edge ? nothing :
         throw(ArgumentError("scatter must be :edge or :compacted (got :$scatter)"))
+    _validate_stimuli(prob.stimuli, N, nsteps, dt)             # shape-check the `stimuli =` extras vs (N, nsteps, dt)
+    stimuli = _assemble_stimuli(inp, prob.drive, prob.noise, prob.stimuli)    # ConstantCurrent(inp) + drive? + noise? + extras
     return BatchedIntegrator(
-        model, state, inp, dt, 0, prob.tspan[1], prob.tspan[2], nsteps, arch,
-        spiked, spike_count, itot, gtot, syns, monitors, prob.drive, str, B, Int(sync_every), compaction, prob.noise, progress,
+        model, state, stimuli, dt, 0, prob.tspan[1], prob.tspan[2], nsteps, arch,
+        spiked, spike_count, itot, gtot, syns, monitors, str, B, Int(sync_every), compaction, progress,
     )
 end
 
@@ -533,8 +543,8 @@ function _batched_step!(integ::BatchedIntegrator)
     V = st.V
     backend = get_backend(V)
     _batched_fused_kernel!(backend)(
-        V, st.refrac, integ.spiked, integ.spike_count, integ.itot, integ.gtot, integ.input,
-        integ.syns, integ.model, integ.dt, integ.n, integ.drive, integ.streams, integ.noise, _aux_col(st, integ.model);
+        V, st.refrac, integ.spiked, integ.spike_count, integ.itot, integ.gtot, integ.stimuli,
+        integ.syns, integ.model, integ.dt, integ.n, _step_time(integ), integ.streams, _aux_col(st, integ.model);
         ndrange = size(V),
     )
     _batched_propagate_step!(integ.compaction, integ)   # edge-parallel, or compacted per column

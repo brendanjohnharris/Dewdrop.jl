@@ -59,44 +59,34 @@ end
     return (v, gtot + Δg, itot + Δi)
 end
 
-# External input current for neuron `i` (scalar constant, or a per-unit array).
-@inline _inputval(input::Number, i) = input
-@inline _inputval(input::AbstractArray, i) = @inbounds input[i]
-
-# External Poisson drive kick for neuron `i` at step `n` (a strong-zero `false` when no drive,
-# so it adds nothing and preserves `v`'s type). Matches the broadcast `_apply_drive!`.
-@inline _drive_kick(::Nothing, n, i, dt) = false
-@inline _drive_kick(d::PoissonDrive, n, i, dt) = d.weight * draw_poisson(d.rate * dt, d.seed, n, i)
-
-# SDE noise increment for neuron `i` at step `n` (a strong-zero `false` when no noise, so it adds
-# nothing and preserves `v`'s type; the deterministic path stays bit-identical). Matches the
-# broadcast `_apply_noise!`: the exact-OU scale times one counter-based normal.
-@inline _noise_kick(::Nothing, n, i, dt, m) = false
-@inline function _noise_kick(noise::WhiteNoise, n, i, dt, m)
-    s = _noise_scale(noise, m, dt)
-    return s * draw_normal(typeof(s), noise.seed, n, i)
-end
-
-# The per-neuron fused step body for neuron `i`: deliver + drive + accumulate + membrane + decay +
+# The per-neuron fused step body for neuron `i`: deliver + stimuli + accumulate + membrane + decay +
 # threshold + reset + count. Written ONCE as a plain `@inline` function so it drives BOTH the GPU
 # megakernel (`_fused_kernel!` below, one thread per neuron) AND the CPU tight loop (`_tight_step!`,
 # a plain Julia `for`/`@threads` loop). Each neuron writes only its own state, so the loop is
-# embarrassingly parallel → bit-identical regardless of thread count or driver.
-@inline function _fused_unit!(V, refrac, spiked, spike_count, input, itotarr, gtotarr, syns, m, dt, n, drive, noise, aux, i)
+# embarrassingly parallel → bit-identical regardless of thread count or driver. Every external input is
+# a stimulus in the `stimuli` tuple, applied at its compile-time point via the ctx unrolls (Stimuli.jl):
+# `:current`/`:conductance` → itot/gtot, `:kick` → v at deliver, `:noise` → v at the membrane step; an
+# absent kind folds to a strong-zero `false` (byte-identical to the prior `_inputval`/`_drive_kick`/`_noise_kick`).
+@inline function _fused_unit!(V, refrac, spiked, spike_count, stimuli, itotarr, gtotarr, syns, m, dt, n, t, aux, i)
     @inbounds begin
         v = V[i]
         r = refrac[i]
         z = zero(r)
         gtot = zero(eltype(V))
-        itot = oftype(gtot, _inputval(input, i))
-        # synaptic deliver + accumulate + decay (delta also kicks `v`), then external drive
+        x0 = stim_ctx(m, v, i, 1, n, t, dt, 0)                       # :current/:kick/:conductance ctx (b=1, stream=0)
+        itot = oftype(gtot, _stim_itot(stimuli, gtot, x0))           # itot base: first :current ASSIGNS (was `_inputval`)
+        # synaptic deliver + accumulate + decay (delta also kicks `v`)
         v, gtot, itot = _syn_contribute(syns, i, n, v, gtot, itot)
+        # prescribed :conductance g(t), folded AFTER synapse accumulation (no-op today; strong-zero identity)
+        Δg, Δi = _stim_gtot(stimuli, x0)
+        gtot = _addcond(gtot, Δg)
+        itot = _addcond(itot, Δi)
         # materialise the membrane accumulators so `Trace(:itot)`/`Trace(:gtot)` record real values under
         # the fused/GPU path too (bit-identical to what the Serial `_accum_all!` writes); one store each,
         # negligible against the membrane `exp`.
         itotarr[i] = itot
         gtotarr[i] = gtot
-        v += _drive_kick(drive, n, i, dt)
+        v += _stim_kick(stimuli, x0)                                 # :kick stimuli → v at deliver (was `_drive_kick`)
         # resolve the per-neuron model: `_resolve(m, i) = m` for a scalar model (bit-identical),
         # the i-th override values for a Heterogeneous one.
         m_i = _resolve(m, i)
@@ -104,7 +94,8 @@ end
         # V-only model `aux` is `nothing` and this is exactly the prior membrane_step (bit-identical).
         w0 = _aux_read(aux, i)
         v_adv, w_adv = _advance_unit(m_i, v, w0, gtot, itot, dt)
-        v = ifelse(r > z, reset_value(m_i), v_adv + _noise_kick(noise, n, i, dt, m_i))
+        # :noise under the refractory gate; ctx carries the RESOLVED model (for `_tau`) + advanced v (was `_noise_kick`)
+        v = ifelse(r > z, reset_value(m_i), v_adv + _stim_noise(stimuli, stim_ctx(m_i, v_adv, i, 1, n, t, dt, 0)))
         r = max(r - dt, z)
         # threshold (respecting refractory), then reset + arm refractory + spike-triggered adaptation
         s = (r ≤ z) & threshold(m_i, v)
@@ -122,10 +113,10 @@ end
 
 # The GPU megakernel: one thread per neuron, `offset` shifts a group's launch into its flat range.
 # (`@index(Global)` on its own line: inlining the `+ offset` breaks KA's cartesian-context macro.)
-@kernel function _fused_kernel!(V, refrac, spiked, spike_count, input, itotarr, gtotarr, syns, m, dt, n, drive, noise, aux, offset)
+@kernel function _fused_kernel!(V, refrac, spiked, spike_count, stimuli, itotarr, gtotarr, syns, m, dt, n, t, aux, offset)
     g = @index(Global)
     i = g + offset
-    _fused_unit!(V, refrac, spiked, spike_count, input, itotarr, gtotarr, syns, m, dt, n, drive, noise, aux, i)
+    _fused_unit!(V, refrac, spiked, spike_count, stimuli, itotarr, gtotarr, syns, m, dt, n, t, aux, i)
 end
 
 # Launch the fused kernel (no synchronisation: it pipelines with the scatter and monitors on
@@ -152,8 +143,8 @@ end
 end
 @inline function _launch_group!(backend, m, integ, st, offset::Int, len::Int)
     _fused_kernel!(backend)(
-        st.V, st.refrac, integ.spiked, integ.spike_count, integ.input, integ.itot, integ.gtot,
-        integ.syns, m, integ.dt, integ.n, integ.drive, integ.noise, _aux_col(st, m), offset;
+        st.V, st.refrac, integ.spiked, integ.spike_count, integ.stimuli, integ.itot, integ.gtot,
+        integ.syns, m, integ.dt, integ.n, _step_time(integ), _aux_col(st, m), offset;
         ndrange = len,
     )
     return nothing
@@ -207,16 +198,16 @@ const _TIGHT_MIN_PER_THREAD = 256
 
 function _tight_range!(m, integ::DewdropIntegrator, st, lo::Int, hi::Int)
     V, refrac, spiked, spike_count = st.V, st.refrac, integ.spiked, integ.spike_count
-    input, syns, dt, n = integ.input, integ.syns, integ.dt, integ.n
+    stimuli, syns, dt, n = integ.stimuli, integ.syns, integ.dt, integ.n
     itotarr, gtotarr = integ.itot, integ.gtot
-    drive, noise, aux = integ.drive, integ.noise, _aux_col(st, m)
+    t, aux = _step_time(integ), _aux_col(st, m)
     if Threads.nthreads() > 1 && (hi - lo + 1) ≥ Threads.nthreads() * _TIGHT_MIN_PER_THREAD
         Threads.@threads for i in lo:hi
-            _fused_unit!(V, refrac, spiked, spike_count, input, itotarr, gtotarr, syns, m, dt, n, drive, noise, aux, i)
+            _fused_unit!(V, refrac, spiked, spike_count, stimuli, itotarr, gtotarr, syns, m, dt, n, t, aux, i)
         end
     else
         @inbounds for i in lo:hi
-            _fused_unit!(V, refrac, spiked, spike_count, input, itotarr, gtotarr, syns, m, dt, n, drive, noise, aux, i)
+            _fused_unit!(V, refrac, spiked, spike_count, stimuli, itotarr, gtotarr, syns, m, dt, n, t, aux, i)
         end
     end
     return nothing

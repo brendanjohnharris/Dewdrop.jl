@@ -9,7 +9,7 @@ module TimeseriesBaseExt
 # `import` (not `using`) Dewdrop so the local `Population` dimension below does not collide with
 # Dewdrop's exported SoA-state `Population` struct; the ext refers to Dewdrop names qualified.
 import Dewdrop
-import TimeseriesBase: Timeseries, spiketrain, ToolsArray, ToolsDim, 𝑡, Var
+import TimeseriesBase: Timeseries, spiketrain, ToolsArray, ToolsDim, 𝑡, Var, RegularTimeseries
 import DimensionalData
 
 # Custom Dewdrop dimensions
@@ -39,6 +39,21 @@ function __init__()
     isdefined(Dewdrop, :Neuron) || Core.eval(Dewdrop, :(const Neuron = $Neuron))
     isdefined(Dewdrop, :Synapse) || Core.eval(Dewdrop, :(const Synapse = $Synapse))
     return nothing
+end
+
+# ─────────────────────────── input side: TimedArray from a regularly-sampled series ───────────────────────────
+"""
+    TimedArray(ts::RegularTimeseries; as = :current)
+
+Build a [`TimedArray`](@ref Dewdrop.TimedArray) input stimulus from a regularly-sampled TimeseriesBase series
+(available once `TimeseriesBase` is loaded): a 1-D `Time` series → a shared per-step signal; a 2-D
+`Time × Neuron` series → a per-neuron `N × nsteps` signal. The series' `samplingperiod` must equal the run
+`dt` (the values are read one per step, in order); attach it via `DewdropNetwork(...; stimuli = TimedArray(ts))`.
+"""
+function Dewdrop.TimedArray(ts::RegularTimeseries; as::Symbol = :current)
+    d = collect(ts)                                   # materialise in (Time) / (Time, Neuron) order
+    data = ndims(ts) == 1 ? d : permutedims(d)        # → (nsteps,) shared, or (N, nsteps) per-neuron
+    return Dewdrop.TimedArray(data; as = as)
 end
 
 # recorded column c of a monitor sampled every `e` steps → time c·e·dt (matching `raster`)

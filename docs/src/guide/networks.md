@@ -96,6 +96,10 @@ drive!(nb, :E, ConductanceSynapse(τ = 5.0, Erev = 0.0); rate = 8.0, n_ext = 100
 Give two synapse drives the same `fire_seed` (different `seed`) to make them a shared common-mode
 source: the same external spikes, independent fan-out.
 
+Beyond `drive!`, any input --- constant current, time-varying / functional waveforms, tabulated
+[`TimedArray`](@ref)s, [`InhomogeneousPoisson`](@ref), spike replay --- is an `AbstractStimulus` passed via
+`stimuli =` on [`DewdropNetwork`](@ref). See the [Inputs & stimuli](@ref) guide.
+
 ### Assembling
 
 [`build`](@ref) concatenates the populations into one flat SoA (recording each subpopulation's range),

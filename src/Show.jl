@@ -120,6 +120,16 @@ end
 
 _oneline(x) = sprint(show, x)     # a child's compact render, colour-free, for embedding in a tree head
 
+# Extra-stimulus rows (from `stimuli =` / `stimulate!`): a `stimuli (k)` parent with one terse child per
+# stimulus (its type name, not a full struct dump --- a TimedArray/rate matrix would flood the tree). No row
+# when the tuple is empty. Shared by the network and builder/spec renderers.
+_stim_label(s) = string(nameof(typeof(s)))
+function _push_stimuli!(children, stimuli)
+    isempty(stimuli) && return children
+    push!(children, ("stimuli ($(length(stimuli)))", Any[(_stim_label(s), Any[]) for s in stimuli]))
+    return children
+end
+
 # render a node's children as a tree. Each child is `(head::String, subchildren::Vector)`; leaves have
 # an empty subchildren vector. Newline-prefixed (no trailing newline), nesting via `│ `/`  ` continuation.
 function _print_tree(io::IO, children::AbstractVector; prefix::String = "")
@@ -360,6 +370,7 @@ function Base.show(io::IO, ::MIME"text/plain", net::DewdropNetwork)
     end
     net.drive === nothing || push!(children, ("drive  " * _oneline(net.drive), Any[]))
     net.noise === nothing || push!(children, ("noise  " * _oneline(net.noise), Any[]))
+    _push_stimuli!(children, net.stimuli)
     _print_tree(io, children)
     return nothing
 end
@@ -386,7 +397,7 @@ function _builder_proj_head(s::_ProjSpec)
     return head
 end
 # shared builder/spec tree render (NetworkBuilder + the structured FrozenBuilder spec carry the same fields).
-function _show_builder(io::IO, arch, tspan, names, models, sizes, projspecs, drive; head::String, tag::String)
+function _show_builder(io::IO, arch, tspan, names, models, sizes, projspecs, drive; head::String, tag::String, stimuli = ())
     print(io, head, " · ", nameof(typeof(arch)), " · t∈[", _fmt(tspan[1]), ",", _fmt(tspan[2]), "] ms · ")
     _styled(io, tag, :dim)
     full = _expand(io)
@@ -401,6 +412,7 @@ function _show_builder(io::IO, arch, tspan, names, models, sizes, projspecs, dri
     projkids = Any[(_builder_proj_head(s), full ? _proj_param_children(s) : Any[]) for s in projspecs]
     isempty(projkids) || push!(children, ("projections ($(length(projkids)))", projkids))
     drive === nothing || push!(children, ("drive  " * _oneline(drive), Any[]))
+    _push_stimuli!(children, stimuli)
     _print_tree(io, children)
     return nothing
 end
@@ -409,7 +421,7 @@ function Base.show(io::IO, ::MIME"text/plain", nb::NetworkBuilder)
     get(io, :compact, false) && return show(io, nb)
     _show_builder(
         io, nb.arch, nb.tspan, nb.names, nb.models, nb.sizes, nb.projspecs, nb.drive;
-        head = "NetworkBuilder", tag = "(unbuilt)"
+        head = "NetworkBuilder", tag = "(unbuilt)", stimuli = nb.stimuli
     )
     return nothing
 end
@@ -422,7 +434,7 @@ function Base.show(io::IO, ::MIME"text/plain", spec::FrozenBuilder)
     get(io, :compact, false) && return show(io, spec)
     _show_builder(
         io, spec.arch, spec.tspan, spec.names, spec.models, spec.sizes, spec.projspecs, spec.drive;
-        head = "NetworkSpec", tag = "(spec, unmaterialised)"
+        head = "NetworkSpec", tag = "(spec, unmaterialised)", stimuli = spec.stimuli
     )
     return nothing
 end

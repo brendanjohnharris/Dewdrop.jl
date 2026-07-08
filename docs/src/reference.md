@@ -126,10 +126,23 @@ distance_prob
 distance_fixed_count
 ```
 
-## External drive & noise
+## Inputs, drive & noise
+
+See the [Inputs & stimuli](@ref) guide for the unified stimulus API.
 
 ```@docs
+ConstantCurrent
+FunctionalCurrent
+FunctionalKick
+FunctionalConductance
+TimedArray
+ramp
+step_input
+sinusoid
+pulses
+InhomogeneousPoisson
 PoissonSource
+SpikeSourceArray
 WhiteNoise
 ```
 
@@ -211,6 +224,20 @@ cv_isi
 power_spectrum
 efficiency
 radial_autocorrelation
+```
+
+## Plotting
+
+Weak-dependency Makie recipes; see [plotting](guide/plotting.md). Base recipes (`spikeraster`, `psth`,
+`ratemap`) live in [TimeseriesMakie](https://github.com/brendanjohnharris/TimeseriesMakie.jl) and are
+specialised for `DewdropSolution` here; the functions below are Dewdrop-specific. Requires a Makie
+backend and `TimeseriesMakie` loaded.
+
+```@docs
+traceplot
+phaseplane
+positionplot
+connectivity
 ```
 
 ## Performance advisor

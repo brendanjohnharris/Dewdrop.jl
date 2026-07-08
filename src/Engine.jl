@@ -80,6 +80,10 @@ function PoissonDrive(; rate, weight, seed = 0)
 end
 export PoissonDrive
 
+# PoissonDrive as a `:kick` stimulus (src/Stimuli.jl): the scalar-rate voltage jump, unified with the seam.
+stim_point(::Type{<:PoissonDrive}) = Val(:kick)
+@inline stim_kick(d::PoissonDrive, x) = d.weight * draw_poisson(d.rate * x.dt, d.seed, x.n, x.i, x.stream)
+
 """
     DewdropNetwork(model, N; input, tspan, arch=CPU(), schedule=default_schedule(), projection=nothing)
 
@@ -87,7 +91,7 @@ A simulation problem: `N` units of neuron `model` driven by external `input` (a 
 constant current, or a per-unit array) over `tspan`. An optional recurrent [`Projection`](@ref)
 adds synaptic coupling.
 """
-struct DewdropNetwork{M <: AbstractNeuronModel, In, A <: AbstractArchitecture, S <: Schedule, T, P <: Tuple, DR, NO, SP <: NamedTuple, PO, PG}
+struct DewdropNetwork{M <: AbstractNeuronModel, In, A <: AbstractArchitecture, S <: Schedule, T, P <: Tuple, DR, NO, SP <: NamedTuple, PO, PG, SM <: Tuple}
     model::M
     n::Int
     input::In
@@ -100,6 +104,7 @@ struct DewdropNetwork{M <: AbstractNeuronModel, In, A <: AbstractArchitecture, S
     subpops::SP                 # named-subpopulation registry: name → contiguous range into 1:N; see Builder.jl
     positions::PO               # per-neuron positions (host metadata for spatial measures), or `nothing`
     projlabels::PG              # per-projection `:src => :dst` names (host metadata, from the builder), or `nothing`
+    stimuli::SM                 # extra AbstractStimulus tuple (TimedArray/Functional/…); folded with input/drive/noise
 end
 # normalise the `projection` (singular) / `projections` (plural) keywords to a tuple
 _normalize_projections(p::Projection, ::Nothing) = (p,)
@@ -113,12 +118,13 @@ function DewdropNetwork(
         model::AbstractNeuronModel, N::Integer; input, tspan,
         arch::AbstractArchitecture = CPU(), schedule::Schedule = default_schedule(),
         projection = nothing, projections = nothing, drive = nothing, noise = nothing,
-        subpops = nothing, positions = nothing, projlabels = nothing
+        subpops = nothing, positions = nothing, projlabels = nothing, stimuli = nothing
     )
     T = float_type(model)
     in_ = on_architecture(arch, to_current(input))     # per-unit input arrays move to the architecture
     projs = _normalize_projections(projection, projections)
-    return DewdropNetwork(model, Int(N), in_, (T(to_time(tspan[1])), T(to_time(tspan[2]))), arch, schedule, projs, drive, noise, _normalize_subpops(subpops, Int(N)), positions, projlabels)
+    stim = _upload_stimuli(_stimtuple(stimuli), arch)  # extra AbstractStimulus data → architecture (validated at init)
+    return DewdropNetwork(model, Int(N), in_, (T(to_time(tspan[1])), T(to_time(tspan[2]))), arch, schedule, projs, drive, noise, _normalize_subpops(subpops, Int(N)), positions, projlabels, stim)
 end
 export DewdropNetwork
 
@@ -141,10 +147,10 @@ export FixedStep
 Mutable, concretely-typed integrator cache (the CommonSolve `integrator`). Holds the SoA
 state and preallocated buffers; only the step counter `n` and time `t` mutate.
 """
-mutable struct DewdropIntegrator{M, ST, In, A, S, T, B, C, SY, GT, MO, DR, CO, NO, BK, SP, PO, PG}
+mutable struct DewdropIntegrator{M, ST, SM, A, S, T, B, C, SY, GT, MO, CO, BK, SP, PO, PG}
     const model::M
     const state::ST
-    const input::In
+    const stimuli::SM            # the unified AbstractStimulus tuple (input/drive/noise + new stimuli); Stimuli.jl
     const dt::T
     n::Int
     t::T
@@ -160,23 +166,21 @@ mutable struct DewdropIntegrator{M, ST, In, A, S, T, B, C, SY, GT, MO, DR, CO, N
     const gtot::GT               # per-neuron conductance accumulator (scratch, COBA)
     const itot::GT               # per-neuron input-current accumulator (scratch)
     const monitors::MO           # NamedTuple of monitors (possibly empty); see Monitors.jl
-    const drive::DR              # PoissonDrive, or `nothing`
     const sync_every::Int        # periodic device-sync cadence for long runs (0 = never); see Fused.jl
     const compaction::CO         # CompactionScratch (scatter = :compacted) or `nothing`; see Compaction.jl
-    const noise::NO              # WhiteNoise (SDE diffusion) or `nothing` (compiles away); see Noise.jl
     const backend::BK            # resolved execution backend (Serial/Fused/Turbo); routes the step, see Fused.jl
     const subpops::SP            # named-subpopulation registry (host-side metadata; travels onto the solution)
     const positions::PO          # per-neuron positions (host-side metadata; travels onto the solution)
     const progress::PG           # the `progress` kwarg spec (:auto/Bool/String/Int); host-side, read by solve!
 end
-# Device-movable: adapt the SoA state + buffers, leave the host-side
+# Device-movable: adapt the SoA state + buffers + the stimulus tuple, leave the host-side
 # `subpops`/`positions` metadata (a custom rule keeps `positions` host-resident even on a GPU run).
 Adapt.adapt_structure(to, integ::DewdropIntegrator) = DewdropIntegrator(
-    adapt(to, integ.model), adapt(to, integ.state), adapt(to, integ.input), integ.dt,
+    adapt(to, integ.model), adapt(to, integ.state), adapt(to, integ.stimuli), integ.dt,
     integ.n, integ.t, integ.tend, integ.nsteps, integ.arch, integ.schedule, adapt(to, integ.spiked),
     adapt(to, integ.spike_count), adapt(to, integ.syns), adapt(to, integ.gtot), adapt(to, integ.itot),
-    adapt(to, integ.monitors), adapt(to, integ.drive), integ.sync_every, adapt(to, integ.compaction),
-    adapt(to, integ.noise), integ.backend, integ.subpops, integ.positions, integ.progress,
+    adapt(to, integ.monitors), integ.sync_every, adapt(to, integ.compaction),
+    integ.backend, integ.subpops, integ.positions, integ.progress,
 )
 
 """
@@ -243,10 +247,12 @@ function CommonSolve.init(
     nsteps = round(Int, (prob.tspan[2] - prob.tspan[1]) / dt)
     monitors = _make_monitors(record, arch, T, N, nsteps, prob.subpops)
     compaction = _make_compaction(scatter, arch, N)
+    _validate_stimuli(prob.stimuli, N, nsteps, dt)                    # shape-check the `stimuli =` extras vs (N, nsteps, dt)
+    stimuli = _assemble_stimuli(prob.input, prob.drive, prob.noise, prob.stimuli)   # ConstantCurrent + drive? + noise? + extras
     return DewdropIntegrator(
-        prob.model, state, prob.input, dt,
+        prob.model, state, stimuli, dt,
         0, prob.tspan[1], prob.tspan[2], nsteps, arch, prob.schedule, spiked, spike_count, syns,
-        gtot, itot, monitors, prob.drive, Int(sync_every), compaction, prob.noise, bk,
+        gtot, itot, monitors, Int(sync_every), compaction, bk,
         prob.subpops, prob.positions, progress,
     )
 end
@@ -392,19 +398,8 @@ end
 @inline function run_phase!(::Val{:deliver}, integ::DewdropIntegrator)
     _synprestep_all!(integ.syns, integ)                    # streaming drives generate + scatter their own events
     _deliver_all!(integ.syns, integ)                       # ring-buffer due → per-projection state (or V, for delta)
-    _apply_drive!(integ.drive, integ)                      # external Poisson kicks → V
-    return nothing
-end
-
-@inline _apply_drive!(::Nothing, integ) = nothing
-@inline function _apply_drive!(drive::PoissonDrive, integ)
     V = integ.state.state.V
-    λ = drive.rate * integ.dt
-    w = drive.weight
-    seed = drive.seed
-    n = integ.n
-    idx = eachindex(V)
-    @. V += w * draw_poisson(λ, seed, n, idx)              # per-neuron Poisson voltage kicks
+    _apply_kicks!(integ.stimuli, V, integ.model, integ.n, _step_time(integ), integ.dt)   # :kick stimuli → V
     return nothing
 end
 
@@ -423,9 +418,11 @@ end
 # projection's conductance/current. Shared by the broadcast `:integrate` phase and the Turbo step
 # (Fused.jl) so the two paths can't drift; writes through to `integ.itot`/`integ.gtot`.
 @inline function _accum_base!(integ, V)
-    integ.itot .= integ.input
+    m = integ.model; n = integ.n; dt = integ.dt; t = _step_time(integ)
+    _stim_itot!(integ.itot, integ.stimuli, m, n, t, dt)    # itot base: first :current assigns (reproduces `.= input`)
     fill!(integ.gtot, zero(eltype(integ.gtot)))
     _accum_all!(integ.syns, integ.gtot, integ.itot, V)
+    _stim_gtot!(integ.gtot, integ.itot, integ.stimuli, V, m, n, t, dt)   # prescribed :conductance g(t) (no-op today)
     return nothing
 end
 
@@ -442,23 +439,9 @@ end
     # subthreshold membrane step, dispatched on the model's state shape: V-only models (LIF, every
     # @neuron) take the exact prior broadcast unchanged; adaptation models co-advance (V, w).
     _integrate_membrane!(m, st, gtot, itot, dt, refrac, Vr, z)
-    _apply_noise!(integ.noise, integ, refrac, z)           # SDE diffusion increment (no-op if no noise)
+    _apply_noises!(integ.stimuli, V, refrac, z, m, integ.n, _step_time(integ), dt)   # :noise stimuli (no-op if none)
     @. refrac = max(refrac - dt, z)
     _decay_all!(integ.syns)                                # advance each projection's synaptic state
-    return nothing
-end
-
-# SDE noise injection: add the exact-OU Gaussian increment to non-refractory neurons. The
-# `nothing` method compiles the diffusion away entirely (bit-identical to a deterministic run); the
-# `WhiteNoise` method draws one counter-based normal per neuron keyed by (seed, step, neuron).
-@inline _apply_noise!(::Nothing, integ, refrac, z) = nothing
-@inline function _apply_noise!(noise::WhiteNoise, integ::DewdropIntegrator, refrac, z)
-    V = integ.state.state.V
-    s = _noise_scale(noise, integ.model, integ.dt)
-    seed = noise.seed
-    n = integ.n
-    idx = eachindex(V)
-    @. V = ifelse(refrac > z, V, V + s * draw_normal(eltype(V), seed, n, idx))
     return nothing
 end
 

@@ -53,8 +53,9 @@ prob = DewdropNetwork(m, 1000; input = 1.5, tspan = (0.0, 1000.0))
 sol = solve(prob, FixedStep(0.1))                 # backend = Auto()
 ```
 
-`input` is the external drive: a scalar constant current shared by every unit, or a per-unit array.
-The result is a [`DewdropSolution`](@ref). Without any monitors it still carries the final state and
+`input` is the external drive: a scalar constant current shared by every unit, or a per-unit array. It is
+the simplest of Dewdrop's inputs; time-varying, functional, Poisson and spike-replay stimuli are covered in
+the [Inputs & stimuli](@ref) guide. The result is a [`DewdropSolution`](@ref). Without any monitors it still carries the final state and
 a per-unit spike count, so [`firing_rate`](@ref) and [`duration`](@ref) work immediately.
 [`firing_rate`](@ref) is exported; [`duration`](@ref) is not, so reach it as `Dewdrop.duration`
 (or bring it into scope with `using Dewdrop: duration`):
@@ -89,9 +90,13 @@ Here we build one population of `N` units, the first `NE` excitatory and the res
 it with random connectivity from [`fixed_prob`](@ref), and feed it external spikes with a
 [`PoissonDrive`](@ref).
 
-```julia
-using Dewdrop
+```@setup gs
+using Dewdrop, CairoMakie, TimeseriesMakie, Fathom
+set_theme!(fathom())
+Dewdrop.set_advice!(false)
+```
 
+```@example gs
 N, NE = 1000, 800                                  # 800 E, 200 I
 m = LIF(; τ = 20.0, EL = -65.0, Vθ = -50.0, Vr = -65.0, R = 1.0, tref = 2.0)
 
@@ -110,6 +115,19 @@ sol = solve(prob, FixedStep(0.1); record = (spikes = Spikes(),))
 
 times, ids = raster(sol)
 mean_rate = 1000 * sum(firing_rate(sol)) / N       # population mean, in Hz (dt in ms)
+round(mean_rate; digits = 1)
+```
+
+With `CairoMakie` and `TimeseriesMakie` loaded, `spikeraster` draws the events (here excitatory neurons
+in blue, inhibitory in red); see [plotting](plotting.md).
+
+```@example gs
+keep = times .≤ 150.0                              # a legible window of the 1 s run
+cols = [i ≤ NE ? Fathom.baikal : Fathom.bermejo for i in ids[keep]]   # E blue, I red
+fig = Figure(size = (900, 340))
+spikeraster!(Axis(fig[1, 1]; xlabel = "Time (ms)", ylabel = "Neuron", title = "E/I network raster (first 150 ms)"),
+             times[keep], ids[keep]; color = cols, markersize = 1.5)
+fig
 ```
 
 [`fixed_prob`](@ref) gives each `(pre, post)` edge probability `p` from a reproducible
@@ -127,6 +145,8 @@ connectivity](connectivity.md) and the [fluent builder](networks.md).
 
 - [Building networks](networks.md): the fluent [`network`](@ref) / [`population!`](@ref) /
   [`project!`](@ref) / [`build`](@ref) builder, named subpopulations, and spatial layouts.
+- [Inputs & stimuli](inputs.md): time-varying / functional currents, [`TimedArray`](@ref),
+  [`InhomogeneousPoisson`](@ref), and [`SpikeSourceArray`](@ref) spike replay.
 - [Neuron models](models.md): [`AdaptLIF`](@ref), [`AdEx`](@ref), [`FNSNeuron`](@ref),
   [`Heterogeneous`](@ref) per-neuron parameters, [`MultiModel`](@ref) mixed populations, and
   [`@neuron`](@ref) for your own.
@@ -134,5 +154,7 @@ connectivity](connectivity.md) and the [fluent builder](networks.md).
 - [Choosing a backend](backends.md): [`Serial`](@ref), [`Fused`](@ref), [`Turbo`](@ref), and
   when each wins.
 - [Recording](recording.md): monitors, on-device reducers, and labelled outputs.
+- [Plotting](plotting.md): weak-dependency Makie recipes ([`raster`](@ref)/rate/trace/phase, plus
+  positions and connectivity) that specialise TimeseriesMakie for Dewdrop solutions.
 - [Running on the GPU](gpu.md): `arch = GPU()`, batching with [`batch`](@ref), and the scatter
   strategies.

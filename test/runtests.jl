@@ -41,6 +41,7 @@ Dewdrop.set_advice!(false)   # silence the perf advisor during the suite; test/a
     include("progress.jl")          # host-side progress reporting (ProgressLogging convention) for solve!
     include("show.jl")              # hierarchical Base.show rendering (models, synapses, network, builder, solutions)
     include("drive.jl")
+    include("stimuli.jl")           # unified AbstractStimulus seam: Functional/TimedArray/InhomogeneousPoisson/SpikeSourceArray
     include("poissonsource.jl")     # generic streaming Poisson drive: PoissonSource{Synapse} + drive! verb
     include("noise.jl")             # SDE noise: draw_normal, exact-OU variance, 3-path ≡
     include("gpu_readiness.jl")
@@ -57,6 +58,7 @@ Dewdrop.set_advice!(false)   # silence the perf advisor during the suite; test/a
     include("aqua.jl")
     include("jet.jl")
     # scenario / classical-figure reproductions (heaviest load: CairoMakie) last
+    include("makie.jl")             # TimeseriesMakie ext: spikeraster/psth/ratemap/traceplot/phaseplane/positionplot/connectivity
     include("plots.jl")
     include("brunel.jl")
     include("vogels_abbott.jl")

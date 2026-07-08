@@ -78,4 +78,23 @@ using TimeseriesBase
         @test parent(X[1, 1]) == parent(vE)                  # the (E, V) cell is the E trace
         @test size(X[2, 1]) == (nsteps, 4)                   # the (I, V) cell
     end
+
+    @testset "input side: TimedArray from a RegularTimeseries" begin
+        N = 6; dt = 0.1; nsteps2 = 300
+        # a 1-D regular series → shared per-step current; must equal the same signal built from a plain vector
+        vals = [22.0 + 6.0 * sin(0.05 * k) for k in 0:(nsteps2 - 1)]
+        ts = ToolsArray(vals, (𝑡(0.0:dt:(dt * (nsteps2 - 1))),))
+        @test ts isa TimeseriesBase.RegularTimeseries
+        ta = TimedArray(ts)                                   # ext method: extracts the data
+        @test ta isa Dewdrop.TimedArray
+        p_ts = DewdropNetwork(m, N; input = 0.0, tspan = (0.0, dt * nsteps2), stimuli = ta)
+        p_vec = DewdropNetwork(m, N; input = 0.0, tspan = (0.0, dt * nsteps2), stimuli = TimedArray(vals))
+        @test solve(p_ts, FixedStep(dt)).spike_count == solve(p_vec, FixedStep(dt)).spike_count
+        # a 2-D Time × Neuron series → per-neuron N × nsteps signal (transposed at construction)
+        mat = [22.0 + 0.1 * i + 4.0 * sin(0.05 * k) for k in 0:(nsteps2 - 1), i in 1:N]
+        ts2 = ToolsArray(mat, (𝑡(0.0:dt:(dt * (nsteps2 - 1))), Dewdrop.Neuron(1:N)))
+        ta2 = TimedArray(ts2)
+        @test size(ta2.data) == (N, nsteps2)                 # (Time, Neuron) → (Neuron, Time)
+        @test ta2.data == permutedims(mat)
+    end
 end

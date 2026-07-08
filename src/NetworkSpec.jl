@@ -31,7 +31,7 @@ abstract type AbstractNetworkSpec end
 export AbstractNetworkSpec
 
 # structured spec: a frozen builder
-struct FrozenBuilder{A, T, MV, IV, PV, PSV, DR} <: AbstractNetworkSpec
+struct FrozenBuilder{A, T, MV, IV, PV, PSV, DR, SM} <: AbstractNetworkSpec
     arch::A
     tspan::Tuple{T, T}      # the default run window (overridable at solve)
     names::Vector{Symbol}
@@ -41,6 +41,7 @@ struct FrozenBuilder{A, T, MV, IV, PV, PSV, DR} <: AbstractNetworkSpec
     positions::PV
     projspecs::PSV          # Vector{_ProjSpec}: the retained projection recipes
     drive::DR
+    stimuli::SM             # extra AbstractStimulus inputs from `stimulate!` (whole-network)
 end
 
 """
@@ -53,7 +54,7 @@ a clean source for future batching. A snapshot; later mutation of `nb` does not 
 """
 freeze(nb::NetworkBuilder) = FrozenBuilder(
     nb.arch, nb.tspan, copy(nb.names), copy(nb.models),
-    copy(nb.sizes), copy(nb.inputs), copy(nb.positions), copy(nb.projspecs), nb.drive
+    copy(nb.sizes), copy(nb.inputs), copy(nb.positions), copy(nb.projspecs), nb.drive, Tuple(nb.stimuli)
 )
 export freeze
 
@@ -90,7 +91,7 @@ export materialize
 materialize(spec::FrozenBuilder, alg::FixedStep; tspan = nothing) =
     _build_network(
     spec.arch, tspan === nothing ? spec.tspan : tspan, spec.names, spec.models, spec.sizes,
-    spec.inputs, spec.positions, spec.projspecs, spec.drive
+    spec.inputs, spec.positions, spec.projspecs, spec.drive; stimuli = spec.stimuli
 )
 
 function materialize(spec::DeferredNetwork, alg::FixedStep; tspan = nothing)

@@ -55,6 +55,7 @@ pages = [
     "A full tour" => "guide/tour.md",
     "Guides" => [
         "Building networks" => "guide/networks.md",
+        "Inputs & stimuli" => "guide/inputs.md",
         "Neuron & synapse models" => "guide/models.md",
         "Custom models (@neuron)" => "guide/neuron-macro.md",
         "Connectivity & space" => "guide/connectivity.md",
@@ -63,6 +64,7 @@ pages = [
         "Batching & ensembles" => "guide/batching.md",
         "Plasticity (STDP)" => "guide/plasticity.md",
         "Analysis & observables" => "guide/analysis.md",
+        "Plotting" => "guide/plotting.md",
     ],
     "Performance" => [
         "Choosing a backend" => "guide/backends.md",

@@ -39,6 +39,7 @@ mutable struct NetworkBuilder{A <: AbstractArchitecture, T}
     const positions::Vector{Any}      # per-population positions vector or `nothing`
     const projspecs::Vector{_ProjSpec}
     drive::Any
+    const stimuli::Vector{Any}        # extra AbstractStimulus inputs added by `stimulate!` (whole-network)
 end
 
 """
@@ -54,7 +55,7 @@ function network(; arch::AbstractArchitecture = CPU(), tspan)
     T = float_type_of_tspan(tspan)
     return NetworkBuilder(
         arch, (T(to_time(tspan[1])), T(to_time(tspan[2]))),
-        Symbol[], Any[], Int[], Any[], Any[], _ProjSpec[], nothing
+        Symbol[], Any[], Int[], Any[], Any[], _ProjSpec[], nothing, Any[]
     )
 end
 function network(
@@ -178,6 +179,21 @@ function drive!(
 end
 export drive!
 
+"""
+    stimulate!(nb, stimulus) -> nb
+
+Attach an external [`AbstractStimulus`](@ref) --- a [`FunctionalCurrent`](@ref), [`TimedArray`](@ref),
+[`InhomogeneousPoisson`](@ref), analytic shape, … --- to the whole network. Repeatable; the stimuli compose
+with each other and with the populations' `input`, and are folded in at [`build`](@ref). Target a
+subpopulation by using a per-neuron form that is zero elsewhere (e.g. an `InhomogeneousPoisson` vector rate).
+See the [Inputs & stimuli](@ref) guide.
+"""
+function stimulate!(nb::NetworkBuilder, stimulus)
+    push!(nb.stimuli, stimulus)
+    return nb
+end
+export stimulate!
+
 # model merge
 # Merge the per-group models into one engine model. A single group, or several groups with the
 # identical model, stays a bare model (homogeneous fast path). Same-type groups that differ in some
@@ -300,7 +316,7 @@ materialise the projections. `input` overrides the per-population inputs with a 
 # override the builder's default duration). The dynamic boundary (heterogeneous models/projspecs) is here.
 function _build_network(
         arch, tspan, names, models, sizes, inputs, positions_in, projspecs, drive;
-        input = nothing, schedule::Schedule = default_schedule()
+        input = nothing, schedule::Schedule = default_schedule(), stimuli = ()
     )
     isempty(names) && error("network has no populations: add them with `population!`")
     N = sum(sizes)
@@ -315,13 +331,13 @@ function _build_network(
     return DewdropNetwork(
         model, N; input = in_, tspan = tspan, arch = arch,
         schedule = schedule, projections = projs, drive = drive, subpops = reg, positions = positions,
-        projlabels = labels
+        projlabels = labels, stimuli = Tuple(stimuli)
     )
 end
 
 build(nb::NetworkBuilder; input = nothing, schedule::Schedule = default_schedule()) =
     _build_network(
     nb.arch, nb.tspan, nb.names, nb.models, nb.sizes, nb.inputs, nb.positions, nb.projspecs,
-    nb.drive; input = input, schedule = schedule
+    nb.drive; input = input, schedule = schedule, stimuli = Tuple(nb.stimuli)
 )
 export build

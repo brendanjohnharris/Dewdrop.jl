@@ -89,3 +89,65 @@ end
 @inline _accumulate!(s::PoissonSourceState, gtot, itot, V) = _accumulate!(s.inner, gtot, itot, V)
 @inline _decay!(s::PoissonSourceState) = _decay!(s.inner)
 @inline _syn_one(s::PoissonSourceState, i, n, v, gtot, itot) = _syn_one(s.inner, i, n, v, gtot, itot)
+
+# * SpikeSourceArray: the DETERMINISTIC sibling of `PoissonSource`. Instead of drawing Poisson spikes each
+# step, it REPLAYS a precomputed pattern `spikes` (n_ext × nsteps, source × step) through the identical
+# scatter → delay-buffer → deliver pipeline, delegating the postsynaptic response to the wrapped synapse. Only
+# `_synprestep!` differs (a table read replaces the RNG draw); everything else is shared with PoissonSource.
+
+"""
+    SpikeSourceArray(synapse, extconn, spikes)
+
+An external drive that REPLAYS a fixed spike pattern (rather than drawing them): `spikes` is an `n_ext × nsteps`
+boolean matrix (virtual source × step), scattered each step through `extconn` (an `n_ext × N` CSR of per-edge
+weights + delays) into the wrapped `synapse`'s state. Deterministic (no RNG); the postsynaptic kinetics are
+exactly `synapse`'s, so it composes with any synapse family + per-edge delays. Add to a network as
+`Projection(SpikeSourceArray(...), Dewdrop._empty_csr(arch, N))`; batched runs share the pattern across columns.
+"""
+struct SpikeSourceArray{S <: AbstractSynapseModel, C, SP} <: AbstractSynapseModel
+    synapse::S       # inner postsynaptic synapse model (its kinetics define the response)
+    extconn::C       # n_ext virtual sources → post indices (per-edge weights + delays)
+    spikes::SP       # n_ext × nsteps replay pattern (source × step, boolean)
+end
+export SpikeSourceArray
+
+struct SpikeSourceArrayState{IS <: AbstractSynapseState, EC, CC, BUF, MV, SP} <: AbstractSynapseState
+    inner::IS
+    extconn::EC
+    conn::CC         # empty outer CSR → the per-state network scatter is a no-op
+    buf::BUF         # === inner.buf: events land here via `_synprestep!`, read by `_deliver!(inner, …)`
+    spiked::MV       # per-source firing-mask scratch (length n_ext), filled from `spikes` each step
+    spikes::SP       # device n_ext × nsteps replay pattern
+end
+Adapt.@adapt_structure SpikeSourceArrayState
+
+function _make_synstate(arch, syn::SpikeSourceArray, conn, ::Type{T}, N, dt) where {T}
+    ext = _resolve_delays(syn.extconn, dt)
+    inner = _make_synstate(arch, syn.synapse, ext, T, N, dt)
+    spiked = fill!(allocate(arch, Bool, npre(ext)), false)
+    return SpikeSourceArrayState(inner, ext, conn, inner.buf, spiked, on_architecture(arch, syn.spikes))
+end
+
+# Batched (N,B) replay state (struct `BatchedSpikeSourceArrayState` in src/Batch.jl); the pattern is shared
+# across the B columns, mirroring the batched Poisson source's shared draw.
+function _make_batched_synstate(arch, syn::SpikeSourceArray, conn, ::Type{T}, N, B, dt, over) where {T}
+    ext = _resolve_delays(syn.extconn, dt)
+    inner = _make_batched_synstate(arch, syn.synapse, ext, T, N, B, dt, over)
+    spiked = fill!(allocate(arch, Bool, npre(ext), Int(B)), false)
+    return BatchedSpikeSourceArrayState(inner, ext, conn, inner.buf, spiked, on_architecture(arch, syn.spikes))
+end
+
+# Once per step: copy this step's precomputed firing column (`n` 0-based → column n+1) into the scratch mask
+# and scatter it through `extconn` into the wrapped synapse's buffer (the SAME scatter path as real spikes;
+# copying into the scratch, rather than passing a device view to `scatter!`, keeps the device path allocation-
+# and scalar-index-free; `sync = false` pipelines it on the device stream, like the Poisson source).
+@inline function _synprestep!(s::SpikeSourceArrayState, integ)
+    n = integ.n
+    s.spiked .= view(s.spikes, :, n + 1)
+    scatter!(s.buf, s.extconn, s.spiked, n; sync = false)
+    return nothing
+end
+@inline _deliver!(s::SpikeSourceArrayState, integ) = _deliver!(s.inner, integ)
+@inline _accumulate!(s::SpikeSourceArrayState, gtot, itot, V) = _accumulate!(s.inner, gtot, itot, V)
+@inline _decay!(s::SpikeSourceArrayState) = _decay!(s.inner)
+@inline _syn_one(s::SpikeSourceArrayState, i, n, v, gtot, itot) = _syn_one(s.inner, i, n, v, gtot, itot)
