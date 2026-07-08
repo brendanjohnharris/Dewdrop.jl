@@ -62,18 +62,18 @@ the per-neuron compute dominates the sparse scatter.
   thread counts (run single-threaded for byte-exact reproducibility; the dynamics are statistically
   identical otherwise).
 - `Turbo` is **spike-identical** but not bit-identical: SIMD `exp` (SLEEF) differs from scalar `libm`
-  `exp` at the ULP level (`max|ΔV|` ~ 1e-5–1e-1 over a run).
+  `exp` at the ULP level (`max|ΔV|` ~ 1e-5 to 1e-1 over a run).
 
 ## GPU spike scatter (`scatter = :auto`)
 
 On the GPU the synaptic scatter has two strategies, selected automatically by `scatter = :auto` (the
 default):
 
-- **`:edge`** — one thread per synapse. Saturates the device at small/medium sizes, but reads a source
+- **`:edge`**: one thread per synapse. Saturates the device at small/medium sizes, but reads a source
   index for *every* edge each step (Θ(nedges) memory traffic regardless of firing), so once the
   connectome's index arrays spill the L2 cache the step becomes bandwidth-bound and a very large network
   degrades superlinearly.
-- **`:compacted`** — processes only the out-edges of neurons that actually spiked (work ∝ spikes, for the
+- **`:compacted`**: processes only the out-edges of neurons that actually spiked (work ∝ spikes, for the
   usual sparse firing), at the cost of one per-step device→host sync. Far faster on large networks, a
   small loss on small ones (the sync dominates when the step is launch-bound).
 

@@ -27,7 +27,7 @@ struct SparseCSR{
         RV <: AbstractVector{<:Integer},
         PV <: AbstractVector{<:Integer},
         WV <: AbstractVector,
-        DV <: AbstractVector{<:Real},   # Int = resolved steps (hot path); Float = unresolved ms delays
+        DV <: AbstractVector{<:Real},   # Int = resolved steps (per step); Float = unresolved ms delays
     } <: AbstractConnectivity
     rowptr::RV   # length npre + 1, 1-based: out-edges of pre i are rowptr[i]:rowptr[i+1]-1
     post::PV     # length nedges, postsynaptic target indices
@@ -47,7 +47,7 @@ export SparseCSR
 # Delay units. A synaptic delay is a PHYSICAL TIME (ms) by default (the same units as `dt` and
 # every other quantity), resolved to integer steps at the solve `dt`, so its meaning is dt-independent.
 # `steps(n)` is the escape for an exact step count. The connectome stores the delay AS GIVEN (Float ms or
-# Int steps); `init` resolves it via [`_resolve_delays`](@ref) once `dt` is known (the hot-path scatter
+# Int steps); `init` resolves it via [`_resolve_delays`](@ref) once `dt` is known (the per-step scatter
 # always reads the resolved integer-step connectome). ---
 struct Steps
     n::Int
@@ -83,7 +83,7 @@ function SparseCSR(
         counts[e[1]] += 1
     end
     # `index_type = Int32` halves the rowptr/post/delay bandwidth on the scatter (the
-    # bandwidth-bound hot path): safe whenever nedges < 2^31. Counts/positions are computed in
+    # bandwidth-bound inner loop): safe whenever nedges < 2^31. Counts/positions are computed in
     # `Int` and stored narrowed.
     rowptr = Vector{IT}(undef, npre + 1)
     rowptr[1] = 1
@@ -134,7 +134,7 @@ _empty_csr(arch, N) = SparseCSR(arch, Tuple{Int, Int, Float64, Int}[]; npre = N,
 
 Resolve a connectome's delays to integer time steps at the solve `dt`. Explicit-step (Int) delays pass
 through unchanged (the identity); physical (Float ms) delays convert via [`_ms_to_steps`](@ref) into the
-connectome's index type. Called once at `init`, so the hot-path scatter always reads integer steps.
+connectome's index type. Called once at `init`, so the per-step scatter always reads integer steps.
 """
 function _resolve_delays(conn::SparseCSR, dt)
     eltype(conn.delay) <: Integer && return conn     # explicit steps → identity (already resolved)

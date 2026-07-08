@@ -34,7 +34,7 @@ solve!
 
 ## The network builder
 
-The fluent way to assemble multi-population networks with named subpopulations; see [building
+Assemble multi-population networks with named subpopulations; see [building
 networks](guide/networks.md).
 
 ```@docs

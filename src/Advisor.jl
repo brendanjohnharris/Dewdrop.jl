@@ -14,7 +14,7 @@ const _RUNTIME_DONE = Ref(false)   # runtime advice needs a device reduction; do
     set_advice!(on::Bool)
 
 Enable or disable the performance advisor globally (default `true`). Disabling also skips the
-device reduction the runtime advice needs, so it is free on a hot path. Per-call override:
+device reduction the runtime advice needs, so it is free in the inner loop. Per-call override:
 `solve(prob, alg; advise = false)`.
 """
 set_advice!(on::Bool) = (_ADVISE[] = on; on)

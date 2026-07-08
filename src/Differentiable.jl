@@ -18,7 +18,7 @@
 # weights trainable in CONNECTED / recurrent nets: build the connectome with a `Dual`/`Active` weight eltype
 # and the gradient flows to the weights (and, through `s_pre`, back to the presynaptic voltages). NEXT STEPS
 # (designed, not yet built): an Enzyme weak-dep extension for scalable reverse-mode (many weights); and the
-# GPU path (Enzyme through the KA megakernel — the open hardware question).
+# GPU path (Enzyme through the KA megakernel; the open hardware question).
 
 # the surrogate: a smooth, in-[0,1] replacement for the Heaviside threshold at the model's Vθ
 """
@@ -40,7 +40,7 @@ stand-in for the spike indicator, with steepness `β`. As `β → ∞` it approa
 """
 @inline surrogate_spike(m, V, β) = inv(one(V) + exp(-β * (V - threshold_voltage(m))))
 
-# soft spike-triggered adaptation bump — the real-valued-`s` mirror of `_spike_aux`: `w + s·Δ`
+# soft spike-triggered adaptation bump; the real-valued-`s` mirror of `_spike_aux`: `w + s·Δ`
 # (with `s ∈ {0,1}` this equals the hard `ifelse(spiked, w + Δ, w)`).
 @inline _diff_spike_aux(m, ::Nothing, s) = nothing
 @inline _diff_spike_aux(m, w, s) = w + s * spike_increment(m)
@@ -80,7 +80,7 @@ stand-in for the spike indicator, with steepness `β`. As `β → ∞` it approa
 end
 
 # Surrogate-weighted scatter: the connected-training seam. Deposit `weight·s_pre` into the delay ring,
-# UNGATED — a serial per-edge walk (the differentiable path is CPU-only and single-threaded, so no atomics,
+# UNGATED: a serial per-edge walk (the differentiable path is CPU-only and single-threaded, so no atomics,
 # AD-safe). The regular `scatter!` gates on `spiked[pre] || continue`, which a real-valued / `Dual` surrogate
 # spike cannot take; here `iszero(s)` short-circuits the exact-zero (refractory / far-subthreshold) case,
 # recovering the spike sparsity without a boolean gate. Differentiable through BOTH `weight[e]` (→ trainable

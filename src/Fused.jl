@@ -1,4 +1,4 @@
-# * Fused device step: the launch-bound fix for the GPU hot path.
+# * Fused device step: the launch-bound fix for the GPU step kernel.
 #
 # At small/medium N the per-step cost is dominated by KERNEL LAUNCHES, not compute: the
 # broadcast-per-phase engine issues ~10 dense launches per step (deliver, drive, accumulate,

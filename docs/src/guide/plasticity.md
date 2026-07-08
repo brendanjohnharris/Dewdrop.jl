@@ -59,7 +59,7 @@ STDP also needs a *recurrent* projection (`npre == npost`); this too is checked 
 
 ## Attaching a rule
 
-With the fluent [builder](networks.md), pass `plasticity =` to [`project!`](@ref):
+With the [builder](networks.md), pass `plasticity =` to [`project!`](@ref):
 
 ```julia
 nb = network(; arch = CPU(), tspan = (0.0, 1000.0))

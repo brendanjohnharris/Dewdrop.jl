@@ -47,12 +47,12 @@ function BatchedRing(arch, ::Type{T}, N::Integer, B::Integer, maxdelay::Integer)
     return BatchedRing(fill!(allocate(arch, T, Int(N), Int(B), L), zero(T)), L)
 end
 
-# Batched synaptic state: ONE generic state (the (N,B) analogue of the scalar `SynState`) — accumulators
+# Batched synaptic state: ONE generic state (the (N,B) analogue of the scalar `SynState`) holding accumulators
 # `(N,B)`, ring `(N_post,B,L)`, SHARED connectivity, the synapse model (dispatches the descriptor hooks),
-# and the coefficients. The coefficients are EITHER a uniform NamedTuple (the no-sweep default — a scalar
+# and the coefficients. The coefficients are EITHER a uniform NamedTuple (the no-sweep default: a scalar
 # per coefficient, held by value in the isbits struct → GPU-uniform, byte-identical to a scalar solve) OR a
 # `ColCoeffs` of length-B per-column device vectors (a per-member parameter sweep). The per-synapse physics
-# is the SAME `_syn_kinetics` the scalar path uses, so batchability of ANY parameter is generic — no
+# is the SAME `_syn_kinetics` the scalar path uses, so batchability of ANY parameter is generic; no
 # per-synapse batched type, no `_col`, no per-parameter plumbing.
 struct BatchedSyn{S <: AbstractSynapseModel, ACC <: NamedTuple, R, C, K} <: AbstractSynapseState
     model::S
@@ -64,7 +64,7 @@ end
 Adapt.@adapt_structure BatchedSyn
 
 # Per-column coefficients (a per-member sweep): a NamedTuple of length-B device vectors, resolved to a
-# per-member scalar NamedTuple at column `b`. A plain NamedTuple (the no-sweep default) ignores `b` — the
+# per-member scalar NamedTuple at column `b`. A plain NamedTuple (the no-sweep default) ignores `b`; the
 # same seam shape as `_resolve(m, i, b) = m` on the neuron side (bit-identical, zero-cost, GPU-uniform).
 struct ColCoeffs{NT <: NamedTuple}
     cols::NT
@@ -73,7 +73,7 @@ Adapt.@adapt_structure ColCoeffs
 @inline _resolve_coeffs(c::NamedTuple, b) = c
 @inline _resolve_coeffs(c::ColCoeffs, b) = map(col -> (@inbounds col[b]), c.cols)
 
-# (N,B) accumulator read/write at cell (i,b) — the batched analogue of the scalar `_read_acc`/`_write_acc!`.
+# (N,B) accumulator read/write at cell (i,b); the batched analogue of the scalar `_read_acc`/`_write_acc!`.
 @inline _read_acc(acc::NamedTuple, i, b) = map(a -> (@inbounds a[i, b]), values(acc))
 @inline function _write_acc!(acc::NamedTuple, i, b, vals::Tuple)
     map((a, x) -> (@inbounds a[i, b] = x), values(acc), vals)
@@ -139,7 +139,7 @@ end
 
 # One generic batched synapse-state builder (replaces the five hand-written `_make_batched_synstate` AND all
 # of `_with_member_params`/`_mp`/`_col`): allocate the `(N,B)` accumulators named by `_syn_accumulators`,
-# size the batched ring, and build the coefficients — uniform when nothing is swept, else per-column.
+# size the batched ring, and build the coefficients: uniform when nothing is swept, else per-column.
 # `over` is a NamedTuple keyed by a physical field or a coefficient name → length-B values. (`PoissonSource`
 # keeps its own more-specific method, which forwards `over` to the inner synapse.)
 function _make_batched_synstate(arch, m::AbstractSynapseModel, conn, ::Type{T}, N, B, dt, over) where {T}
@@ -149,7 +149,7 @@ function _make_batched_synstate(arch, m::AbstractSynapseModel, conn, ::Type{T}, 
     return BatchedSyn(m, acc, buf, conn, _build_coeffs(arch, m, dt, Int(B), over, T))
 end
 
-# The batch coefficients: the uniform per-synapse coefficients (byte-identical to the scalar path — the exact
+# The batch coefficients: the uniform per-synapse coefficients (byte-identical to the scalar path; the exact
 # `_syn_coeffs` wrapping, NO blanket `T`) when nothing is swept, else a `ColCoeffs` of length-B device
 # vectors. `over` may key on a PHYSICAL parameter (τ, τr, τd, Erev, …) or a derived coefficient (a, decay_r,
 # …); a physical sweep re-derives the coefficients per member through the synapse's own `_syn_coeffs`.
@@ -186,7 +186,7 @@ end
 end
 # Generic batched per-cell contribution (replaces the five hand-written bodies): read + clear the ring slot,
 # resolve this member's coefficients (uniform → the shared NamedTuple; swept → the per-column values), then
-# apply the SAME `_syn_kinetics` the scalar `_syn_one` uses — the whole point of the collapse. Byte-identical
+# apply the SAME `_syn_kinetics` the scalar `_syn_one` uses; the whole point of the collapse. Byte-identical
 # to the prior `_col`-based bodies (a uniform coefficient equals `_col(scalar, b)`; a swept one equals
 # `_col(vector, b)`).
 @inline function _bsyn_one(s::BatchedSyn, i, b, n, v, gtot, itot)
@@ -325,7 +325,7 @@ end
 
 # CPU fast path. The batch axis is a NATURAL, contention-free parallelisation axis: distinct
 # columns write disjoint slabs `slots[:, b, :]`, so threading over `b` needs NO atomics and each
-# column accumulates in a fixed presynaptic order---DETERMINISTIC and bit-identical to a scalar
+# column accumulates in a fixed presynaptic order: DETERMINISTIC and bit-identical to a scalar
 # serial run regardless of thread count (unlike the GPU atomic scatter, which is order-dependent).
 function batched_scatter!(
         buf::BatchedRing{<:Array},

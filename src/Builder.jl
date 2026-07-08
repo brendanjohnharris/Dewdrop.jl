@@ -1,4 +1,4 @@
-# * Network builder: a small, fluent, mutating helper for constructing networks
+# * Network builder: a small, mutating helper for constructing networks
 # with named subpopulations. The builder accumulates an ordered list of populations
 # (`population!`), projections (`project!`), and an external drive (`drive!`), then `build`
 # assembles them into a flat `DewdropNetwork`: the populations are concatenated into one SoA in
@@ -182,8 +182,8 @@ export drive!
 """
     stimulate!(nb, stimulus) -> nb
 
-Attach an external [`AbstractStimulus`](@ref) --- a [`FunctionalCurrent`](@ref), [`TimedArray`](@ref),
-[`InhomogeneousPoisson`](@ref), analytic shape, … --- to the whole network. Repeatable; the stimuli compose
+Attach an external [`AbstractStimulus`](@ref) (a [`FunctionalCurrent`](@ref), [`TimedArray`](@ref),
+[`InhomogeneousPoisson`](@ref), analytic shape, …) to the whole network. Repeatable; the stimuli compose
 with each other and with the populations' `input`, and are folded in at [`build`](@ref). Target a
 subpopulation by using a per-neuron form that is zero elsewhere (e.g. an `InhomogeneousPoisson` vector rate).
 See the [Inputs & stimuli](@ref) guide.

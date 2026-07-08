@@ -4,8 +4,8 @@ CurrentModule = Dewdrop
 
 # Inputs & stimuli
 
-Every external input to a network --- a constant current, a Poisson background drive, membrane noise, a
-time-varying waveform, a replayed spike train --- is an `AbstractStimulus` applied at one point in the
+Every external input to a network (a constant current, a Poisson background drive, membrane noise, a
+time-varying waveform, a replayed spike train) is an `AbstractStimulus` applied at one point in the
 per-neuron step. The three most common are exposed as keyword sugar on [`DewdropNetwork`](@ref) and the
 builder; everything else is passed through `stimuli =`.
 
@@ -105,7 +105,7 @@ pulses(amplitude = 0.5, period = 0.1, width = 0.02)
 
 !!! note "Functional vs. tabulated"
     Use a `FunctionalCurrent` for closed-form / analytic signals (no memory, evaluated live). For recorded or
-    precomputed data, use a [`TimedArray`](@ref) --- it reads a device array by step index rather than
+    precomputed data, use a [`TimedArray`](@ref): it reads a device array by step index rather than
     calling a function.
 
 ### Tabulated (`TimedArray`)
@@ -169,8 +169,8 @@ fig
 ## Spike replay
 
 [`SpikeSourceArray`](@ref) replays a fixed spike pattern (an `n_ext × nsteps` boolean matrix) through virtual
-sources wired by an external connectome, delivering through any synapse model with per-edge delays --- the
-deterministic sibling of [`PoissonSource`](@ref). It routes through the same scatter/delay pipeline as real
+sources wired by an external connectome, delivering through any synapse model with per-edge delays (the
+deterministic sibling of [`PoissonSource`](@ref)). It routes through the same scatter/delay pipeline as real
 spikes, so the postsynaptic kinetics are exactly the wrapped synapse's.
 
 ```julia
@@ -199,6 +199,6 @@ DewdropNetwork(LIF(), N; input = fill(0.1, N), tspan = tspan,
   ensemble members); a shared stream reproduces the scalar run exactly.
 - **GPU safety.** Array-backed stimuli (`TimedArray`, matrix/vector `InhomogeneousPoisson`, `SpikeSourceArray`)
   move to the run architecture automatically. A `FunctionalCurrent` is GPU-safe when its function is isbits;
-  capture only isbits data (avoid closing over a host array --- use a `TimedArray` for tabulated data).
+  capture only isbits data (avoid closing over a host array; use a `TimedArray` for tabulated data).
 - **Validation.** Shapes are checked against `(N, nsteps)` at `init`, so a too-short `TimedArray` or a
   mis-sized rate matrix raises a clear error before the run.

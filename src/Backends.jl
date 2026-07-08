@@ -59,13 +59,13 @@ struct Turbo <: SimBackend end
 A surrogate-gradient execution backend that makes a CPU run **automatically differentiable**: it
 replaces the discontinuous spike (hard threshold + reset + integer count) with a smooth fast-sigmoid
 surrogate `s = 1 / (1 + exp(-β·(V - Vθ)))`, a soft reset `V ← V - s·(V - Vr)`, and a real-valued spike
-accumulation. Everything else — the exact subthreshold propagator, the counter-based RNG — differentiates
+accumulation. Everything else (the exact subthreshold propagator, the counter-based RNG) differentiates
 as-is, so gradients of a scalar loss flow back to the model parameters through the whole time loop. Pair
 it with any AD tool: `ForwardDiff` for a few parameters, `Enzyme` reverse-mode for many (e.g. weights).
 
 `β` is the surrogate steepness (larger → closer to the true Heaviside, but stiffer gradients). The
 gradients are *approximate* gradients of the true discrete dynamics (standard surrogate-gradient
-training), so this is a distinct numerical path you opt into — every other backend is unaffected and
+training), so this is a distinct numerical path you opt into; every other backend is unaffected and
 stays bit-identical. **Connected networks are supported**: a surrogate-weighted scatter deposits
 `weight·s_pre`, so gradients flow to both the synaptic weights (build the connectome with a `Dual`/`Active`
 weight eltype) and the presynaptic voltages. CPU-only; a GPU surrogate-AD path is the documented next step.
@@ -79,7 +79,7 @@ export SimBackend, Auto, Serial, Fused, Turbo, Differentiable
 
 # The differentiable backend accumulates a REAL-valued surrogate spike, so `spiked` / `spike_count`
 # take the state float type instead of `Bool` / `Int`. Every other backend keeps `Bool` / `Int`, so the
-# default allocation — and therefore every existing run — is byte-for-byte unchanged.
+# default allocation (and therefore every existing run) is byte-for-byte unchanged.
 @inline _spiked_eltype(::SimBackend, ::Type{T}) where {T} = Bool
 @inline _spiked_eltype(::Differentiable, ::Type{T}) where {T} = T
 @inline _count_eltype(::SimBackend, ::Type{T}) where {T} = Int

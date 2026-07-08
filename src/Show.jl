@@ -1,8 +1,8 @@
 # * Beautiful, hierarchical REPL rendering. Every Dewdrop object renders to reflect the structure it
 # actually has: a leaf model (neuron / synapse) as a flat aligned parameter sheet; a composite model
 # (MultiModel / Heterogeneous), a network, a builder, or a solution as an indented tree whose nodes
-# are the real structural units. Purely host-side presentation: never in a kernel, never on the
-# hot path. Dispatch specificity does the routing: a composite's own `show` is more specific than the
+# are the real structural units. Purely host-side presentation: never in a kernel, never in the
+# inner loop. Dispatch specificity does the routing: a composite's own `show` is more specific than the
 # generic leaf method, so the tree intercepts automatically.
 #
 # Two forms per type: the rich `show(io, ::MIME"text/plain", x)` (the REPL result) and the compact
@@ -121,7 +121,7 @@ end
 _oneline(x) = sprint(show, x)     # a child's compact render, colour-free, for embedding in a tree head
 
 # Extra-stimulus rows (from `stimuli =` / `stimulate!`): a `stimuli (k)` parent with one terse child per
-# stimulus (its type name, not a full struct dump --- a TimedArray/rate matrix would flood the tree). No row
+# stimulus (its type name, not a full struct dump; a TimedArray/rate matrix would flood the tree). No row
 # when the tuple is empty. Shared by the network and builder/spec renderers.
 _stim_label(s) = string(nameof(typeof(s)))
 function _push_stimuli!(children, stimuli)

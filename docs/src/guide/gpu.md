@@ -170,5 +170,5 @@ end
 
 Approach 2 is robust by construction (it never puts a custom logger in the global slot); approach 1 is
 convenient when you always want the bar and are willing to register the logger first. Note that
-`invokelatest` on the `solve` call does *not* help --- GPUCompiler captures the compile world through a
+`invokelatest` on the `solve` call does *not* help: GPUCompiler captures the compile world through a
 generated-function path, not the runtime world.

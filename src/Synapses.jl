@@ -151,7 +151,7 @@ _syn_coeffs(s::FrozenDualExpSynapse, dt, ::Type{T}) where {T} =
 # is these two methods; `false` is a strong zero (gtot untouched, bit-identical + type-preserving).
 @inline _syn_membrane(::CurrentSynapse, acc, c, v) = (false, acc[1])
 @inline _syn_membrane(s::ConductanceSynapse, acc, c, v) = (acc[1], acc[1] * c.Erev)
-@inline _syn_membrane(::DeltaSynapse, acc, c, v) = (false, false)   # jump mode; never called in the hot path
+@inline _syn_membrane(::DeltaSynapse, acc, c, v) = (false, false)   # jump mode; never called in the inner loop
 @inline function _syn_membrane(s::DualExpSynapse, acc, c, v)
     g = c.a * (acc[2] - acc[1])
     return (g, g * c.Erev)

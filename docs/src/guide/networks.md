@@ -5,12 +5,12 @@ CurrentModule = Dewdrop
 # Building networks
 
 A Dewdrop simulation is a [`DewdropNetwork`](@ref): a flat struct-of-arrays population plus a tuple
-of synaptic [`Projection`](@ref)s. You rarely construct one by hand. The fluent builder accumulates
+of synaptic [`Projection`](@ref)s. You rarely construct one by hand. The builder accumulates
 named populations, projections and an external drive, then [`build`](@ref) assembles them into a
 single concretely-typed network. This page covers the builder, the named-subpopulation addressor, the
 automatic model merge, and the deferred network spec.
 
-## The fluent builder
+## The builder
 
 Begin with [`network`](@ref), add populations with [`population!`](@ref), wire them with
 [`project!`](@ref), optionally attach an external [`drive!`](@ref), then [`build`](@ref):
@@ -96,8 +96,8 @@ drive!(nb, :E, ConductanceSynapse(τ = 5.0, Erev = 0.0); rate = 8.0, n_ext = 100
 Give two synapse drives the same `fire_seed` (different `seed`) to make them a shared common-mode
 source: the same external spikes, independent fan-out.
 
-Beyond `drive!`, any input --- constant current, time-varying / functional waveforms, tabulated
-[`TimedArray`](@ref)s, [`InhomogeneousPoisson`](@ref), spike replay --- is an `AbstractStimulus` passed via
+Beyond `drive!`, any input (constant current, time-varying / functional waveforms, tabulated
+[`TimedArray`](@ref)s, [`InhomogeneousPoisson`](@ref), spike replay) is an `AbstractStimulus` passed via
 `stimuli =` on [`DewdropNetwork`](@ref). See the [Inputs & stimuli](@ref) guide.
 
 ### Assembling

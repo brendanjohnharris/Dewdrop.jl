@@ -46,7 +46,7 @@ end
 Adapt.@adapt_structure SynState
 
 # Read / write the accumulators at neuron `i` as a plain tuple. `map` over the NamedTuple's values unrolls
-# at compile time (isbits tuple in/out, allocation-free, GPU-kernel-safe — the same shape as `_resolve`).
+# at compile time (isbits tuple in/out, allocation-free, GPU-kernel-safe; the same shape as `_resolve`).
 @inline _read_acc(acc::NamedTuple, i) = map(a -> (@inbounds a[i]), values(acc))
 @inline function _write_acc!(acc::NamedTuple, i, vals::Tuple)
     map((a, x) -> (@inbounds a[i] = x), values(acc), vals)
@@ -404,7 +404,7 @@ end
 end
 
 # Propagate through the compaction seam so `scatter = :compacted` is honoured on EVERY backend
-# (the CPU broadcast path included), matching the fused GPU path and the batched path---not a
+# (the CPU broadcast path included), matching the fused GPU path and the batched path, not a
 # silent no-op. `nothing` → edge-parallel scatter; a CompactionScratch → the compacted scatter.
 @inline run_phase!(::Val{:propagate}, integ::DewdropIntegrator) = _propagate_step!(integ.compaction, integ)
 

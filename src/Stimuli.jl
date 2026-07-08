@@ -1,5 +1,5 @@
-# * Unified stimulus seam. Every external input --- constant current, Poisson voltage drive, OU membrane
-# noise, and the new time-varying / functional / inhomogeneous families --- is an `AbstractStimulus` applied
+# * Unified stimulus seam. Every external input (constant current, Poisson voltage drive, OU membrane
+# noise, and the new time-varying / functional / inhomogeneous families) is an `AbstractStimulus` applied
 # at ONE point in the per-neuron step: `:current`/`:conductance` fold into `itot`/`gtot` at accumulate,
 # `:kick` into `v` at deliver, `:noise` into `v` at the membrane step. A compile-time `stim_point` trait plus
 # point-filtered tuple unrolls generate the Serial / fused / GPU / batched paths from ONE source (mirroring
@@ -57,7 +57,7 @@ stim_point(::Type{S}) where {S <: AbstractStimulus} = error("$(nameof(S)) must d
 @inline _cur1(::Val{:current}, acc, s, r, x) = _curΣ(acc + stim_current(s, x), r, x)
 
 # Fold a conductance (Δg or Δi) into an accumulator. The strong-zero `false` (an all-non-conductance unroll)
-# is the IDENTITY: returns the accumulator UNTOUCHED, preserving a signed zero --- unlike `x + false`, which
+# is the IDENTITY: returns the accumulator UNTOUCHED, preserving a signed zero; unlike `x + false`, which
 # flips -0.0 → +0.0. Keeps the conductance append a byte-identical no-op when no :conductance stimulus exists.
 @inline _addcond(x, ::Bool) = x
 @inline _addcond(x, Δ) = x + Δ
@@ -194,7 +194,7 @@ _validate_stimuli(t::Tuple, N, nsteps, dt) = foreach(s -> stim_validate(s, N, ns
 # ─────────────────────────── FunctionalCurrent / FunctionalKick / FunctionalConductance (live f) ───────────
 # Normalise a user input function to the canonical (i, t) call form: a 2-arg `f(i, t)` passes through, a 1-arg
 # `f(t)` is wrapped uniform over neurons. Arity is resolved ONCE (host-side, at construction), so the per-neuron
-# call is a plain static dispatch --- GPU-safe when the wrapped `f` is isbits (a bare function or a closure over
+# call is a plain static dispatch; GPU-safe when the wrapped `f` is isbits (a bare function or a closure over
 # isbits data). `_Uniform` is a struct (not a closure) so `Adapt` moves it cleanly onto the device.
 struct _Uniform{F}
     f::F
@@ -239,7 +239,7 @@ export FunctionalKick
     FunctionalConductance(f; Erev)
 
 A live prescribed conductance `g = f(t)` / `f(i, t)` with reversal potential `Erev`, folded COBA-style into
-the membrane (`g` into the effective leak, `g·Erev` into `itot`) --- an external, stateless conductance input
+the membrane (`g` into the effective leak, `g·Erev` into `itot`); an external, stateless conductance input
 (distinct from a conductance SYNAPSE, which is a projection). GPU-safety as [`FunctionalCurrent`](@ref).
 """
 struct FunctionalConductance{F, T} <: AbstractStimulus

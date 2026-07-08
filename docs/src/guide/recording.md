@@ -53,7 +53,7 @@ Per-unit monitors take an `of` selector and every monitor takes an `every` strid
 - `of = :all` (the default) records every unit.
 - `of = [1, 5, 9]` records an explicit index vector.
 - `of = :E` records a named subpopulation; the symbol resolves against the registry built by the
-  [fluent builder](networks.md), and an unknown name errors with the available names listed.
+  [network builder](networks.md), and an unknown name errors with the available names listed.
 - `every = k` samples once every `k` steps, so the recorded array has `cld(nsteps, k)` columns.
 
 ```julia

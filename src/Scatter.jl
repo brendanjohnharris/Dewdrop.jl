@@ -1,4 +1,4 @@
-# * Event-driven sparse scatter: the spike-propagation hot path, written ONCE as a
+# * Event-driven sparse scatter: the spike-propagation inner loop, written ONCE as a
 # KernelAbstractions kernel so the same source runs on CPU (`@threads`) and GPU (PTX/AIR).
 # One thread per presynaptic neuron; spiking neurons walk their CSR row and deposit each
 # synapse's weight into the delay ring buffer at (now + per-synapse delay), accumulating with

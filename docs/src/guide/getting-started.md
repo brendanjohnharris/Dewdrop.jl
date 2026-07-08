@@ -139,11 +139,11 @@ instantaneous kick of `weight`, drawn reproducibly from `(seed, step, neuron)`.
 
 For current- and conductance-based synapses ([`CurrentSynapse`](@ref), [`ConductanceSynapse`](@ref))
 and named subpopulations with typed `:E => :I` projections, see [synapses and
-connectivity](connectivity.md) and the [fluent builder](networks.md).
+connectivity](connectivity.md) and the [network builder](networks.md).
 
 ## Where to go next
 
-- [Building networks](networks.md): the fluent [`network`](@ref) / [`population!`](@ref) /
+- [Building networks](networks.md): the [`network`](@ref) / [`population!`](@ref) /
   [`project!`](@ref) / [`build`](@ref) builder, named subpopulations, and spatial layouts.
 - [Inputs & stimuli](inputs.md): time-varying / functional currents, [`TimedArray`](@ref),
   [`InhomogeneousPoisson`](@ref), and [`SpikeSourceArray`](@ref) spike replay.

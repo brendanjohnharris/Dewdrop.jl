@@ -24,10 +24,10 @@ nothing # hide
 
 ## 1. Build a network
 
-The fluent builder assembles a network from named subpopulations and typed projections. Here is a
+The builder assembles a network from named subpopulations and typed projections. Here is a
 balanced excitatory/inhibitory network with conductance-based ([`ConductanceSynapse`](@ref), COBA)
 synapses, wired with random [`fixed_prob`](@ref) connectivity and sustained by an external
-[`PoissonDrive`](@ref). The four projections give the classic Vogels–Abbott recurrent structure.
+[`PoissonDrive`](@ref). The four projections give the classic Vogels-Abbott recurrent structure.
 
 ```@example tour
 NE, NI = 320, 80
@@ -94,7 +94,7 @@ fig
 ## 3. Batching: parameter sweeps
 
 An **ensemble** co-executes `B` network instances over one shared connectome in a single fused solve,
-`O(edges)` in memory. Pass `syn_overrides` (or `model_overrides`) to vary a parameter per member —
+`O(edges)` in memory. Pass `syn_overrides` (or `model_overrides`) to vary a parameter per member:
 **physical parameters go in directly** and Dewdrop derives the per-member coefficients, so any synapse
 or neuron parameter can be swept with no boilerplate. Here we sweep the excitatory synaptic time
 constant `τ` across twelve members of a smaller single-population network:
@@ -131,7 +131,7 @@ The whole sweep is one launch: slower excitatory synapses integrate more input, 
 The [`Differentiable`](@ref) backend makes a run automatically differentiable: it replaces the hard
 spike with a smooth surrogate and deposits `weight · s` through a surrogate-weighted scatter, so
 gradients flow to the **synaptic weights of a connected network** (and to neuron parameters). Pair it
-with any autodiff tool — `ForwardDiff` for a few parameters, `Enzyme` for many.
+with any autodiff tool: `ForwardDiff` for a few parameters, `Enzyme` for many.
 
 Here we train a recurrent network's synaptic weight, by gradient descent, to *raise* its population rate
 to a target. Building the network inside the loss at the differentiated element type lets a
@@ -165,8 +165,8 @@ axislegend(ax; position = :rt)
 fig
 ```
 
-The rate climbs from ≈ 7 Hz to the 18 Hz target as the recurrent weight is tuned from 0.5 to ≈ 1.3 — a
-full surrogate-gradient training loop on a connected spiking network, in a few lines. For many trainable
+The rate climbs from ≈ 7 Hz to the 18 Hz target as the recurrent weight is tuned from 0.5 to ≈ 1.3 (a
+full surrogate-gradient training loop on a connected spiking network, in a few lines). For many trainable
 weights, swap `ForwardDiff` for `Enzyme` reverse-mode. See [choosing a backend](backends.md) for the
 backend family and its guarantees.
 
@@ -200,9 +200,9 @@ the whole population, and the raster fills in to match the rate trajectory above
 
 ## Where to go next
 
-- [Building networks](networks.md) — the builder, named subpopulations, and spatial layouts.
-- [Neuron & synapse models](models.md) — the model zoo, [`Heterogeneous`](@ref) parameters, and [`@neuron`](@ref).
-- [Batching & ensembles](batching.md) — parameter sweeps, distinct-topology batches, and analysis.
-- [Recording & outputs](recording.md) — monitors, on-device reducers, and labelled outputs.
-- [Running on the GPU](gpu.md) — flip `arch = GPU()` and run the same code on the device.
+- [Building networks](networks.md): the builder, named subpopulations, and spatial layouts.
+- [Neuron & synapse models](models.md): the model zoo, [`Heterogeneous`](@ref) parameters, and [`@neuron`](@ref).
+- [Batching & ensembles](batching.md): parameter sweeps, distinct-topology batches, and analysis.
+- [Recording & outputs](recording.md): monitors, on-device reducers, and labelled outputs.
+- [Running on the GPU](gpu.md): flip `arch = GPU()` and run the same code on the device.
 ```

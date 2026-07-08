@@ -45,7 +45,7 @@ export MultiModel
 Adapt.@adapt_structure MultiModel                              # moves each group model (isbits) + the ranges
 Base.Broadcast.broadcastable(m::MultiModel) = Ref(m)
 
-# union of the groups' statevars, first-seen order (so :V, :refrac lead). Not in the hot path ---
+# union of the groups' statevars, first-seen order (so :V, :refrac lead). Not in the inner loop:
 # the SoA columns are built by the type-stable `Population(arch, ::MultiModel, N)` below.
 function statevars(::Type{MM}) where {MM <: MultiModel}
     MS = MM.parameters[1]

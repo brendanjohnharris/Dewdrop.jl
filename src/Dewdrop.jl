@@ -28,7 +28,7 @@ include("Monitors.jl")
 include("TemporalReducers.jl")  # streaming on-device temporal statistics (madev / Welch); fused into recording
 include("Noise.jl")
 include("Stimuli.jl")           # unified AbstractStimulus seam (input/drive/noise + time-varying/functional)
-include("Backends.jl")          # execution backends (Auto/Serial/Fused/Turbo) — types before the integrator
+include("Backends.jl")          # execution backends (Auto/Serial/Fused/Turbo); types before the integrator
 include("Progress.jl")          # host-side progress reporting (ProgressLogging convention) for solve!
 include("Engine.jl")
 include("Fused.jl")
@@ -45,6 +45,6 @@ include("BlockBatch.jl")        # batching: run B members together (block-diagon
 include("FFT.jl")               # self-contained DFT/FFT for the spectral observables
 include("Stats.jl")             # statistical observables (host-side spatial-network analysis)
 include("Plotting.jl")          # plotting front-end stubs; methods in the weak-dep TimeseriesMakie ext
-include("Show.jl")              # beautiful hierarchical REPL rendering (Base.show); last — renders every type above
+include("Show.jl")              # hierarchical REPL rendering (Base.show); included last, so it renders every type above
 
 end # module Dewdrop

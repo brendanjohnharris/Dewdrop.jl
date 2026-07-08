@@ -25,8 +25,8 @@ target, the weight, and the delay. You rarely build it by hand; the rules below 
 | weight | per-synapse weight (sign sets excitatory/inhibitory) |
 | delay | per-synapse conduction delay; ms (Float) or integer steps (Int) until resolved |
 
-(The other fields---`rowptr`, `post`, `src`, `maxdeg`, `npre`, `npost`---are bookkeeping for the
-CSR layout.) `index_type` is not a stored field but a constructor keyword: passing `index_type =
+(The other fields are bookkeeping for the CSR layout: `rowptr`, `post`, `src`, `maxdeg`, `npre`,
+`npost`.) `index_type` is not a stored field but a constructor keyword: passing `index_type =
 Int32` narrows the `rowptr`/`post`/`delay` (step-delay) index arrays, halving the bandwidth of the
 bandwidth-bound scatter; safe whenever `nedges < 2^31` (`Int` is the default).
 
@@ -111,7 +111,7 @@ are never selected.
 
 ## Delays: milliseconds versus steps
 
-A delay is a physical time by default---the same units as `dt` and every other quantity---so its
+A delay is a physical time by default (the same units as `dt` and every other quantity), so its
 meaning is independent of the solve step. A bare number is milliseconds, resolved to an integer step
 count at `init` once `dt` is known (`round(ms / dt)`, clamped to at least one step). For an exact
 step count, wrap it with [`steps`](@ref):
@@ -123,7 +123,7 @@ delay = steps(5)     # exactly 5 steps regardless of dt
 
 [`steps`](@ref) requires `n ≥ 1`: the fixed-step engine delivers no earlier than the next step, so it
 cannot represent a within-step delay. Internally the connectome holds the delay as given (Float ms or
-Int steps) and the hot-path scatter always reads resolved integer steps; the delivery uses a ring
+Int steps) and the scatter always reads resolved integer steps; the delivery uses a ring
 buffer, so arbitrarily distinct per-synapse delays cost the same O(1) delivery as a single global one.
 
 ## Adjusting weights after building

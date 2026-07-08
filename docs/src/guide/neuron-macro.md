@@ -73,7 +73,7 @@ parameter promotes to a common float type:
 model = BiasLIF(; τ = 15.0, Ibias = 0.2)     # other parameters take their declared defaults
 ```
 
-It now behaves like any built-in model: pass it to [`DewdropNetwork`](@ref) (or the fluent
+It now behaves like any built-in model: pass it to [`DewdropNetwork`](@ref) (or the
 [builder](networks.md)) and [`solve`](@ref):
 
 ```julia
