@@ -32,6 +32,7 @@ Dewdrop.set_advice!(false)   # silence the perf advisor during the suite; test/a
     include("blockbatch.jl")        # batching: block-diagonal general path + batch(...) input forms
     include("addressing.jl")        # named-subpopulation registry + symbol reference API
     include("stats.jl")             # statistical observables + internal FFT
+    include("temporal_reducers.jl") # streaming on-device reducers (StreamingFano vs textbook definition)
     include("initial_conditions.jl")
     include("edge_cases.jl")
     include("macro.jl")

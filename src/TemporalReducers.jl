@@ -200,46 +200,79 @@ result(m::StreamingRate, nseen::Integer) = Array(m.count) ./ (nseen * m.dt)   # 
 # complete windows are counted (the trailing partial is dropped), and `result` forms `(nb·Σc² − (Σc)²)/((nb−1)·Σc)`
 # with `nb = floor(t_max/τ)`. (Origin 0 vs TimeseriesTools' per-neuron min-spike origin → agrees up to bin
 # alignment, not bit-identical.)
-struct StreamingFano{CU, AC, TV, T}
+struct StreamingFano{CU, AC, TV, KV, T}
     cum::CU      # (n_out, B): cumulative Σ spike(t) up to (not incl.) the current step
     cum_last::AC # (n_out, B, ntau): cum at each τ's last window boundary
     sumc::AC     # (n_out, B, ntau): Σ window counts
     sumc2::AC    # (n_out, B, ntau): Σ window counts²
-    taus::TV     # device vector of timescales (same time units as dt)
+    taus::TV     # device vector of timescales (same time units as dt); used only by `result`
+    close_k::KV  # device Int32 vector: the closing-τ indices for every recorded step, concatenated
+    close_off::Vector{Int}  # HOST offsets (nrec+1): step s closes `close_k[close_off[s]+1 : close_off[s+1]]`
     dt::T
 end
-Adapt.@adapt_structure StreamingFano
+# Device arrays follow the run architecture; `close_off` stays a host Vector (it sizes each step's launch).
+Adapt.adapt_structure(to, m::StreamingFano) = StreamingFano(
+    adapt(to, m.cum), adapt(to, m.cum_last), adapt(to, m.sumc), adapt(to, m.sumc2),
+    adapt(to, m.taus), adapt(to, m.close_k), m.close_off, m.dt,
+)
 
-function StreamingFano(arch, ::Type{T}, n_out::Integer, B::Integer, taus, dt::Real) where {T}
+# `nrec` upper-bounds the number of recorded samples (the `update!` step index `s ∈ 1:nrec`). The window-close
+# test `floor(t/τ) > floor((t−dt)/τ)` depends ONLY on `(τ, s)`, not on the neuron or member, so we precompute,
+# per step, exactly which timescales close a window (in the SAME Float32 arithmetic the kernel used). Each step
+# then folds only its few closing τ's instead of launching a thread per (i,b,τ) that re-derives the identical
+# test and mostly exits. Byte-identical result; the per-(i,b) redundancy and the idle threads are removed.
+function StreamingFano(arch, ::Type{T}, n_out::Integer, B::Integer, taus, dt::Real, nrec::Integer) where {T}
     tv = collect(T, taus)
     all(>(0), tv) || throw(ArgumentError("Fano timescales must be positive"))
     ntau = length(tv)
+    dtT = T(dt)
+    close_k = Int32[]
+    close_off = Vector{Int}(undef, Int(nrec) + 1)
+    close_off[1] = 0
+    @inbounds for s in 1:Int(nrec)
+        if s >= 2                                            # s = 1 completes no window (matches the old `s >= 2`)
+            t = T(s - 1) * dtT
+            for k in 1:ntau
+                (floor(t / tv[k]) > floor((t - dtT) / tv[k])) && push!(close_k, Int32(k))
+            end
+        end
+        close_off[s + 1] = length(close_k)
+    end
     z3() = fill!(allocate(arch, T, Int(n_out), Int(B), ntau), zero(T))
     return StreamingFano(
         fill!(allocate(arch, T, Int(n_out), Int(B)), zero(T)), z3(), z3(), z3(),
-        on_architecture(arch, tv), T(dt)
+        on_architecture(arch, tv), on_architecture(arch, close_k), close_off, dtT
     )
 end
 
-# One thread per (neuron, member, timescale): on a window boundary (this step's time entered a new τ-window),
-# fold the just-completed window's count into the per-τ moment sums. `cum` holds counts through step s−1.
-@kernel function _fano_step_kernel!(@Const(cum), cum_last, sumc, sumc2, @Const(taus), t, dt, s)
-    i, b, k = @index(Global, NTuple)
-    @inbounds if s >= 2
-        τ = taus[k]
-        if floor(t / τ) > floor((t - dt) / τ)                # crossed into a new window ⇒ previous one is complete
-            c = cum[i, b] - cum_last[i, b, k]
-            sumc[i, b, k] += c
-            sumc2[i, b, k] += c * c
-            cum_last[i, b, k] = cum[i, b]
-        end
+# Fold the windows that close THIS step: one thread per (neuron, member, closing-τ). The closing set is
+# precomputed, so there is no per-thread boundary test and no idle threads. `off` indexes this step's slice
+# of `close_k`. A τ closes at most once per step ⇒ threads write disjoint (i,b,k) cells (no races), and each
+# (i,b,k) is folded in step order ⇒ bit-identical to the old per-thread kernel.
+@kernel function _fano_fold_kernel!(@Const(cum), cum_last, sumc, sumc2, @Const(close_k), off)
+    i, b, j = @index(Global, NTuple)
+    @inbounds begin
+        k = close_k[off + j]
+        c = cum[i, b] - cum_last[i, b, k]
+        sumc[i, b, k] += c
+        sumc2[i, b, k] += c * c
+        cum_last[i, b, k] = cum[i, b]
     end
 end
 
 function update!(m::StreamingFano, xt::AbstractMatrix, s::Integer)
-    t = (Int(s) - 1) * m.dt                                   # time of sample s (0-based: 0, dt, 2dt, …)
-    _fano_step_kernel!(get_backend(m.cum))(m.cum, m.cum_last, m.sumc, m.sumc2, m.taus, t, m.dt, Int(s); ndrange = size(m.sumc))
-    m.cum .+= xt                                              # add step s AFTER the flush (cum was through s−1)
+    s = Int(s)
+    if s + 1 <= length(m.close_off)                         # in schedule range (always true under `solve!`)
+        off = m.close_off[s]                                # host lookup: this step's closing-τ slice
+        nc = m.close_off[s + 1] - off
+        if nc > 0                                           # skip the launch on steps that close no window
+            n_out, B, _ = size(m.sumc)
+            _fano_fold_kernel!(get_backend(m.cum))(
+                m.cum, m.cum_last, m.sumc, m.sumc2, m.close_k, off; ndrange = (n_out, B, nc)
+            )
+        end
+    end
+    m.cum .+= xt                                            # add step s AFTER the flush (cum was through s−1)
     return m
 end
 

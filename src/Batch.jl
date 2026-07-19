@@ -761,7 +761,7 @@ function _bmaterialize(spec::SpikeRate, arch, ::Type{T}, N, B, nsteps, dt) where
 end
 function _bmaterialize(spec::Fano, arch, ::Type{T}, N, B, nsteps, dt) where {T}
     idx = _resolve_idx(arch, spec.of)
-    red = StreamingFano(arch, T, _nsel(N, idx), Int(B), spec.taus, float(dt) * spec.every)
+    red = StreamingFano(arch, T, _nsel(N, idx), Int(B), spec.taus, float(dt) * spec.every, fld(Int(nsteps), spec.every) + 2)
     return BatchedTemporalMonitor(red, SpikeSrc(), idx, spec.transient, spec.every, 0, :fano)
 end
 

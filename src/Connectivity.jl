@@ -180,8 +180,10 @@ for a GPU one), and the result is written back in one bulk `copyto!`, so it work
 """
 function correlate_weights!(
         conn::SparseCSR, J::Real; targets = 1:npost(conn),
-        jitter::Real = 0.05, seed::Unsigned, count_empty::Bool = true
+        jitter::Real = 0.05, dist::Symbol = :gaussian, seed::Unsigned, count_empty::Bool = true
     )
+    dist in (:gaussian, :lognormal) ||
+        throw(ArgumentError("correlate_weights!: dist must be :gaussian or :lognormal (got :$dist)"))
     lo = first(targets)
     n = length(targets)
     post = Array(conn.post)          # host copy (no scalar device indexing); bulk on GPU, no-op-ish on CPU
@@ -202,9 +204,16 @@ function correlate_weights!(
     J_rec = sum_sqrt > 0 ? J * sum_k / sum_sqrt : 0.0
     T = eltype(conn.weight)
     w = Vector{T}(undef, length(post))
+    # Per-edge weight = wm · (unit-mean factor). Gaussian (default): 1 + jitter·z, bit-identical to the
+    # original `wm + z·jitter·wm`. Lognormal: exp(s·z − s²/2), s = √log(1+jitter²), so E[factor] = 1 and
+    # CV = jitter exactly --- a heavy right tail (few strong synapses) at FIXED mean, leaving the 1/√k balance
+    # untouched; `jitter` is the coefficient of variation for both. z is the same reproducible counter draw.
+    slog = dist === :lognormal ? sqrt(log1p(Float64(jitter)^2)) : 0.0
     @inbounds for e in eachindex(post)
         wm = J_rec / sqrt(k[Int(post[e]) - lo + 1])
-        w[e] = T(wm + draw_normal(Float64, seed, e, 0) * jitter * wm)
+        z = draw_normal(Float64, seed, e, 0)
+        factor = dist === :lognormal ? exp(slog * z - slog^2 / 2) : (1 + jitter * z)
+        w[e] = T(wm * factor)
     end
     copyto!(conn.weight, w)          # single bulk host→device write-back
     return conn
@@ -220,8 +229,8 @@ destination range, so the in-degree normalisation is taken over the actual post 
 `count_empty` selects the zero-in-degree convention (default `true` = BrainPy's `√max(k,1)`; see
 [`correlate_weights!`](@ref)).
 """
-correlate_weights(J::Real; jitter::Real = 0.05, seed::Unsigned, count_empty::Bool = true) =
-    (conn, ctx) -> correlate_weights!(conn, J; targets = ctx.targets, jitter = jitter, seed = seed, count_empty = count_empty)
+correlate_weights(J::Real; jitter::Real = 0.05, dist::Symbol = :gaussian, seed::Unsigned, count_empty::Bool = true) =
+    (conn, ctx) -> correlate_weights!(conn, J; targets = ctx.targets, jitter = jitter, dist = dist, seed = seed, count_empty = count_empty)
 export correlate_weights
 
 """
