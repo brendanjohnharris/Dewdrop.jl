@@ -8,7 +8,7 @@ using Random
 # the only difference is Float32 vs Float64 rounding in the final ratio.
 
 # Textbook Fano over nb = ⌊(nseen−1)/k⌋ windows of k steps: window m = spikes in steps (m−1)k+1 … mk.
-function fano_reference(spikes::AbstractArray{<:Real,3}, kwidths::Vector{Int}, nseen::Int)
+function fano_reference(spikes::AbstractArray{<:Real, 3}, kwidths::Vector{Int}, nseen::Int)
     n, B, _ = size(spikes)
     out = fill(NaN, n, B, length(kwidths))
     for (t, k) in enumerate(kwidths)
@@ -46,6 +46,6 @@ end
     @test size(got) == (n, B, length(kwidths))
     @test isnan.(got) == isnan.(ref)                      # same NaN pattern (silent units / < 2 windows)
     fin = isfinite.(ref)
-    @test Float64.(got[fin]) ≈ ref[fin] rtol = 1e-4       # Float32 reducer vs Float64 reference
+    @test Float64.(got[fin]) ≈ ref[fin] rtol = 1.0e-4       # Float32 reducer vs Float64 reference
     @test count(fin) > 0.5 * length(ref)                  # sanity: most entries are real Fano factors
 end

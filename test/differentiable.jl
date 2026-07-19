@@ -62,8 +62,10 @@ using ForwardDiff
             T = promote_type(typeof(R), typeof(w))
             m = LIF(; τ = T(20.0), EL = T(0.0), Vθ = T(20.0), Vr = T(0.0), R = T(R), tref = T(0.0))
             conn = fixed_prob(Dewdrop.CPU(), N, N, 0.3; weight = T(w), delay = steps(1), seed = UInt64(1), allow_self = false)
-            prob = DewdropNetwork(m, N; input = T(30.0), tspan = (0.0, 150.0),
-                projections = (Projection(CurrentSynapse(; τ = T(5.0)), conn),))
+            prob = DewdropNetwork(
+                m, N; input = T(30.0), tspan = (0.0, 150.0),
+                projections = (Projection(CurrentSynapse(; τ = T(5.0)), conn),)
+            )
             return sum(solve(prob, FixedStep(0.1); backend = Differentiable(; β = β)).spike_count)
         end
         @test netspikes(; R = 1.0, w = 0.3) > 0                              # the connected net fires

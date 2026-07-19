@@ -121,19 +121,19 @@ export FrozenDualExpSynapse
 # requirement: CUBA/COBA keep `synapse_decay` unwrapped; the dual-exp family wraps in `T`).
 
 # Per-target accumulator field names (`()` for a stateless voltage-jump synapse). K = length.
-_syn_accumulators(::Type{<:CurrentSynapse})       = (:Isyn,)
-_syn_accumulators(::Type{<:ConductanceSynapse})   = (:g,)
-_syn_accumulators(::Type{DeltaSynapse})           = ()
-_syn_accumulators(::Type{<:DualExpSynapse})       = (:g_rise, :g_decay)
+_syn_accumulators(::Type{<:CurrentSynapse}) = (:Isyn,)
+_syn_accumulators(::Type{<:ConductanceSynapse}) = (:g,)
+_syn_accumulators(::Type{DeltaSynapse}) = ()
+_syn_accumulators(::Type{<:DualExpSynapse}) = (:g_rise, :g_decay)
 _syn_accumulators(::Type{<:FrozenDualExpSynapse}) = (:g_rise, :g_decay)
 
 # Coupling mode: how a delivered event enters the cell. Drives the serial deliver skeleton and the
 # fused voltage-jump short-circuit. `:current` feeds itot only; `:conductance` feeds gtot + itot;
 # `:jump` is an instantaneous voltage jump with no accumulator (delta).
-_syn_couple(::Type{<:CurrentSynapse})       = Val(:current)
-_syn_couple(::Type{<:ConductanceSynapse})   = Val(:conductance)
-_syn_couple(::Type{DeltaSynapse})           = Val(:jump)
-_syn_couple(::Type{<:DualExpSynapse})       = Val(:conductance)
+_syn_couple(::Type{<:CurrentSynapse}) = Val(:current)
+_syn_couple(::Type{<:ConductanceSynapse}) = Val(:conductance)
+_syn_couple(::Type{DeltaSynapse}) = Val(:jump)
+_syn_couple(::Type{<:DualExpSynapse}) = Val(:conductance)
 _syn_couple(::Type{<:FrozenDualExpSynapse}) = Val(:current)   # frozen current g·(Erev−V), no shunt
 
 # Per-step derived coefficients, wrapped to EXACTLY the current stored eltype (byte-identity).

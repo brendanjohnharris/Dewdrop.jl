@@ -37,9 +37,11 @@ _saved(fig, name) = (p = joinpath(MPLOTDIR, name); save(p, fig); isfile(p))
         m = LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 0.0, R = 1.0, tref = 2.0)
         N, NE = 40, 30
         w(pre) = pre ≤ NE ? 0.6 : -1.2
-        conn = fixed_prob(CPU(), N, N, 0.08; weight = w, delay = steps(1), seed = 0x1, allow_self = false)
-        prob = DewdropNetwork(m, N; input = 25.0, tspan = (0.0, 300.0),   # suprathreshold (Vθ = 20)
-            projection = Projection(DeltaSynapse(), conn), subpops = (E = 1:NE, I = (NE + 1):N))
+        conn = fixed_prob(CPU(), N, N, 0.08; weight = w, delay = steps(1), seed = 0x01, allow_self = false)
+        prob = DewdropNetwork(
+            m, N; input = 25.0, tspan = (0.0, 300.0),   # suprathreshold (Vθ = 20)
+            projection = Projection(DeltaSynapse(), conn), subpops = (E = 1:NE, I = (NE + 1):N)
+        )
         sol = solve(prob, FixedStep(dt); record = (spikes = Spikes(), v = Trace(:V)))
 
         fig = Figure()
@@ -58,10 +60,14 @@ _saved(fig, name) = (p = joinpath(MPLOTDIR, name); save(p, fig); isfile(p))
     end
 
     @testset "phase plane (AdEx V-w)" begin
-        m = AdEx(; C = 200.0, gL = 10.0, EL = -70.0, VT = -50.0, ΔT = 2.0, Vr = -58.0,
-            Vpeak = 0.0, a = 2.0, b = 60.0, τw = 120.0, tref = 2.0)
-        sol = solve(DewdropNetwork(m, 3; input = 500.0, tspan = (0.0, 400.0)), FixedStep(dt);
-            record = (V = Trace(:V), w = Trace(:w)))
+        m = AdEx(;
+            C = 200.0, gL = 10.0, EL = -70.0, VT = -50.0, ΔT = 2.0, Vr = -58.0,
+            Vpeak = 0.0, a = 2.0, b = 60.0, τw = 120.0, tref = 2.0
+        )
+        sol = solve(
+            DewdropNetwork(m, 3; input = 500.0, tspan = (0.0, 400.0)), FixedStep(dt);
+            record = (V = Trace(:V), w = Trace(:w))
+        )
         @test _saved(phaseplane(sol; vars = (:V, :w), neuron = 1).figure, "adex_phaseplane.png")
     end
 
@@ -69,9 +75,11 @@ _saved(fig, name) = (p = joinpath(MPLOTDIR, name); save(p, fig); isfile(p))
         m = LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 0.0, R = 1.0, tref = 2.0)
         N = 60
         pos = random_positions(N, (1.0, 1.0); seed = UInt(7))            # per-dim side lengths
-        conn = fixed_prob(CPU(), N, N, 0.05; weight = 0.5, delay = steps(1), seed = 0x2, allow_self = false)
-        prob = DewdropNetwork(m, N; input = 1.2, tspan = (0.0, 100.0),
-            projection = Projection(DeltaSynapse(), conn), positions = pos)
+        conn = fixed_prob(CPU(), N, N, 0.05; weight = 0.5, delay = steps(1), seed = 0x02, allow_self = false)
+        prob = DewdropNetwork(
+            m, N; input = 1.2, tspan = (0.0, 100.0),
+            projection = Projection(DeltaSynapse(), conn), positions = pos
+        )
         sol = solve(prob, FixedStep(dt))
         @test _saved(positionplot(sol).figure, "positions_rate.png")          # color by rate
         @test _saved(positionplot(sol; color = :type).figure, "positions_type.png")

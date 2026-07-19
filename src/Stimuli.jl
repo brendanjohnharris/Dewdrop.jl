@@ -90,7 +90,7 @@ function _stim_itot!(itot, stimuli, m, n, t, dt)
 end
 @inline _sitot!(itot, ::Tuple{}, m, n, t, dt) = false
 @inline function _sitot!(itot, stims::Tuple, m, n, t, dt)
-    _sit1(stim_point(typeof(first(stims))), itot, first(stims), Base.tail(stims), m, n, t, dt)
+    return _sit1(stim_point(typeof(first(stims))), itot, first(stims), Base.tail(stims), m, n, t, dt)
 end
 @inline _sit1(::Val, itot, s, r, m, n, t, dt) = _sitot!(itot, r, m, n, t, dt)   # skip non-current
 @inline function _sit1(::Val{:current}, itot, s, r, m, n, t, dt)

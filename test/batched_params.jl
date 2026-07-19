@@ -144,16 +144,21 @@ _run(model, N; kw...) = solve(_net(model, N), FixedStep(0.1); progress = false, 
             LIF(; τ = T(20.0), EL = T(-65.0), Vθ = T(-50.0), Vr = T(-65.0), R = T(1.0), tref = T(2.0)), 20;
             input = T(1.4), tspan = (0.0, 150.0),
             projections = (Projection(syn, fixed_prob(Dewdrop.CPU(), 20, 20, 0.2; weight = T(0.4), delay = steps(2), seed = UInt64(1), allow_self = false)),),
-            drive = PoissonDrive(rate = 6.0, weight = T(0.4), seed = UInt64(3)))
+            drive = PoissonDrive(rate = 6.0, weight = T(0.4), seed = UInt64(3))
+        )
         let B = 3, τ = [4.0, 6.0, 8.0]                                 # CUBA τ sweep (no per-member CUBA param before A.2)
-            bs = solve(mkn(Float64, CurrentSynapse(; τ = τ[1])), FixedStep(0.1); batch = B, streams = fill(0, B),
-                syn_overrides = Dict(1 => (; τ = τ)), progress = false)
+            bs = solve(
+                mkn(Float64, CurrentSynapse(; τ = τ[1])), FixedStep(0.1); batch = B, streams = fill(0, B),
+                syn_overrides = Dict(1 => (; τ = τ)), progress = false
+            )
             @test all(bs.spike_count[:, b] == solve(mkn(Float64, CurrentSynapse(; τ = τ[b])), FixedStep(0.1); progress = false).spike_count for b in 1:B)
         end
         let B = 3, τr = [0.6, 1.0, 1.4], τd = [4.0, 5.0, 6.0]          # Float32 model + Float64 sweep vectors
             f32(tr, td) = mkn(Float32, DualExpSynapse(; τr = Float32(tr), τd = Float32(td), Erev = 0.0f0))
-            bs = solve(f32(τr[1], τd[1]), FixedStep(0.1); batch = B, streams = fill(0, B),
-                syn_overrides = Dict(1 => (; τr = τr, τd = τd)), progress = false)
+            bs = solve(
+                f32(τr[1], τd[1]), FixedStep(0.1); batch = B, streams = fill(0, B),
+                syn_overrides = Dict(1 => (; τr = τr, τd = τd)), progress = false
+            )
             @test all(bs.spike_count[:, b] == solve(f32(τr[b], τd[b]), FixedStep(0.1); progress = false).spike_count for b in 1:B)
         end
     end
