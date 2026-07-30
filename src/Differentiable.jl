@@ -87,14 +87,17 @@ end
 # synapses, when the connectome weight is a `Dual`/`Active` eltype) AND the presynaptic surrogate spike
 # `s_pre` (→ gradients flow back to V_pre); the scatter's adjoint is a gather, handled implicitly by the AD.
 @inline function _surrogate_scatter!(buf::DelayBuffer, conn::SparseCSR, spiked, now::Integer)
-    slots, L = buf.slots, buf.L
+    # A `Dual`/`Active` run gets a VALUE ring (`_ring_eltype`), so `_fp_quantise` is the identity here
+    # and the gradient flows through untouched --- rounding to fixed point would kill it. This path is
+    # CPU-serial anyway, so it is already order-deterministic and gains nothing from quantisation.
+    slots, L, scale = buf.slots, buf.L, buf.scale
     rowptr, post, weight, delay = conn.rowptr, conn.post, conn.weight, conn.delay
     n = Int(now)
     @inbounds for pre in eachindex(spiked)
         s = spiked[pre]
         iszero(s) && continue
         for e in rowptr[pre]:(rowptr[pre + 1] - 1)
-            slots[post[e], mod(n + delay[e], L) + 1] += weight[e] * s
+            slots[post[e], mod(n + delay[e], L) + 1] += _fp_quantise(eltype(slots), weight[e] * s, scale)
         end
     end
     return nothing

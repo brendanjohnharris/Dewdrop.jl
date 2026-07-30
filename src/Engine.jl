@@ -325,7 +325,12 @@ end
 function _make_synstate(arch, m::AbstractSynapseModel, conn, ::Type{T}, N, dt) where {T}
     names = _syn_accumulators(typeof(m))
     acc = NamedTuple{names}(ntuple(_ -> fill!(allocate(arch, T, N), zero(T)), length(names)))
-    buf = DelayBuffer(arch, T, N, maximum(conn.delay; init = 0))   # empty projection → L=1 no-op
+    # empty projection → L=1 no-op. The ring's fixed-point scale is sized from THIS projection's
+    # weights, so each ring gets the finest resolution its own worst case allows.
+    buf = DelayBuffer(
+        arch, T, N, maximum(conn.delay; init = 0);
+        scale = fixedpoint_scale(conn.post, conn.weight, N)
+    )
     return SynState(m, acc, buf, conn, _syn_coeffs(m, dt, T))
 end
 

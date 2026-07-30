@@ -12,6 +12,7 @@ Dewdrop.set_advice!(false)   # silence the perf advisor during the suite; test/a
     include("spatial.jl")
     include("delays.jl")
     include("scatter.jl")
+    include("reproducibility.jl")   # the fixed-point ring: bit-identical across threads/backends/scatter
     include("schedule.jl")
     include("neurons.jl")
     include("adaptation.jl")        # AdaptLIF + AdEx (multi-state (V,w) seam)

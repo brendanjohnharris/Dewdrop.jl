@@ -17,14 +17,14 @@ import Atomix
 # idle-thread reads stay coalesced): measured 1.7-4x over per-neuron, and far better than a
 # per-edge binary search of rowptr (whose O(log npre) work dominates at large nedges).
 @kernel function _scatter_edge_kernel!(
-        slots, @Const(spiked), @Const(src), @Const(post), @Const(weight), @Const(delay), now, L
+        slots, @Const(spiked), @Const(src), @Const(post), @Const(weight), @Const(delay), now, L, scale
     )
     e = @index(Global)
     @inbounds begin
         pre = src[e]
         if spiked[pre]
             slot = mod(now + delay[e], L) + 1
-            Atomix.@atomic slots[post[e], slot] += weight[e]
+            Atomix.@atomic slots[post[e], slot] += _fp_quantise(eltype(slots), weight[e], scale)
         end
     end
 end
@@ -43,7 +43,7 @@ function scatter!(buf::DelayBuffer, conn::SparseCSR, spiked, now::Integer; sync:
     ne = nedges(conn)
     if ne > 0
         _scatter_edge_kernel!(backend)(
-            buf.slots, spiked, conn.src, conn.post, conn.weight, conn.delay, Int(now), buf.L;
+            buf.slots, spiked, conn.src, conn.post, conn.weight, conn.delay, Int(now), buf.L, buf.scale;
             ndrange = ne,
         )
     end
@@ -66,27 +66,26 @@ function scatter!(
         conn::SparseCSR{<:Array, <:Array, <:Array, <:Array},
         spiked::AbstractArray, now::Integer; sync::Bool = true,   # `sync` ignored: a serial CPU walk
     )
-    slots, L = buf.slots, buf.L
+    slots, L, scale = buf.slots, buf.L, buf.scale
     rowptr, post, weight, delay = conn.rowptr, conn.post, conn.weight, conn.delay
     n = Int(now)
     if Threads.nthreads() == 1
-        # serial: contributions to a slot accumulate in a fixed presynaptic order, so the result
-        # is bit-reproducible (no atomics needed).
+        # serial: no contention, so no atomics needed.
         @inbounds for pre in eachindex(spiked)
             spiked[pre] || continue
             for e in rowptr[pre]:(rowptr[pre + 1] - 1)
-                slots[post[e], mod(n + delay[e], L) + 1] += weight[e]
+                slots[post[e], mod(n + delay[e], L) + 1] += _fp_quantise(eltype(slots), weight[e], scale)
             end
         end
     else
         # partitioned over presynaptic neurons across threads; disjoint rows, but two threads may
-        # hit the same (target, slot), so accumulate atomically. Order-independent and correct,
-        # though (like the GPU path) not bit-identical across thread counts: run single-threaded
-        # for bit-reproducibility, multi-threaded for speed (statistically identical).
+        # hit the same (target, slot), so accumulate atomically. The ring holds fixed-point counts,
+        # and integer addition is associative, so this is bit-identical to the serial branch above
+        # and to the device kernel, whatever order the deposits land in.
         @inbounds Threads.@threads for pre in eachindex(spiked)
             spiked[pre] || continue
             for e in rowptr[pre]:(rowptr[pre + 1] - 1)
-                Atomix.@atomic slots[post[e], mod(n + delay[e], L) + 1] += weight[e]
+                Atomix.@atomic slots[post[e], mod(n + delay[e], L) + 1] += _fp_quantise(eltype(slots), weight[e], scale)
             end
         end
     end

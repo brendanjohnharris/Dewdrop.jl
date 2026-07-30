@@ -94,7 +94,7 @@ end
 # the plastic scatter: deposit (current weight) + STDP weight update, one thread per edge
 @kernel function _plastic_scatter_kernel!(
         slots, weight, @Const(spiked), @Const(src), @Const(post), @Const(delay),
-        @Const(x_pre), @Const(x_post), Aplus, Aminus, wmin, wmax, now, L,
+        @Const(x_pre), @Const(x_post), Aplus, Aminus, wmin, wmax, now, L, scale,
     )
     e = @index(Global)
     @inbounds begin
@@ -103,7 +103,7 @@ end
         w = weight[e]
         if spiked[pre]
             slot = mod(now + delay[e], L) + 1
-            Atomix.@atomic slots[po, slot] += w           # transmission: deposit the CURRENT weight
+            Atomix.@atomic slots[po, slot] += _fp_quantise(eltype(slots), w, scale)   # transmission: deposit the CURRENT weight
             w -= Aminus * x_post[po]                       # depression on the pre-spike
         end
         if spiked[po]
@@ -127,7 +127,7 @@ function _plastic_scatter!(backend, syn::PlasticState, spiked, now::Int)
     if ne > 0
         _plastic_scatter_kernel!(backend)(
             buf.slots, syn.weight, spiked, conn.src, conn.post, conn.delay,
-            syn.x_pre, syn.x_post, rule.Aplus, rule.Aminus, rule.wmin, rule.wmax, now, buf.L;
+            syn.x_pre, syn.x_post, rule.Aplus, rule.Aminus, rule.wmin, rule.wmax, now, buf.L, buf.scale;
             ndrange = ne,
         )
     end
@@ -140,7 +140,7 @@ end
 function _plastic_scatter!(::_KA.CPU, syn::PlasticState, spiked, now::Int)
     base = syn.base
     buf, conn, rule = base.buf, base.conn, syn.rule
-    slots, L, w = buf.slots, buf.L, syn.weight
+    slots, L, scale, w = buf.slots, buf.L, buf.scale, syn.weight
     src, post, delay = conn.src, conn.post, conn.delay
     xpre, xpost = syn.x_pre, syn.x_post
     Ap, Am, lo, hi = rule.Aplus, rule.Aminus, rule.wmin, rule.wmax
@@ -148,7 +148,7 @@ function _plastic_scatter!(::_KA.CPU, syn::PlasticState, spiked, now::Int)
         pre, po = src[e], post[e]
         we = w[e]
         if spiked[pre]
-            slots[po, mod(now + delay[e], L) + 1] += we    # deposit the current weight
+            slots[po, mod(now + delay[e], L) + 1] += _fp_quantise(eltype(slots), we, scale)   # deposit the current weight
             we -= Am * xpost[po]                            # depression on the pre-spike
         end
         spiked[po] && (we += Ap * xpre[pre])               # potentiation on the post-spike

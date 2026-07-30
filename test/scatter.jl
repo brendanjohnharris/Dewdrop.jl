@@ -16,22 +16,24 @@ using JLArrays
     L = buf.L
     Dewdrop.scatter!(buf, conn, spiked, 0)
 
-    @test buf.slots[2, mod(0 + 1, L) + 1] == 0.5f0     # 1→2, delay 1
-    @test buf.slots[3, mod(0 + 2, L) + 1] == 0.25f0    # 1→3, delay 2
-    @test buf.slots[3, mod(0 + 1, L) + 1] == 2.0f0     # 4→3, delay 1
-    @test buf.slots[1, mod(0 + 0, L) + 1] == 0.0f0     # 2→1 NOT deposited (neuron 2 silent)
-    @test sum(buf.slots) == 0.5f0 + 0.25f0 + 2.0f0
+    # the ring holds fixed-point counts, so read it in physical units through `slotvalues`
+    sv = Dewdrop.slotvalues(buf)
+    @test sv[2, mod(0 + 1, L) + 1] == 0.5f0     # 1→2, delay 1
+    @test sv[3, mod(0 + 2, L) + 1] == 0.25f0    # 1→3, delay 2
+    @test sv[3, mod(0 + 1, L) + 1] == 2.0f0     # 4→3, delay 1
+    @test sv[1, mod(0 + 0, L) + 1] == 0.0f0     # 2→1 NOT deposited (neuron 2 silent)
+    @test sum(sv) == 0.5f0 + 0.25f0 + 2.0f0
 
     # collisions: several presynaptic neurons → same (post, slot) accumulate atomically
     conn2 = Dewdrop.SparseCSR(arch, [(1, 1, 1.0f0, 1), (2, 1, 3.0f0, 1)]; npre = 2, npost = 1)
     buf2 = Dewdrop.DelayBuffer(arch, Float32, 1, 3)
     Dewdrop.scatter!(buf2, conn2, [true, true], 0)
-    @test buf2.slots[1, mod(0 + 1, buf2.L) + 1] == 4.0f0   # 1.0 + 3.0, atomic add
+    @test Dewdrop.slotvalues(buf2)[1, mod(0 + 1, buf2.L) + 1] == 4.0f0   # 1.0 + 3.0, atomic add
 
     # the identical kernel runs on a device array type (JLArray) via get_backend
     gbuf = adapt(JLArray, Dewdrop.DelayBuffer(arch, Float32, 3, 5))
     gconn = adapt(JLArray, conn)
     gspiked = adapt(JLArray, [true, false, false, true])
     Dewdrop.scatter!(gbuf, gconn, gspiked, 0)
-    @test sum(Array(gbuf.slots)) == 0.5f0 + 0.25f0 + 2.0f0
+    @test sum(Dewdrop.slotvalues(gbuf)) == 0.5f0 + 0.25f0 + 2.0f0
 end

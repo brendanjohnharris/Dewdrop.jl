@@ -41,7 +41,7 @@ end
 
 # 2-level compacted scatter: thread (j, a) deposits the j-th edge of spiking neuron active[a].
 @kernel function _scatter_compacted_kernel!(
-        slots, @Const(active), @Const(rowptr), @Const(post), @Const(weight), @Const(delay), now, L
+        slots, @Const(active), @Const(rowptr), @Const(post), @Const(weight), @Const(delay), now, L, scale
     )
     I = @index(Global, Cartesian)
     j = I[1]
@@ -52,7 +52,7 @@ end
         if j ≤ rowptr[pre + 1] - rs                  # row may be shorter than maxdeg
             e = rs + (j - 1)
             slot = mod(now + delay[e], L) + 1
-            Atomix.@atomic slots[post[e], slot] += weight[e]
+            Atomix.@atomic slots[post[e], slot] += _fp_quantise(eltype(slots), weight[e], scale)
         end
     end
 end
@@ -66,7 +66,7 @@ function compacted_scatter!(buf::DelayBuffer, conn::SparseCSR, active, na::Integ
     (na == 0 || conn.maxdeg == 0) && return nothing
     backend = get_backend(buf.slots)
     _scatter_compacted_kernel!(backend)(
-        buf.slots, active, conn.rowptr, conn.post, conn.weight, conn.delay, Int(now), buf.L;
+        buf.slots, active, conn.rowptr, conn.post, conn.weight, conn.delay, Int(now), buf.L, buf.scale;
         ndrange = (conn.maxdeg, Int(na)),
     )
     sync && applicable(synchronize, backend) && synchronize(backend)

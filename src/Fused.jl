@@ -38,8 +38,8 @@ end
 # by every `_syn_one` below. `_slotof` (Delays.jl) is the same 1-based slot math the scatter uses.
 @inline function _ring_take!(buf, i, n)
     slot = _slotof(n, buf.L)
-    @inbounds due = buf.slots[i, slot]
-    @inbounds buf.slots[i, slot] = zero(due)
+    @inbounds due = _fp_value(buf.slots[i, slot], buf.scale)   # ring holds fixed-point counts
+    @inbounds buf.slots[i, slot] = zero(eltype(buf.slots))
     return due
 end
 

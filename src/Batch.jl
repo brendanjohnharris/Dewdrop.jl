@@ -37,14 +37,21 @@ batched_population(arch, model::AbstractNeuronModel, N::Integer, B::Integer) =
 
 # Batched delay ring: (N_post, B, L). The slot index mod(now+delay,L)+1 is SHARED across B
 # (delay/L are per-structure), so only the target index gains a batch coordinate.
-struct BatchedRing{A <: AbstractArray}
-    slots::A     # (N_post, B, L)
+# Increments accumulate as fixed-point counts, exactly as in the scalar `DelayBuffer` --- see the
+# note there for why (atomic float accumulation is order-dependent, integer accumulation is not).
+struct BatchedRing{A <: AbstractArray, T}
+    slots::A     # (N_post, B, L), in counts
     L::Int
+    scale::T     # counts per unit weight
 end
 Adapt.@adapt_structure BatchedRing
-function BatchedRing(arch, ::Type{T}, N::Integer, B::Integer, maxdelay::Integer) where {T}
+function BatchedRing(
+        arch, ::Type{T}, N::Integer, B::Integer, maxdelay::Integer;
+        scale::Real = _FP_DEFAULT_SCALE
+    ) where {T}
     L = Int(maxdelay) + 1
-    return BatchedRing(fill!(allocate(arch, T, Int(N), Int(B), L), zero(T)), L)
+    E = _ring_eltype(T)
+    return BatchedRing(fill!(allocate(arch, E, Int(N), Int(B), L), zero(E)), L, _ring_scale(T, T(scale)))
 end
 
 # Batched synaptic state: ONE generic state (the (N,B) analogue of the scalar `SynState`) holding accumulators
@@ -145,7 +152,10 @@ end
 function _make_batched_synstate(arch, m::AbstractSynapseModel, conn, ::Type{T}, N, B, dt, over) where {T}
     names = _syn_accumulators(typeof(m))
     acc = NamedTuple{names}(ntuple(_ -> fill!(allocate(arch, T, Int(N), Int(B)), zero(T)), length(names)))
-    buf = BatchedRing(arch, T, N, B, maximum(conn.delay; init = 0))
+    buf = BatchedRing(
+        arch, T, N, B, maximum(conn.delay; init = 0);
+        scale = fixedpoint_scale(conn.post, conn.weight, N)
+    )
     return BatchedSyn(m, acc, buf, conn, _build_coeffs(arch, m, dt, Int(B), over, T))
 end
 
@@ -191,8 +201,8 @@ end
 # `_col(vector, b)`).
 @inline function _bsyn_one(s::BatchedSyn, i, b, n, v, gtot, itot)
     slot = mod(n, s.buf.L) + 1
-    @inbounds due = s.buf.slots[i, b, slot]
-    @inbounds s.buf.slots[i, b, slot] = zero(due)
+    @inbounds due = _fp_value(s.buf.slots[i, b, slot], s.buf.scale)
+    @inbounds s.buf.slots[i, b, slot] = zero(eltype(s.buf.slots))
     return _bsyn_apply(_syn_couple(typeof(s.model)), s, i, b, due, v, gtot, itot)
 end
 @inline _bsyn_apply(::Val{:jump}, s, i, b, due, v, gtot, itot) = (v + due, gtot, itot)
@@ -297,7 +307,7 @@ end
 # scalar kernel in Scatter.jl), and the deposit lands in THIS batch's ring slab
 # `slots[post, b, slot]`. Distinct b touch disjoint slabs (no cross-batch contention); within a
 # batch the atomic handles same-target collisions.
-@kernel function _batched_scatter_edge_kernel!(slots, @Const(spiked), @Const(src), @Const(post), @Const(weight), @Const(delay), now, L)
+@kernel function _batched_scatter_edge_kernel!(slots, @Const(spiked), @Const(src), @Const(post), @Const(weight), @Const(delay), now, L, scale)
     I = @index(Global, Cartesian)
     e = I[1]
     b = I[2]
@@ -305,7 +315,7 @@ end
         pre = src[e]
         if spiked[pre, b]
             slot = mod(now + delay[e], L) + 1
-            Atomix.@atomic slots[post[e], b, slot] += weight[e]
+            Atomix.@atomic slots[post[e], b, slot] += _fp_quantise(eltype(slots), weight[e], scale)
         end
     end
 end
@@ -315,7 +325,7 @@ function batched_scatter!(buf::BatchedRing, conn::SparseCSR, spiked, now::Intege
     ne = nedges(conn)
     if ne > 0
         _batched_scatter_edge_kernel!(backend)(
-            buf.slots, spiked, conn.src, conn.post, conn.weight, conn.delay, Int(now), buf.L;
+            buf.slots, spiked, conn.src, conn.post, conn.weight, conn.delay, Int(now), buf.L, buf.scale;
             ndrange = (ne, size(spiked, 2)),
         )
     end
@@ -324,15 +334,15 @@ function batched_scatter!(buf::BatchedRing, conn::SparseCSR, spiked, now::Intege
 end
 
 # CPU fast path. The batch axis is a NATURAL, contention-free parallelisation axis: distinct
-# columns write disjoint slabs `slots[:, b, :]`, so threading over `b` needs NO atomics and each
-# column accumulates in a fixed presynaptic order: DETERMINISTIC and bit-identical to a scalar
-# serial run regardless of thread count (unlike the GPU atomic scatter, which is order-dependent).
+# columns write disjoint slabs `slots[:, b, :]`, so threading over `b` needs NO atomics. With the
+# fixed-point ring this is now bit-identical to the device kernel as well, not merely to a serial
+# scalar run.
 function batched_scatter!(
         buf::BatchedRing{<:Array},
         conn::SparseCSR{<:Array, <:Array, <:Array, <:Array},
         spiked::AbstractArray, now::Integer; sync::Bool = false,
     )
-    slots, L = buf.slots, buf.L
+    slots, L, scale = buf.slots, buf.L, buf.scale
     rowptr, post, weight, delay = conn.rowptr, conn.post, conn.weight, conn.delay
     n = Int(now)
     N, B = size(spiked)
@@ -340,7 +350,7 @@ function batched_scatter!(
         @inbounds for pre in 1:N
             spiked[pre, b] || continue
             for e in rowptr[pre]:(rowptr[pre + 1] - 1)
-                slots[post[e], b, mod(n + delay[e], L) + 1] += weight[e]
+                slots[post[e], b, mod(n + delay[e], L) + 1] += _fp_quantise(eltype(slots), weight[e], scale)
             end
         end
     end
@@ -374,7 +384,7 @@ BatchedCompactionScratch(arch, npre::Integer, B::Integer) =
     end
 end
 
-@kernel function _batched_scatter_compacted_kernel!(slots, @Const(active), @Const(na), @Const(rowptr), @Const(post), @Const(weight), @Const(delay), now, L)
+@kernel function _batched_scatter_compacted_kernel!(slots, @Const(active), @Const(na), @Const(rowptr), @Const(post), @Const(weight), @Const(delay), now, L, scale)
     I = @index(Global, Cartesian)
     j = I[1]
     a = I[2]
@@ -385,7 +395,7 @@ end
         if j ≤ rowptr[pre + 1] - rs
             e = rs + (j - 1)
             slot = mod(now + delay[e], L) + 1
-            Atomix.@atomic slots[post[e], b, slot] += weight[e]
+            Atomix.@atomic slots[post[e], b, slot] += _fp_quantise(eltype(slots), weight[e], scale)
         end
     end
 end
@@ -394,7 +404,7 @@ function batched_compacted_scatter!(buf::BatchedRing, conn::SparseCSR, active, n
     (max_na == 0 || conn.maxdeg == 0) && return nothing
     backend = get_backend(buf.slots)
     _batched_scatter_compacted_kernel!(backend)(
-        buf.slots, active, na, conn.rowptr, conn.post, conn.weight, conn.delay, Int(now), buf.L;
+        buf.slots, active, na, conn.rowptr, conn.post, conn.weight, conn.delay, Int(now), buf.L, buf.scale;
         ndrange = (conn.maxdeg, Int(max_na), size(buf.slots, 2)),
     )
     sync && applicable(synchronize, backend) && synchronize(backend)
