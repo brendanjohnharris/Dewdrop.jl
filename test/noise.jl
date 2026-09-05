@@ -39,7 +39,7 @@ _meanvar(x) = (μ = sum(x) / length(x); (μ, sum(y -> (y - μ)^2, x) / length(x)
     @test Dewdrop.draw_normal(Float32, seed, 1, 1) isa Float32
     @test all(isfinite, (Dewdrop.draw_normal(Float32, seed, k, 1) for k in 1:10_000))
 
-    # zero-allocation hot path (both float widths)
+    # zero allocation in the inner loop (both float widths)
     Dewdrop.draw_normal(Float32, UInt64(0x1234), 1, 1)
     Dewdrop.draw_normal(Float64, UInt64(0x1234), 1, 1)
     @test @allocated(Dewdrop.draw_normal(Float32, UInt64(0x1234), 2, 3)) == 0

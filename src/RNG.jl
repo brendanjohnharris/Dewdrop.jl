@@ -42,7 +42,7 @@ The ensemble-batched draw: an independent, bit-reproducible stream per `batch`. 
 counter is `(step, batch)`; the high counter word is unused by the 4-arg form (it is a
 hard zero there), so folding `batch` into it yields B collision-free independent streams keyed
 by `(seed, step, entity, batch)` on CPU and GPU. `batch = 0` reproduces the 4-arg bits exactly
-(so the scalar B=1 path is bit-for-bit unchanged); `batch` must NOT be mixed into `entity`
+(so `batch = 0` reproduces the scalar draw bit for bit); `batch` must NOT be mixed into `entity`
 (the golden-ratio key mix aliases there).
 """
 @inline function draw_uniform(
@@ -103,7 +103,7 @@ The ensemble-batched Poisson draw: an independent reproducible stream per `batch
     draw_normal(T, seed, step, entity) -> T
 
 A standard-normal `N(0, 1)` draw of float type `T`, a *pure* function of `(seed, step, entity)`
-via the Box--Muller transform. It consumes BOTH 64-bit words of a single Philox evaluation (the
+via the Box-Muller transform. It consumes BOTH 64-bit words of a single Philox evaluation (the
 same call whose second word [`draw_uniform`](@ref) discards), so it costs one Philox eval per
 draw and is allocation-free and GPU-kernel-safe (no Sampler dispatch, same discipline as
 `_uniform`). Keyed identically to `draw_uniform`, so a distinct `seed` yields an independent

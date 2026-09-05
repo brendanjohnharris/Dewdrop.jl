@@ -114,11 +114,15 @@ export FrozenDualExpSynapse
 
 # * Single-source synapse descriptor. Every execution path (serial broadcast, fused megakernel,
 # batched (N,B) ensemble) is generated generically from five tiny trait methods per synapse; adding a
-# synapse is these methods, not four hand-copied kernels. Each method reproduces the prior code
-# byte-for-byte. The forward-compatible superset: `_syn_accumulators` allows K per-target channels,
+# synapse is these methods, not four kernels. `_syn_accumulators` allows K per-target channels,
 # `_syn_membrane` reads `v` (V-dependent/nonlinear currents, e.g. NMDA), `_syn_couple` marks the
-# coupling mode. Coefficient eltype wrapping matches the old `_make_synstate` exactly (a byte-identity
-# requirement: CUBA/COBA keep `synapse_decay` unwrapped; the dual-exp family wraps in `T`).
+# coupling mode. Coefficient eltypes are wrapped per synapse: CUBA/COBA keep `synapse_decay` unwrapped,
+# the dual-exp family wraps in `T`.
+
+# Init-time shape check against the run's step count, for a synapse carrying its own precomputed
+# per-step data. The default is a no-op; a replay source overrides it (src/PoissonSource.jl). The
+# stimulus seam has `stim_validate` for the same job; a synapse model needs its own hook.
+_check_synapse(::AbstractSynapseModel, nsteps) = nothing
 
 # Per-target accumulator field names (`()` for a stateless voltage-jump synapse). K = length.
 _syn_accumulators(::Type{<:CurrentSynapse}) = (:Isyn,)

@@ -73,7 +73,7 @@ end
     var = sum(x -> (x - mean)^2, s) / N
     @test abs(var - λ) < 0.1
 
-    # zero allocation on the hot path
+    # zero allocation in the inner loop
     Dewdrop.draw_poisson(2.0, UInt64(1), 1, 1)
     @test @allocated(Dewdrop.draw_poisson(2.0, UInt64(1), 2, 3)) == 0
 end

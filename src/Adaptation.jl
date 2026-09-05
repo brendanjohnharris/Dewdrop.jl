@@ -7,8 +7,8 @@
 # it needs no refractory special-case for `w` (a refractory unit's old V is already clamped to Vr).
 #
 # The whole multi-state machinery is dispatched on whether the model carries `w` (`_has_w`), so
-# LIF and every linear `@neuron` model take the V-only fast path UNCHANGED (the empty-aux methods
-# below compile to exactly the prior code). The spike-triggered `w += b` lives in the `:reset`
+# LIF and every linear `@neuron` model take the V-only fast path (the empty-aux methods below compile
+# away entirely). The spike-triggered `w += b` lives in the `:reset`
 # phase (broadcast) / inline after reset (kernels), as Schedule.jl's `:reset` doc reserves.
 
 # AdEx's exp term is capped before evaluation so a unit between VT and Vpeak cannot overflow to
@@ -139,8 +139,8 @@ end
 
 # The aux-state seam: route on whether the model carries a `w` column
 # `_has_w` is a compile-time bool from the model's statevars; the `st.w` accesses below appear ONLY
-# in the carries-`w` methods, so a V-only model (LIF / @neuron) never instantiates them and keeps
-# its prior code byte-for-byte. The carries-`w` value is `nothing` for V-only, a scalar otherwise.
+# in the carries-`w` methods, so a V-only model (LIF / @neuron) never instantiates them. The
+# carries-`w` value is `nothing` for V-only, a scalar otherwise.
 @inline _has_w(::Type{M}) where {M} = (:w in statevars(M))
 
 # per-neuron heterogeneity hooks (see Heterogeneous.jl). A scalar model resolves to

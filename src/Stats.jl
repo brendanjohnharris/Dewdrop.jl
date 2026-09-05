@@ -15,6 +15,7 @@
 function _spike_raster(sol::DewdropSolution; of = :all, name = nothing)
     res = _find_spikes(sol.record, name)
     res === nothing && error("no spikes recorded: pass `record = (spikes = Spikes(),)` to `solve`")
+    _require_unbinned(res, "this statistic")
     data = res.data                                   # (neuron × time), over the recorded set res.idx
     of === :all && return data
     r = _subrange(sol.subpops, of)
@@ -35,12 +36,10 @@ function coarsegrain(S::AbstractMatrix, binsize::Integer; dims::Integer = 2)
     if dims == 2
         nb = size(S, 2) ÷ bs
         out = zeros(T, size(S, 1), nb)
-        @inbounds for b in 1:nb, i in 1:size(S, 1)
-            acc = zero(T)
-            for t in ((b - 1) * bs + 1):(b * bs)
-                acc += S[i, t]
-            end
-            out[i, b] = acc
+        # neuron-innermost: `S` is column-major, so accumulating a whole column at a time walks it
+        # contiguously. Each `out[i, b]` still sums its bin's steps in ascending order.
+        @inbounds for b in 1:nb, t in ((b - 1) * bs + 1):(b * bs), i in 1:size(S, 1)
+            out[i, b] += S[i, t]
         end
         return out
     elseif dims == 1
@@ -112,9 +111,16 @@ temporal_average(M::AbstractMatrix) = vec(sum(M; dims = 2)) ./ size(M, 2)
 function temporal_average(sol::DewdropSolution, var::Symbol = :V; of = :all)
     res = nothing
     for r in values(sol.record)
-        r.kind === :trace && (res = r; break)
+        (r.kind === :trace && r.var === var) && (res = r; break)
     end
-    res === nothing && error("no trace recorded: pass e.g. `record = (V = Trace(:V),)` to `solve`")
+    if res === nothing
+        traced = [String(r.var) for r in values(sol.record) if r.kind === :trace]
+        error(
+            isempty(traced) ?
+                "no trace recorded: pass e.g. `record = (V = Trace(:$var),)` to `solve`" :
+                "no trace of :$var was recorded (recorded traces: $(join(traced, ", ")))"
+        )
+    end
     data = res.data
     of === :all && return temporal_average(data)
     r = _subrange(sol.subpops, of)
@@ -163,10 +169,18 @@ end
 function cv_isi(sol::DewdropSolution; of = :all, name = nothing)
     t, id = raster(sol; of = of, name = name)
     isempty(id) && return NaN
+    # Group by neuron in ONE pass. `t[id .== n]` inside a loop over neurons rescans the whole spike
+    # list for every neuron, i.e. O(neurons × spikes); `unique` keeps the visiting order, so the mean
+    # is taken over the same sequence as before.
+    order = unique(id)
+    groups = Dict(n => Float64[] for n in order)
+    for k in eachindex(id)
+        push!(groups[id[k]], t[k])
+    end
     cvs = Float64[]
-    for n in unique(id)
-        ts = sort(t[id .== n])
-        length(ts) ≥ 2 && push!(cvs, cv_isi(ts))
+    for n in order
+        ts = groups[n]
+        length(ts) ≥ 2 && push!(cvs, cv_isi(ts))    # `cv_isi(times)` sorts internally
     end
     return isempty(cvs) ? NaN : _mean(cvs)
 end
@@ -179,6 +193,10 @@ export cv_isi
 Bartlett-averaged power spectral density of a Neuron×Time raster: split time into `n_segments`
 segments, form the periodogram `|FFT|²/seg` of each, average over segments and neurons. Returns the
 PSD and the `fftfreq` frequency axis (from the segment length and `dt`).
+
+`dt` sets the frequency axis only; the periodogram is not scaled by it, so the values are per-bin
+power rather than a density per unit frequency. This follows the reference `stats.py` (see
+`test/simulator_comparisons/stats_validation`), against which this function is cross-validated.
 """
 function power_spectrum(S::AbstractMatrix; n_segments::Integer = 1, dt::Real = 1.0)
     nN, Tn = size(S)
@@ -207,6 +225,11 @@ Spatial coding efficiency per time bin: coarse-grain time by `tau`, group neuron
 (`bin_indices[i,j]` is a vector of neuron indices in spatial bin `(i,j)`), form the spatial spike
 distribution per time bin, its entropy `H`, and the energy cost `C` (total spikes); `η = n·H/C`
 (`n` = neuron count).
+
+`H` is the SUM over the second spatial axis of the entropies of each column, each normalised within
+its own column; it is not the entropy of the joint 2D distribution. This follows the reference
+`stats.py` (see `test/simulator_comparisons/stats_validation`), against which this function is
+cross-validated.
 """
 function efficiency(S::AbstractMatrix, bin_indices::AbstractMatrix{<:AbstractVector{<:Integer}}, tau; dt::Real = 1.0)
     tbinned = coarsegrain(S, round(Int, tau / dt); dims = 2)        # neuron × n_tbins

@@ -1,5 +1,5 @@
 # * Event-driven STDP: pair-based spike-timing-dependent plasticity with analytic
-# between-spike trace decay. A plastic projection wraps a base synapse state (CUBA/COBA/delta ---
+# between-spike trace decay. A plastic projection wraps a base synapse state (CUBA/COBA/delta:
 # the transmission is orthogonal to the learning) and adds its OWN mutable per-edge weight array
 # (CSR-parallel), leaving the shared `SparseCSR` immutable (so the same connectome stays sharable,
 # and the batched path's one-CSR-across-B broadcast is never violated). Two per-neuron eligibility
@@ -61,13 +61,26 @@ struct PlasticState{B <: AbstractSynapseState, W, XP, XO, R, T} <: AbstractSynap
 end
 Adapt.@adapt_structure PlasticState
 
+# Source models (PoissonSource, SpikeSourceArray; opt-outs in src/PoissonSource.jl) build states
+# whose event generator a plastic wrapper would hide from `_synprestep!`, silently killing the
+# drive; every plasticity builder checks this before wrapping.
+_plastic_wrappable(::AbstractSynapseModel) = true
+_check_plastic_wrappable(syn) = _plastic_wrappable(syn) ||
+    throw(ArgumentError("plasticity is not supported on an external drive model ($(nameof(typeof(syn)))); attach it to a network projection"))
+
 # build the runtime state (called from `init`, dispatched on the projection's plasticity)
 _make_synstate(arch, syn, conn, ::Nothing, ::Type{T}, N, dt) where {T} = _make_synstate(arch, syn, conn, T, N, dt)
 function _make_synstate(arch, syn, conn, rule::AbstractPlasticityRule, ::Type{T}, N, dt) where {T}
-    npre(conn) == npost(conn) ||
-        throw(ArgumentError("STDP needs a recurrent projection (npre == npost); got $(npre(conn)) vs $(npost(conn))"))
+    _check_plastic_wrappable(syn)
+    # The traces are indexed by the FLAT neuron index (the fused step reads `x_pre[i]` for every
+    # `i in 1:N`), so they must span the population, not just the projection.
+    (npre(conn) == npost(conn) == N) ||
+        throw(ArgumentError(
+            "STDP needs a recurrent projection over the whole population (npre == npost == N); " *
+                "got npre = $(npre(conn)), npost = $(npost(conn)), N = $N"
+        ))
     base = _make_synstate(arch, syn, conn, T, N, dt)
-    w = copy(conn.weight)                                  # mutable working copy on the architecture
+    w = clamp.(conn.weight, T(rule.wmin), T(rule.wmax))    # mutable working copy on the architecture, in bounds
     xpre = fill!(allocate(arch, T, npre(conn)), zero(T))
     xpost = fill!(allocate(arch, T, npost(conn)), zero(T))
     return PlasticState(base, w, xpre, xpost, rule, T(trace_decay_pre(rule, dt)), T(trace_decay_post(rule, dt)))
@@ -75,6 +88,7 @@ end
 
 # phase dispatch: transmission delegates to the base; learning is layered on
 @inline _deliver!(syn::PlasticState, integ) = _deliver!(syn.base, integ)
+@inline _deliver_jump!(syn::PlasticState, integ) = _deliver_jump!(syn.base, integ)
 @inline _accumulate!(syn::PlasticState, gtot, itot, V) = _accumulate!(syn.base, gtot, itot, V)
 # broadcast-path decay (:integrate): decay the base synaptic state AND the eligibility traces
 @inline function _decay!(syn::PlasticState)
@@ -85,10 +99,10 @@ end
 end
 # fused-path per-neuron contribution: decay this neuron's traces in-kernel, then the base's
 # deliver+accumulate+decay (so the trace decay matches the broadcast path; once per neuron per step)
-@inline function _syn_one(s::PlasticState, i, n, v, gtot, itot)
+@inline function _syn_one(s::PlasticState, i, n, v0, vj, gtot, itot)
     @inbounds s.x_pre[i] *= s.dpre
     @inbounds s.x_post[i] *= s.dpost
-    return _syn_one(s.base, i, n, v, gtot, itot)
+    return _syn_one(s.base, i, n, v0, vj, gtot, itot)
 end
 
 # the plastic scatter: deposit (current weight) + STDP weight update, one thread per edge
@@ -109,7 +123,11 @@ end
         if spiked[po]
             w += Aplus * x_pre[pre]                        # potentiation on the post-spike
         end
-        weight[e] = clamp(w, wmin, wmax)                   # per-edge write: single owner, no atomic
+        # Only a spiking edge can have changed, and a dense write of every edge every step is the
+        # bandwidth cost of the kernel at biological rates.
+        if spiked[pre] | spiked[po]
+            weight[e] = clamp(w, wmin, wmax)               # per-edge write: single owner, no atomic
+        end
     end
 end
 
@@ -152,7 +170,7 @@ function _plastic_scatter!(::_KA.CPU, syn::PlasticState, spiked, now::Int)
             we -= Am * xpost[po]                            # depression on the pre-spike
         end
         spiked[po] && (we += Ap * xpre[pre])               # potentiation on the post-spike
-        w[e] = clamp(we, lo, hi)
+        (spiked[pre] | spiked[po]) && (w[e] = clamp(we, lo, hi))   # quiet edges cannot have changed
     end
     return nothing
 end
@@ -171,3 +189,217 @@ end
     _bump_traces!(syn, integ.spiked)
     return nothing
 end
+
+# * Short-term depression (Tsodyks-Markram), riding the same machinery.
+# `PlasticState` already carries a per-presynaptic-neuron trace updated on spikes through the edge
+# scatter; STD reuses it with the trace reinterpreted as the RESOURCE x ∈ (0,1]: recovery to 1
+# replaces decay to 0, the deposit is w·x rather than w, and the pre-spike update is depletion of x
+# rather than a weight write. Weights stay STATIC, so the shared-CSR batched path can carry STD
+# too: it only needs a per-member (N,B) resource, never per-column weights.
+
+"""
+    STD(; U = 0.2, τD = 400.0)
+
+Tsodyks-Markram short-term synaptic depression: a presynaptic spike transmits `w·x_pre` and then
+depletes the presynaptic resource, `x ← (1-U)·x`, which recovers towards 1 as `ẋ = (1-x)/τD` (ms).
+Attach to a projection via `plasticity = STD(...)`.
+
+Depression makes the recurrent gain rate-dependent, `λ_eff = λ/(1 + U·ν·τD)`: an intrinsic
+saturation that can sustain balanced activity WITHOUT external drive (Vinci, Angulo-Garcia &
+Torcini 2025); silence stays absorbing throughout.
+
+Weights are never mutated, so unlike [`STDP`](@ref) the rule is supported on the batched
+(ensemble) path with `scatter = :edge` (the default).
+"""
+struct STD{T} <: AbstractPlasticityRule
+    U::T
+    τD::T
+end
+STD(; U = 0.2, τD = 400.0) = STD(promote(float(U), to_time(τD))...)
+export STD
+
+const STDState = PlasticState{<:AbstractSynapseState, <:Any, <:Any, <:Any, <:STD}
+
+# batched-support trait: STDP needs per-column (nedges,B) weights, which the shared-CSR batch
+# forbids; STD only needs the (N,B) resource, so it opts in.
+_batch_plastic_supported(::AbstractPlasticityRule) = false
+_batch_plastic_supported(::STD) = true
+
+# The resource starts FULL, so STDP's `_make_synstate` (traces at zero) cannot be inherited.
+function _make_synstate(arch, syn, conn, rule::STD, ::Type{T}, N, dt) where {T}
+    _check_plastic_wrappable(syn)
+    # The traces are indexed by the FLAT neuron index (the fused step reads `x_pre[i]` for every
+    # `i in 1:N`), so they must span the population, not just the projection.
+    (npre(conn) == npost(conn) == N) ||
+        throw(ArgumentError(
+            "STD needs a recurrent projection over the whole population (npre == npost == N); " *
+                "got npre = $(npre(conn)), npost = $(npost(conn)), N = $N"
+        ))
+    base = _make_synstate(arch, syn, conn, T, N, dt)
+    x = fill!(allocate(arch, T, npre(conn)), one(T))
+    xpost = fill!(allocate(arch, T, npost(conn)), zero(T))   # unused
+    return PlasticState(base, copy(conn.weight), x, xpost, rule, T(exp(-dt / rule.τD)), one(T))
+end
+
+# Recovery 1 − (1−x)·e^(−dt/τD) replaces the trace decay, on both engine paths.
+@inline function _decay!(s::STDState)
+    _decay!(s.base)
+    @. s.x_pre = 1 - (1 - s.x_pre) * s.dpre
+    return nothing
+end
+@inline function _syn_one(s::STDState, i, n, v0, vj, gtot, itot)
+    @inbounds s.x_pre[i] = 1 - (1 - s.x_pre[i]) * s.dpre
+    return _syn_one(s.base, i, n, v0, vj, gtot, itot)
+end
+
+# Deposit w·x, with x read BEFORE this step's depletion: the scatter runs before the bump.
+function _plastic_scatter!(::_KA.CPU, s::STDState, spiked, now::Int)
+    buf, conn = s.base.buf, s.base.conn
+    slots, L, scale, w = buf.slots, buf.L, buf.scale, s.weight
+    rowptr, post, delay = conn.rowptr, conn.post, conn.delay
+    x = s.x_pre
+    # Walk only spiking rows: STDP's all-edge loop is needed for post-spike updates, but STD
+    # touches nothing on quiet edges, and the all-edge walk is ~50× slower at ε = 0.1.
+    @inbounds for pre in eachindex(x)
+        spiked[pre] || continue
+        xp = x[pre]
+        for e in rowptr[pre]:(rowptr[pre + 1] - 1)
+            slots[post[e], mod(now + delay[e], L) + 1] +=
+                _fp_quantise(eltype(slots), w[e] * xp, scale)
+        end
+    end
+    return nothing
+end
+
+# device path: the edge-parallel scatter (the STDP kernel minus every weight/trace write)
+@kernel function _std_scatter_kernel!(
+        slots, @Const(weight), @Const(spiked), @Const(src), @Const(post), @Const(delay),
+        @Const(x_pre), now, L, scale,
+    )
+    e = @index(Global)
+    @inbounds begin
+        pre = src[e]
+        if spiked[pre]
+            slot = mod(now + delay[e], L) + 1
+            Atomix.@atomic slots[post[e], slot] += _fp_quantise(eltype(slots), weight[e] * x_pre[pre], scale)
+        end
+    end
+end
+function _plastic_scatter!(backend, s::STDState, spiked, now::Int)
+    buf, conn = s.base.buf, s.base.conn
+    ne = length(s.weight)
+    if ne > 0
+        _std_scatter_kernel!(backend)(
+            buf.slots, s.weight, spiked, conn.src, conn.post, conn.delay,
+            s.x_pre, now, buf.L, buf.scale; ndrange = ne,
+        )
+    end
+    return nothing
+end
+
+# Depletion once per spiking NEURON, not per edge: a neuron's out-edges share its resource.
+@inline function _bump_traces!(s::STDState, spiked)
+    @. s.x_pre *= 1 - s.rule.U * spiked
+    return nothing
+end
+
+# * Batched STD: the shared-CSR ensemble batch (src/Batch.jl) plus a per-member (N,B) resource.
+# Wraps the generic `BatchedSyn` (transmission untouched); recovery folds into `_bsyn_one` (called
+# exactly once per (i,b) per step by the megakernel, matching the scalar integrate-before-propagate
+# order), the deposit is an STD variant of the edge scatter reading pre-depletion x, and depletion
+# is a GPU-safe (N,B) broadcast after the scatter.
+struct BatchedSTDState{BS <: AbstractSynapseState, X, R, T} <: AbstractSynapseState
+    base::BS     # BatchedSyn: (N,B) accumulators + (N,B,L) ring + shared CSR
+    x::X         # (N,B) presynaptic resource, initialised to one
+    rule::R
+    dpre::T      # exp(-dt/τD)
+end
+Adapt.@adapt_structure BatchedSTDState
+
+function _make_batched_synstate(arch, m, conn, rule::STD, ::Type{T}, N, B, dt, over) where {T}
+    _check_plastic_wrappable(m)
+    # The traces are indexed by the FLAT neuron index (the fused step reads `x_pre[i]` for every
+    # `i in 1:N`), so they must span the population, not just the projection.
+    (npre(conn) == npost(conn) == N) ||
+        throw(ArgumentError(
+            "STD needs a recurrent projection over the whole population (npre == npost == N); " *
+                "got npre = $(npre(conn)), npost = $(npost(conn)), N = $N"
+        ))
+    base = _make_batched_synstate(arch, m, conn, T, N, B, dt, over)
+    x = fill!(allocate(arch, T, Int(N), Int(B)), one(T))
+    return BatchedSTDState(base, x, rule, T(exp(-dt / rule.τD)))
+end
+
+# in-kernel recovery, then delegate transmission to the base
+@inline function _bsyn_one(s::BatchedSTDState, i, b, n, v0, vj, gtot, itot)
+    x = getfield(s, :x)
+    @inbounds x[i, b] = 1 - (1 - x[i, b]) * getfield(s, :dpre)
+    return _bsyn_one(getfield(s, :base), i, b, n, v0, vj, gtot, itot)
+end
+
+# STD edge scatter: `_batched_scatter_edge_kernel!` depositing weight[e]·x[pre,b]
+@kernel function _batched_std_scatter_kernel!(
+        slots, @Const(spiked), @Const(src), @Const(post), @Const(weight), @Const(delay),
+        @Const(x), now, L, scale,
+    )
+    I = @index(Global, Cartesian)
+    e = I[1]
+    b = I[2]
+    @inbounds begin
+        pre = src[e]
+        if spiked[pre, b]
+            slot = mod(now + delay[e], L) + 1
+            Atomix.@atomic slots[post[e], b, slot] += _fp_quantise(eltype(slots), weight[e] * x[pre, b], scale)
+        end
+    end
+end
+function _batched_std_scatter!(buf::BatchedRing, conn::SparseCSR, x, spiked, now::Integer)
+    backend = get_backend(buf.slots)
+    ne = nedges(conn)
+    if ne > 0
+        _batched_std_scatter_kernel!(backend)(
+            buf.slots, spiked, conn.src, conn.post, conn.weight, conn.delay, x,
+            Int(now), buf.L, buf.scale; ndrange = (ne, size(spiked, 2)),
+        )
+    end
+    return nothing
+end
+# CPU fast path: threaded per-column row-walk (disjoint slabs, no atomics), mirroring `batched_scatter!`.
+function _batched_std_scatter!(
+        buf::BatchedRing{<:Array}, conn::SparseCSR{<:Array, <:Array, <:Array, <:Array},
+        x::Array, spiked::AbstractArray, now::Integer,
+    )
+    slots, L, scale = buf.slots, buf.L, buf.scale
+    rowptr, post, weight, delay = conn.rowptr, conn.post, conn.weight, conn.delay
+    n = Int(now)
+    N, B = size(spiked)
+    Threads.@threads for b in 1:B
+        @inbounds for pre in 1:N
+            spiked[pre, b] || continue
+            xp = x[pre, b]
+            for e in rowptr[pre]:(rowptr[pre + 1] - 1)
+                slots[post[e], b, mod(n + delay[e], L) + 1] +=
+                    _fp_quantise(eltype(slots), weight[e] * xp, scale)
+            end
+        end
+    end
+    return nothing
+end
+
+# :propagate seam: scatter (reads pre-depletion x), THEN deplete once per spiking (neuron, member).
+function _bpropagate!(syn::BatchedSTDState, integ)
+    base = getfield(syn, :base)
+    x = getfield(syn, :x)
+    _batched_std_scatter!(base.buf, base.conn, x, integ.spiked, integ.n)
+    U = getfield(syn, :rule).U
+    @. x *= 1 - U * integ.spiked
+    return nothing
+end
+
+_bcompacted_propagate!(syn::BatchedSTDState, active, na, max_na, now) =
+    throw(ArgumentError("STD does not support scatter = :compacted; use scatter = :edge (the default)"))
+
+# monitors: `Trace(:Isyn; projection = j)` reads the projection's `.acc`; the plastic wrappers
+# (scalar and batched) keep transmission one level down, so unwrap for the monitor seam.
+@inline _syn_acc(s::PlasticState) = _syn_acc(s.base)
+@inline _syn_acc(s::BatchedSTDState) = _syn_acc(getfield(s, :base))

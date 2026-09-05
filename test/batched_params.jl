@@ -118,7 +118,7 @@ _run(model, N; kw...) = solve(_net(model, N), FixedStep(0.1); progress = false, 
     @testset "(f) batched :itot/:gtot recording ≡ scalar (materialised in-kernel)" begin
         # recording the E INPUT current (`itot`); the batched kernel must materialise itot/gtot
         # per (neuron, member) (like the scalar fused path) so each column's recorded trace equals the
-        # standalone fused solve. (Previously rejected as kernel-local.)
+        # standalone fused solve.
         N = 8; B = 3
         lif = LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 100.0, tref = 2.0)
         nb = network(; tspan = (0.0, 150.0))
@@ -137,9 +137,9 @@ _run(model, N; kw...) = solve(_net(model, N), FixedStep(0.1); progress = false, 
     end
 
     @testset "(g) generic PHYSICAL-parameter synapse sweeps (any synapse; mixed model/sweep eltype)" begin
-        # A.2: batching a synapse PHYSICAL parameter is generic — pass τ / τr / τd / Erev directly and Dewdrop
+        # A.2: batching a synapse PHYSICAL parameter is generic: pass τ / τr / τd / Erev directly and Dewdrop
         # derives each member's coefficients. Covers a CUBA τ sweep (which could not batch ANY parameter before)
-        # and a Float32-model + Float64-sweep case (`_rebuild_syn` must convert to the field type — the WRCircuit path).
+        # and a Float32-model + Float64-sweep case (`_rebuild_syn` must convert to the field type; the WRCircuit path).
         mkn(T, syn) = DewdropNetwork(
             LIF(; τ = T(20.0), EL = T(-65.0), Vθ = T(-50.0), Vr = T(-65.0), R = T(1.0), tref = T(2.0)), 20;
             input = T(1.4), tspan = (0.0, 150.0),
@@ -162,4 +162,22 @@ _run(model, N; kw...) = solve(_net(model, N), FixedStep(0.1); progress = false, 
             @test all(bs.spike_count[:, b] == solve(f32(τr[b], τd[b]), FixedStep(0.1); progress = false).spike_count for b in 1:B)
         end
     end
+end
+
+# With no explicit v0 each cell must start at its OWN resolved resting potential. A `BatchedModel`
+# delegated straight to its unswept base, so sweeping `EL` left every column starting at the base's.
+@testset "a swept EL sets each member's initial V" begin
+    ELs = [-70.0, -60.0, -50.0]
+    B = length(ELs)
+    m = LIF(; τ = 20.0, EL = -70.0, Vθ = -45.0, Vr = -60.0, R = 100.0, tref = 2.0)
+    prob = DewdropNetwork(m, 5; input = 0.0, tspan = (0.0, 5.0))
+    integ = init(prob, FixedStep(0.1); batch = B, model_overrides = (; EL = ELs))
+    V = Array(integ.state.state.V)
+    @test size(V) == (5, B)
+    for b in 1:B
+        @test all(==(ELs[b]), V[:, b])                  # column b rests at ITS EL
+    end
+    # an explicit v0 still overrides, uniformly
+    integ2 = init(prob, FixedStep(0.1); batch = B, model_overrides = (; EL = ELs), v0 = -65.0)
+    @test all(==(-65.0), Array(integ2.state.state.V))
 end

@@ -9,13 +9,12 @@
 using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
 import Atomix
 
-# EDGE-PARALLEL scatter (the GPU occupancy fix): ONE thread per synapse, not per presynaptic
-# neuron. The old per-neuron kernel exposed only (spiking-neuron) parallelism and walked each row
-# serially (a few hundred busy threads, the rest idle; the profiled 97-99% bottleneck). Here
-# every synapse is an independent thread with uniform work (one conditional atomic), so the device
-# is saturated. The presynaptic source is read from the materialised `src` array (sorted, so the
-# idle-thread reads stay coalesced): measured 1.7-4x over per-neuron, and far better than a
-# per-edge binary search of rowptr (whose O(log npre) work dominates at large nedges).
+# EDGE-PARALLEL scatter: ONE thread per synapse, not per presynaptic neuron. Every synapse is an
+# independent thread with uniform work (one conditional atomic), so the device saturates even when
+# only a few neurons fire; a per-neuron thread would instead walk a whole row serially and leave
+# most of the device idle. The presynaptic source is read from the materialised `src` array (sorted,
+# so the idle-thread reads stay coalesced) rather than binary-searching rowptr per edge, whose
+# O(log npre) work dominates at large nedges.
 @kernel function _scatter_edge_kernel!(
         slots, @Const(spiked), @Const(src), @Const(post), @Const(weight), @Const(delay), now, L, scale
     )

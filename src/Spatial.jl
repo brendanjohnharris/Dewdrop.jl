@@ -43,7 +43,9 @@ export line_positions, grid_positions, ring_positions
     s = zero(promote_type(eltype(a), eltype(b)))
     @inbounds for k in 1:D
         δ = abs(a[k] - b[k])
-        period !== nothing && (δ = min(δ, period[k] - δ))   # minimum-image wraparound
+        # minimum-image wraparound. The `mod` first makes it correct for a separation wider than the
+        # box too; without it, `period - δ` goes NEGATIVE there and squares into a spurious distance.
+        period !== nothing && (δ = (w = mod(δ, period[k]); min(w, period[k] - w)))
         s += δ * δ
     end
     return sqrt(s)
@@ -92,8 +94,9 @@ function distance_prob(
         sources = eachindex(positions), targets = eachindex(positions), index_type::Type = Int
     )
     npost = length(positions)
-    wtype = typeof(to_weight(weight isa Function ? weight(1) : weight))
-    dtype = typeof(_delayval(delay isa Function ? delay(1) : delay))   # Int (steps) or Float (ms)
+    probe = first(sources)                                             # type probe: a real source index
+    wtype = typeof(to_weight(weight isa Function ? weight(probe) : weight))
+    dtype = typeof(_delayval(delay isa Function ? delay(probe) : delay))   # Int (steps) or Float (ms)
     edges = Tuple{Int, Int, wtype, dtype}[]
     for pre in sources
         w = wtype(to_weight(weight isa Function ? weight(pre) : weight))
@@ -202,8 +205,9 @@ function distance_fixed_count(
             _topk_push!(h, log(p) + _gumbel(u), Int(pre), Int(post))
         end
     end
-    wtype = typeof(to_weight(weight isa Function ? weight(1) : weight))
-    dtype = typeof(_delayval(delay isa Function ? delay(1) : delay))   # Int (steps) or Float (ms)
+    probe = first(sources)                                             # type probe: a real source index
+    wtype = typeof(to_weight(weight isa Function ? weight(probe) : weight))
+    dtype = typeof(_delayval(delay isa Function ? delay(probe) : delay))   # Int (steps) or Float (ms)
     edges = Tuple{Int, Int, wtype, dtype}[]
     sizehint!(edges, h.n)
     for k in 1:h.n

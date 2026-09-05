@@ -40,5 +40,36 @@ end
             projection = Projection(ConductanceSynapse(τ = 5.0, Erev = 0.0), ce)
         ), FixedStep(0.1)
     )
-    @test sum(scoba.spike_count) ≥ 0
+    # subthreshold drive (asymptote EL + R·I = 1.5 < Vθ), so no spikes and no synaptic conductance:
+    # V must sit on the analytic LIF trajectory, which is what checks the generated model integrates.
+    @test sum(scoba.spike_count) == 0
+    @test all(v -> isapprox(v, 1.5 * (1 - exp(-50 / 20)); atol = 1.0e-8), scoba.state.state.V)
+end
+
+# A `@neuron` model must not require integer-free defaults, nor a leak reversal literally named `EL`:
+# integer defaults gave a `{Int}` model (integer state columns → InexactError on the first store), and
+# the generic `_resting` read `m.EL`, so any other name failed at init with a raw FieldError.
+@neuron IntDefaultLIF begin
+    @parameters τ = 20 VL = 0 Vθ = 20 Vr = 10 R = 1 tref = 2
+    @state V refrac
+    @asymptote VL + R * I
+    @resistance R
+    @timeconstant τ
+    @threshold V >= Vθ
+    @reset Vr
+    @refractory tref
+end
+
+@testset "@neuron: integer defaults and a non-EL leak reversal" begin
+    m = IntDefaultLIF()
+    @test Dewdrop.float_type(m) <: AbstractFloat            # not Int
+    @test Dewdrop._resting(m) == 0                          # the asymptote at zero input, i.e. VL
+    sol = solve(DewdropNetwork(m, 8; input = 1.5, tspan = (0.0, 50.0)), FixedStep(0.1); progress = false)
+    @test eltype(sol.state.state.V) <: AbstractFloat
+    @test all(v -> isapprox(v, 1.5 * (1 - exp(-50 / 20)); atol = 1.0e-8), sol.state.state.V)
+
+    # a non-zero leak reversal is what the default v0 uses, per neuron
+    m2 = IntDefaultLIF(; VL = -55)
+    @test init(DewdropNetwork(m2, 4; input = 0.0, tspan = (0.0, 1.0)), FixedStep(0.1)).state.state.V ==
+        fill(-55.0, 4)
 end

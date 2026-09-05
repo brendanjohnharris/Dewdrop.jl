@@ -15,7 +15,7 @@ using Statistics
 # This matters far beyond the last bit. A spiking network is chaotic: a one-ulp difference sits
 # dormant until it flips which side of threshold some neuron lands on, after which the network
 # decorrelates completely within a step or two. On the spatial E/I model below that flip came at 3.4 s
-# of a 25 s run, so before this change every run was effectively an independent realisation.
+# of a 25 s run, which is early enough to make every run a separate realisation.
 
 # The spatial E/I working-regime network (the same topology WRCircuit.build_spatial assembles),
 # rebuilt here from Dewdrop primitives so the test needs no downstream package.
@@ -113,7 +113,7 @@ end
             @test a == b
         end
         @testset "GPU: edge-parallel and compacted scatter agree exactly" begin
-            # different launch shapes, different deposit order --- identical sums, because the ring is
+            # different launch shapes, different deposit order; identical sums, because the ring is
             # integer. This did NOT hold with a float ring.
             @test run_ei(arch = Dewdrop.GPU(), scatter = :auto) ==
                 run_ei(arch = Dewdrop.GPU(), scatter = :compacted)

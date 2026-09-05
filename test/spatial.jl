@@ -146,6 +146,19 @@ using Statistics
                 projection = Projection(CurrentSynapse(τ = 5.0), cg)
             ), FixedStep(0.1)
         )
-        @test sum(sol.spike_count) ≥ 0
+        # subthreshold drive (asymptote EL + R·I = 1.5 < Vθ): no spikes, V on the analytic trajectory
+        @test sum(sol.spike_count) == 0
+        @test all(v -> isapprox(v, 1.5 * (1 - exp(-50 / 20)); atol = 1.0e-8), sol.state.state.V)
     end
+end
+
+# The minimum image is only `min(δ, period - δ)` while both points are inside the box; outside it,
+# `period - δ` goes negative and squares into a spurious distance instead of wrapping.
+@testset "periodic distance wraps for points outside the box" begin
+    d(a, b; period) = Dewdrop.distance(a, b, period)
+    @test d((1.0,), (9.0,); period = (10.0,)) ≈ 2.0        # inside the box: unchanged
+    @test d((1.0,), (19.0,); period = (10.0,)) ≈ 2.0       # 19 ≡ 9 (mod 10)
+    @test d((-4.0,), (4.0,); period = (10.0,)) ≈ 2.0
+    @test d((1.0,), (9.0,); period = nothing) ≈ 8.0        # no wrap requested
+    @test d((0.0, 0.0), (9.0, 9.0); period = (10.0, 10.0)) ≈ sqrt(2)
 end

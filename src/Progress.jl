@@ -40,7 +40,7 @@ mutable struct ProgressReporter
 end
 
 # build a reporter from the user spec, or `nothing` (no bar). `Bool` is matched BEFORE `Integer`
-# so `true`/`false` never fall through to the cadence path (Bool <: Integer in Julia). ---
+# so `true`/`false` never fall through to the cadence path (Bool <: Integer in Julia).
 _progress_reporter(spec, total::Integer) = _progress_reporter(spec, Int(total))
 _progress_reporter(::Nothing, ::Int) = nothing
 _progress_reporter(spec::Bool, total::Int) =

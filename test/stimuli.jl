@@ -9,7 +9,7 @@ using Adapt: adapt
 # point (:current / :conductance / :kick / :noise). This file covers the families BEYOND the three legacy inputs
 # (input / drive / noise, which the whole suite already exercises byte-identically): FunctionalCurrent/Kick (live
 # f(t) / f(i,t)), TimedArray (tabulated, indexed by step), the analytic shapes, InhomogeneousPoisson, and
-# SpikeSourceArray. The oracle is BACKEND AGREEMENT — Serial == Fused == batched-column-0 (stream 0) — plus
+# SpikeSourceArray. The oracle is BACKEND AGREEMENT (Serial == Fused == batched-column-0, stream 0), plus
 # JLArrays under `allowscalar(false)` to prove the device megakernel path never scalar-indexes.
 
 _slif() = LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 0.0, R = 1.0, tref = 2.0)
@@ -181,3 +181,47 @@ const SARCH = Dewdrop.CPU()
     end
 
 end # testset
+
+# The seam's membership is the `stim_point` trait, not the `AbstractStimulus` subtype: `WhiteNoise` and
+# `PoissonDrive` are defined before the abstract type and take part through the trait alone. Init hooks
+# keyed on the abstract type missed them, so passing either through `stimuli =` was a MethodError.
+@testset "WhiteNoise / PoissonDrive compose through `stimuli =`" begin
+    m = LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 10.0, R = 1.0, tref = 2.0)
+    mk(; kw...) = DewdropNetwork(m, 32; input = 15.0, tspan = (0.0, 200.0), kw...)
+    run(p) = sum(solve(p, FixedStep(0.1); progress = false).spike_count)
+
+    wn = WhiteNoise(3.0; seed = UInt64(7))
+    @test run(mk(stimuli = (wn,))) == run(mk(noise = wn))            # same physics either route
+    pd = PoissonDrive(; rate = 0.5, weight = 0.4)
+    @test run(mk(stimuli = (pd,))) == run(mk(drive = pd))
+
+    # a non-stimulus in the tuple says so, at construction
+    @test_throws ArgumentError mk(stimuli = (1.0,))
+end
+
+@testset "TimedArray `as` is validated" begin
+    d = fill(30.0, 2001)
+    m = LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 10.0, R = 1.0, tref = 2.0)
+    driven = sum(
+        solve(
+            DewdropNetwork(m, 8; input = 0.0, tspan = (0.0, 200.0), stimuli = (TimedArray(d; as = :current),)),
+            FixedStep(0.1); progress = false
+        ).spike_count
+    )
+    @test driven > 0
+    # a misspelling used to become a type parameter matching no application point: a silent no-op
+    @test_throws ArgumentError TimedArray(d; as = :currrent)
+    @test_throws ArgumentError TimedArray(d; as = :noise)
+end
+
+@testset "Turbo refuses a :noise stimulus by point, not by field" begin
+    m = LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 10.0, R = 1.0, tref = 2.0)
+    wn = WhiteNoise(3.0; seed = UInt64(7))
+    # `_turbo_step!` has no `_apply_noises!`, so BOTH routes must be refused, not just the `noise =` field
+    @test_throws ArgumentError init(
+        DewdropNetwork(m, 8; input = 15.0, tspan = (0.0, 20.0), noise = wn), FixedStep(0.1); backend = Turbo()
+    )
+    @test_throws ArgumentError init(
+        DewdropNetwork(m, 8; input = 15.0, tspan = (0.0, 20.0), stimuli = (wn,)), FixedStep(0.1); backend = Turbo()
+    )
+end

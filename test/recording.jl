@@ -88,6 +88,66 @@ using GPUArrays
         @test vec(pr.record.mV.data) ≈ vec(mean(sol.record.V.data; dims = 1))
     end
 
+    # Time-axis reduction mirrors the unit axis: `every` SELECTS steps (a stride), `bin` REDUCES
+    # them (events sum, signals average). Striding an event record is refused outright, since it
+    # keeps the spike bit at one step in k and silently drops the rest.
+    @testset "time-axis reduction: bin vs every" begin
+        ref = solve(prob, FixedStep(dt); record = (s = Spikes(), v = Trace(:V), p = Aggregate(Spikes(), sum)))
+        tot = sum(ref.record.s.data)
+        @test tot > 10                                    # the fixture fires: nothing below is vacuous
+
+        b1 = solve(prob, FixedStep(dt); record = (s = Spikes(bin = 1), v = Trace(:V; bin = 1)))
+        @test b1.record.s.data == ref.record.s.data       # bin = 1 changes nothing
+        @test b1.record.v.data == ref.record.v.data
+        @test eltype(b1.record.s.data) === Bool
+
+        for k in (2, 5, 20)
+            r = solve(prob, FixedStep(dt);
+                      record = (s = Spikes(bin = k), p = Aggregate(Spikes(), sum; bin = k)))
+            @test eltype(r.record.s.data) === UInt16      # Bool cannot hold a count
+            @test size(r.record.s.data, 2) == fld(nsteps, k)      # complete windows only
+            @test sum(r.record.s.data) == tot             # every spike survives binning
+            @test sum(r.record.p.data) == tot
+            @test r.record.s.data == UInt16.(Dewdrop.coarsegrain(ref.record.s.data, k))   # TimeseriesBase exports one too
+            @test r.record.s.every == k && r.record.s.bin == k    # `every` = steps per column
+        end
+
+        bv = solve(prob, FixedStep(dt); record = (v = Trace(:V; bin = 10),
+                                                  a = Aggregate(Trace(:V), :mean; bin = 10)))
+        want = [mean(ref.record.v.data[i, ((c - 1) * 10 + 1):(c * 10)])
+                for i in 1:size(ref.record.v.data, 1), c in 1:fld(nsteps, 10)]
+        @test bv.record.v.data ≈ want                     # a binned signal is the window mean
+        @test vec(bv.record.a.data) ≈ vec(mean(want; dims = 1))
+
+        sv = solve(prob, FixedStep(dt); record = (v = Trace(:V; every = 10),))
+        @test sv.record.v.data == ref.record.v.data[:, 1:10:end]   # `every` still strides a signal
+
+        @test_throws ArgumentError Spikes(every = 5)
+        @test_throws ArgumentError Aggregate(Spikes(), sum; every = 5)
+        @test_throws ArgumentError Spikes(every = 5, bin = 5)      # exclusive
+        @test_throws ArgumentError Trace(:V; every = 5, bin = 5)
+        @test_throws ArgumentError Aggregate(Trace(:V; bin = 2), :mean)   # inner knobs are ignored
+        @test Aggregate(Trace(:V), :mean; every = 5) isa Aggregate        # signals may stride
+
+        # Spike TIMES do not survive binning, so the statistics built on them refuse the record.
+        rb = solve(prob, FixedStep(dt); record = (s = Spikes(bin = 10),))
+        @test_throws ErrorException raster(rb)
+        @test_throws ErrorException cv_isi(rb)
+        @test !isempty(first(raster(ref; name = :s)))
+
+        B = 3                                             # the batched path mirrors the scalar one
+        ba = solve(prob, FixedStep(dt); batch = B, streams = fill(0, B),
+                   record = (s = Spikes(), p = Aggregate(Spikes(), sum)))
+        bb = solve(prob, FixedStep(dt); batch = B, streams = fill(0, B),
+                   record = (s = Spikes(bin = 5), p = Aggregate(Spikes(), sum; bin = 5)))
+        @test eltype(bb.record.s.data) === UInt16
+        @test size(bb.record.s.data, 3) == fld(nsteps, 5)
+        for col in 1:B
+            @test sum(ba.record.s.data[:, col, :]) == sum(bb.record.s.data[:, col, :]) > 0
+            @test sum(ba.record.p.data[col, :]) == sum(bb.record.p.data[col, :])
+        end
+    end
+
     @testset "GPU-safe under allowscalar(false): traces, spikes, in-kernel aggregate" begin
         GPUArrays.allowscalar(false)
         gpu = adapt(
@@ -101,6 +161,18 @@ using GPUArrays
             step!(gpu)
         end
         Dewdrop._finalize_all!(gpu.monitors)
-        @test sum(gpu.monitors.rate.buf.store) ≥ 0       # ran without scalar-indexing errors
+        @test gpu.monitors.rate.buf.flushed == 50         # one aggregate column per step reached the host store
+        @test all(<(0), view(gpu.monitors.V.buf.store, :, 1:50))   # the 50 recorded columns hold real voltages
     end
+end
+
+# The reducer becomes a type parameter and the two paths disagree on an unsupported one: the CPU
+# `_finalize` has no method (a MethodError mid-solve) while the GPU kernel tests only `R === :mean`,
+# so anything else silently computes a SUM. Refuse it where it is written instead.
+@testset "Aggregate validates its reducer" begin
+    @test Aggregate(Trace(:V), :sum).reducer === :sum
+    @test Aggregate(Trace(:V), sum).reducer === :sum
+    @test Aggregate(Trace(:V), :mean).reducer === :mean
+    @test_throws ArgumentError Aggregate(Trace(:V), :median)
+    @test_throws ArgumentError Aggregate(Trace(:V), maximum)
 end

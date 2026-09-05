@@ -46,7 +46,7 @@ struct Fused <: SimBackend end
     Turbo()
 
 A SIMD-vectorised fused loop (via LoopVectorization). The **fastest CPU backend**: it vectorises
-the membrane `exp`, reaching compiled-C++ throughput. CPU-only; requires `using LoopVectorization`
+the membrane `exp`. CPU-only; requires `using LoopVectorization`
 and a model that provides a Turbo specialization (see the model-support table in the docs). **Not
 bit-identical**: SIMD `exp` differs from scalar `libm` at the ULP level, so results are
 spike-identical but not bit-reproducible (hence opt-in, never an `Auto` default).
@@ -78,8 +78,7 @@ Differentiable(; β::Real = 10) = Differentiable(float(β))
 export SimBackend, Auto, Serial, Fused, Turbo, Differentiable
 
 # The differentiable backend accumulates a REAL-valued surrogate spike, so `spiked` / `spike_count`
-# take the state float type instead of `Bool` / `Int`. Every other backend keeps `Bool` / `Int`, so the
-# default allocation (and therefore every existing run) is byte-for-byte unchanged.
+# take the state float type instead of `Bool` / `Int`. Every other backend keeps `Bool` / `Int`.
 @inline _spiked_eltype(::SimBackend, ::Type{T}) where {T} = Bool
 @inline _spiked_eltype(::Differentiable, ::Type{T}) where {T} = T
 @inline _count_eltype(::SimBackend, ::Type{T}) where {T} = Int
@@ -123,6 +122,11 @@ turbo_kernel(::Type) = nothing
 # the extension is loaded iff `Base.get_extension` resolves it (returns `nothing` when unloaded).
 _turbo_available() = Base.get_extension(@__MODULE__, :DewdropLoopVectorizationExt) !== nothing
 
+# Does this problem apply anything at the `:noise` point? The `noise =` kwarg is the usual route, but
+# any stimulus in the `stimuli` tuple can carry `stim_point == Val(:noise)` too.
+_has_noise_stim(prob) =
+    prob.noise !== nothing || any(s -> stim_point(typeof(s)) === Val(:noise), prob.stimuli)
+
 # validation of a resolved backend against the problem (clear errors over a late MethodError).
 function _check_backend(b::SimBackend, prob)
     if b isa Serial && _is_hetero(prob.model)
@@ -134,8 +138,11 @@ function _check_backend(b::SimBackend, prob)
         prob.arch isa GPU && throw(ArgumentError("backend = Turbo() is CPU-only; use Fused() on the GPU"))
         prob.schedule == default_schedule() ||
             throw(ArgumentError("backend = Turbo() requires the canonical schedule"))
-        prob.noise === nothing ||
-            throw(ArgumentError("backend = Turbo() does not support WhiteNoise (the SIMD kernel is deterministic); use Fused()"))
+        # Test the application POINT, not the `noise` field: any stimulus applied at `:noise` is
+        # dropped by `_turbo_step!` (which has no `_apply_noises!`) and by the SIMD kernels, so a
+        # field-only check lets one through silently.
+        _has_noise_stim(prob) &&
+            throw(ArgumentError("backend = Turbo() does not support a :noise stimulus (the SIMD kernel is deterministic); use Fused()"))
         supports_turbo(typeof(prob.model)) ||
             throw(ArgumentError("model $(typeof(prob.model)) has no Turbo specialization (define `Dewdrop.turbo_kernel(::Type{$(nameof(typeof(prob.model)))})`, or use Fused())"))
     end

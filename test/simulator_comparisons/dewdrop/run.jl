@@ -7,7 +7,7 @@ exec julia +1.12 -t auto --project="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.
 #     ./run.jl <backend> <device> <N>   # a single throughput config (used internally per subprocess)
 #     ./run.jl correctness              # the statistics (rate, CV-ISI) run
 # Each (backend, device, N) runs in a FRESH subprocess so its wall time and peak memory are clean.
-# Backends: serial, fused, turbo (CPU) + fused (GPU). No simulator-specific parameters live here ---
+# Backends: serial, fused, turbo (CPU) + fused (GPU). No simulator-specific parameters live here:
 # everything comes from ../spec.toml. (No Julia lives in the Python simulator folders; this is it.)
 
 using Dewdrop

@@ -170,3 +170,28 @@ _ncols_expected(T) = round(Int, T / 0.1)                                 # recor
         @test s0 == s1
     end
 end
+
+# Named subpopulations are network metadata; a batched run must resolve them exactly as a scalar one.
+# The registry never reached `_make_batched_monitors`, so `Trace(:V; of = :E)` (a spec that works on
+# the scalar path) died with "unknown selector E", and the solution carried no registry at all.
+@testset "batched runs carry the subpopulation registry" begin
+    nb = network(; tspan = (0.0, 40.0))
+    population!(nb, :E, LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 100.0, tref = 2.0), 6; input = 0.4)
+    population!(nb, :I, LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 100.0, tref = 2.0), 4; input = 0.25)
+    net = build(nb)
+    B = 3
+
+    for of in (:E, :I)
+        r = solve(net, FixedStep(0.1); batch = B, record = (s = Spikes(of = of),), progress = false).record.s
+        @test size(r.data) == (length(net.subpops[of]), B, 400)
+    end
+    # an unknown name still errors, and says what is available
+    @test_throws Exception solve(net, FixedStep(0.1); batch = B, record = (s = Spikes(of = :nope),), progress = false)
+
+    sol = solve(net, FixedStep(0.1); batch = B, progress = false)
+    @test keys(sol.subpops) == keys(net.subpops)
+    @test size(firing_rate(sol, :E)) == (6, B)
+    @test size(firing_rate(sol, :I)) == (4, B)
+    # each subpopulation's rate agrees with the corresponding rows of the full (N,B) rate
+    @test firing_rate(sol, :E) == firing_rate(sol)[net.subpops[:E], :]
+end

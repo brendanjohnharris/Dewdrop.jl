@@ -1,6 +1,6 @@
 # * Internal FFT (host-side analysis only; NO external dependency). Implements the standard DFT
 #       X[k] = Σ_n x[n] · exp(-2πi k n / N)
-# (numpy / `jnp.fft` convention) via recursive radix-2 Cooley--Tukey for power-of-2 lengths and
+# (numpy / `jnp.fft` convention) via recursive radix-2 Cooley-Tukey for power-of-2 lengths and
 # Bluestein's chirp-z transform for arbitrary lengths, so the spectral observables (`power_spectrum`,
 # `radial_autocorrelation` in Stats.jl) match a numpy reference for ANY length. A direct O(N²) `_dft`
 # is kept as the correctness reference (the tests cross-check `_fft` against it). This is a deliberately
@@ -36,7 +36,7 @@ end
 # Inverse DFT (normalised): `ifft(x) = conj(fft(conj(x))) / N`.
 _ifft(x::AbstractVector{<:Number}) = (n = length(x); conj.(_fft(conj.(ComplexF64.(collect(x))))) ./ n)
 
-# Recursive radix-2 Cooley--Tukey (decimation in time), power-of-2 length.
+# Recursive radix-2 Cooley-Tukey (decimation in time), power-of-2 length.
 function _fft_radix2(x::Vector{ComplexF64})
     n = length(x)
     n == 1 && return x

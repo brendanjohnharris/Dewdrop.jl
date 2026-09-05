@@ -142,3 +142,24 @@ end
     correlate_weights!(cs, 0.2; targets = 10:40, seed = UInt64(8))
     @test Array(csdev.weight) == cs.weight
 end
+
+# Every scatter reads `post[e]` under `@inbounds`, so an out-of-range edge is an out-of-bounds write
+# into the delay ring, not an error; and a 0-step delay deposits into the slot the deliver phase has
+# just cleared, so it arrives a whole ring length later instead of next step.
+@testset "SparseCSR validates its edge list" begin
+    ok = [(1, 2, 1.0, 1), (2, 3, 1.0, 2)]
+    @test Dewdrop.nedges(SparseCSR(Dewdrop.CPU(), ok; npre = 3, npost = 3)) == 2
+    @test_throws ArgumentError SparseCSR(Dewdrop.CPU(), [(1, 9, 1.0, 1)]; npre = 3, npost = 3)   # target out of range
+    @test_throws ArgumentError SparseCSR(Dewdrop.CPU(), [(9, 1, 1.0, 1)]; npre = 3, npost = 3)   # source out of range
+    @test_throws ArgumentError SparseCSR(Dewdrop.CPU(), [(1, 2, 1.0, 0)]; npre = 3, npost = 3)   # 0-step delay
+    @test_throws ArgumentError SparseCSR(Dewdrop.CPU(), [(1, 2, 1.0, -1)]; npre = 3, npost = 3)
+    # a physical (millisecond) delay is resolved to ≥ 1 step at init, so 0.0 ms is fine
+    @test Dewdrop.nedges(SparseCSR(Dewdrop.CPU(), [(1, 2, 1.0, 0.0)]; npre = 3, npost = 3)) == 1
+end
+
+@testset "correlate_weights! rejects edges outside `targets`" begin
+    conn = fixed_prob(Dewdrop.CPU(), 40, 40, 0.3; weight = 1.0, delay = 1.0, seed = UInt64(1))
+    @test correlate_weights!(conn, 1.0; seed = UInt64(2)) === conn          # the default covers every post
+    # a narrower `targets` used to index `k` out of bounds under `@inbounds` and return silently
+    @test_throws ArgumentError correlate_weights!(conn, 1.0; targets = 21:40, seed = UInt64(2))
+end

@@ -13,7 +13,7 @@
 # megakernel. The launch (Fused.jl) loops the groups, launching the SAME per-neuron kernel once per
 # group over its range with that group's CONCRETE model and an index `offset`. Each launch is
 # monomorphic, so it specialises exactly like the single-model kernel; and the homogeneous path
-# (a bare model, or one group spanning `1:N`) is unchanged.
+# (a bare model, or one group spanning `1:N`) costs nothing extra.
 
 """
     MultiModel(models, sizes)
@@ -67,6 +67,10 @@ function _check_hetero(mm::MultiModel, N::Integer)
         expected = last(r) + 1
     end
     expected - 1 == N || error("MultiModel ranges cover $(expected - 1) neurons but N = $N")
+    # A group's model is resolved at the GLOBAL neuron index, so a `Heterogeneous` group's override
+    # arrays span the whole population; unchecked, the kernel reads past a group-length array under
+    # `@inbounds` and runs that group on garbage parameters.
+    foreach(m -> _check_hetero(m, N), mm.models)
     return nothing
 end
 
@@ -92,11 +96,13 @@ end
 # potential (groups may differ in EL); an explicit v0 (scalar / (lo,hi) / vector) applies over the
 # whole flat population via the single-model logic. The scalar-model method is the identity wrapper,
 # so the homogeneous path is byte-identical.
-@inline _init_voltage_model!(V, model::AbstractNeuronModel, v0, ::Type{T}, seed) where {T} =
+@inline _init_voltage_model!(V, model::AbstractNeuronModel, v0, ::Type{T}, seed, offset::Int = 0) where {T} =
     _init_voltage!(V, T(_resting(model)), v0, T, seed)
-function _init_voltage_model!(V, mm::MultiModel, ::Nothing, ::Type{T}, seed) where {T}
+function _init_voltage_model!(V, mm::MultiModel, ::Nothing, ::Type{T}, seed, offset::Int = 0) where {T}
     for (m, r) in zip(mm.models, mm.ranges)
-        fill!(view(V, r), T(_resting(m)))
+        # per-group, and per-neuron for a Heterogeneous group; the group's `V` is a view but its
+        # override arrays are indexed globally, so pass the range's offset through
+        _init_voltage_model!(view(V, r), m, nothing, T, seed, offset + first(r) - 1)
     end
     return V
 end

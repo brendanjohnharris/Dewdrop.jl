@@ -5,7 +5,7 @@
 # `u`-vector + `f(du,u,p,t)`. The within-step schedule is compiled to compile-time
 # `Val(::Symbol)` dispatch (no runtime Symbol comparison in the hot loop). The dense
 # per-step phases are written as fused, allocation-free broadcasts over the SoA so the
-# same code is GPU-ready (the sparse synaptic scatter, added later, is a separate kernel).
+# same code is GPU-ready (the sparse synaptic scatter is a separate kernel).
 
 import CommonSolve: init, step!, solve!, solve
 export init, step!, solve!, solve
@@ -183,6 +183,31 @@ Adapt.adapt_structure(to, integ::DewdropIntegrator) = DewdropIntegrator(
     integ.backend, integ.subpops, integ.positions, integ.progress,
 )
 
+# `input` / `streams` / `syn_overrides` / `model_overrides` are per-MEMBER data and only the batched
+# path reads them; `backend` / `step` choose a dense-step implementation and only the scalar path reads
+# them (the batched step is always the fused megakernel). Accepting either set on the wrong path and
+# ignoring it is a silent misconfiguration, so name the offender instead.
+function _check_batch_kwargs(batch, input, streams, syn_overrides, model_overrides, backend, step)
+    if batch === nothing
+        for (k, v) in ((:input, input), (:streams, streams), (:syn_overrides, syn_overrides), (:model_overrides, model_overrides))
+            v === nothing || throw(
+                ArgumentError(
+                    "`$k` is per-member data read only by a batched solve; pass `batch = B` as well, " *
+                        "or set the value on the network itself"
+                )
+            )
+        end
+    else
+        (backend isa Auto && step === nothing) || throw(
+            ArgumentError(
+                "`backend` / `step` do not apply to a batched solve: `batch = B` always runs the fused " *
+                    "megakernel. Drop the keyword, or run the members as separate scalar solves."
+            )
+        )
+    end
+    return nothing
+end
+
 """
     init(prob::DewdropNetwork, alg::FixedStep; kwargs...) -> DewdropIntegrator
 
@@ -202,9 +227,10 @@ function CommonSolve.init(
     # (the L2-spill crossover, see `_resolve_scatter`); CPU / plastic projections → always `:edge`.
     # Resolved BEFORE the batched dispatch so both the scalar and batched paths receive a concrete mode.
     scatter = _resolve_scatter(scatter, prob.arch, prob.projections)
-    # `batch = B` routes to the ensemble (tensor) batched path (src/Batch.jl); the scalar B=1
-    # path below is unchanged (batch defaults to `nothing`), so existing runs are bit-identical.
-    # (the batched path is always the fused megakernel, so the backend does not apply there.)
+    # `batch = B` routes to the ensemble (tensor) batched path (src/Batch.jl); `batch = nothing`
+    # (the default) takes the scalar path below. Each path reads a DIFFERENT subset of the keywords, so
+    # say which ones do not apply rather than accepting them and quietly doing nothing with them.
+    _check_batch_kwargs(batch, input, streams, syn_overrides, model_overrides, backend, step)
     batch === nothing || return _batched_init(
         prob, alg, Int(batch);
         record, v0, v0_seed, input, streams, sync_every, scatter, progress, syn_overrides, model_overrides
@@ -248,6 +274,7 @@ function CommonSolve.init(
     monitors = _make_monitors(record, arch, T, N, nsteps, prob.subpops)
     compaction = _make_compaction(scatter, arch, N)
     _validate_stimuli(prob.stimuli, N, nsteps, dt)                    # shape-check the `stimuli =` extras vs (N, nsteps, dt)
+    foreach(p -> _check_synapse(p.synapse, nsteps), prob.projections)   # and a replay synapse's own per-step data
     stimuli = _assemble_stimuli(prob.input, prob.drive, prob.noise, prob.stimuli)   # ConstantCurrent + drive? + noise? + extras
     return DewdropIntegrator(
         prob.model, state, stimuli, dt,
@@ -337,24 +364,27 @@ end
 # Within-step phases. Synapse work iterates the projection tuple, dispatching each
 # operation on the per-projection synaptic-state type (compile-time unrolled), so a
 # population can carry any mix of CUBA / COBA / delta projections, and an unconnected
-# population (`syns === ()`) compiles the synapse work away entirely. ---
+# population (`syns === ()`) compiles the synapse work away entirely.
 
 # Per-projection serial (broadcast) phases, generated from the descriptor and dispatched on the coupling
 # mode + accumulator arity. Broadcasts stay `@.` (GPU-safe); the membrane math lives ONLY in `_syn_membrane`
-# (broadcast through `_syn_Δgtot` / `_syn_Δitot`), so serial ≡ fused by construction. Byte-identical to the
-# prior hand-written hooks (same operations, same order).
+# (broadcast through `_syn_Δgtot` / `_syn_Δitot`), so serial ≡ fused by construction.
 
-# deliver: a voltage-jump synapse adds the due increment straight to V; an accumulator synapse fills its
-# 1 or 2 accumulators from the ring (the same `deliver_due!` / `deliver_due_dual!` as before).
+# Delivery is split across the step so the accumulate reads the START-of-step V: an accumulator
+# synapse takes its ring value in `:deliver`, a voltage-jump synapse only in `:integrate`, after
+# `_accum_base!` has read V. Matches BrainPy and Brian2, and keeps Serial identical to Fused.
 @inline _deliver!(s::SynState, integ) = _syn_deliver!(_syn_couple(typeof(s.model)), s, integ)
-@inline _syn_deliver!(::Val{:jump}, s, integ) = (deliver_due!(integ.state.state.V, s.buf, integ.n); nothing)
+@inline _syn_deliver!(::Val{:jump}, s, integ) = nothing
 @inline _syn_deliver!(::Union{Val{:current}, Val{:conductance}}, s, integ) = (_deliver_acc!(values(s.acc), s.buf, integ.n); nothing)
+@inline _deliver_jump!(s::SynState, integ) = _syn_deliver_jump!(_syn_couple(typeof(s.model)), s, integ)
+@inline _syn_deliver_jump!(::Val{:jump}, s, integ) = (deliver_due!(integ.state.state.V, s.buf, integ.n); nothing)
+@inline _syn_deliver_jump!(::Union{Val{:current}, Val{:conductance}}, s, integ) = nothing
 @inline _deliver_acc!(a::Tuple{Any}, buf, n) = deliver_due!(a[1], buf, n)
 @inline _deliver_acc!(a::Tuple{Any, Any}, buf, n) = deliver_due_dual!(a[1], a[2], buf, n)
 
 # accumulate: broadcast the two halves of `_syn_membrane` into gtot / itot. `m` broadcasts as a scalar (via
-# `broadcastable`), `Ref(coeffs)` too; the accumulator arrays splat in. The recompute of the conductance
-# amplitude across the gtot / itot broadcasts mirrors the prior COBA / dual two-broadcast form exactly.
+# `broadcastable`), `Ref(coeffs)` too; the accumulator arrays splat in. The conductance amplitude is
+# recomputed in each of the two broadcasts rather than cached, so neither depends on the other.
 @inline _syn_Δgtot(m, c, v, acc...) = _syn_membrane(m, acc, c, v)[1]
 @inline _syn_Δitot(m, c, v, acc...) = _syn_membrane(m, acc, c, v)[2]
 @inline _accumulate!(s::SynState, gtot, itot, V) = _syn_accumulate!(_syn_couple(typeof(s.model)), s, gtot, itot, V)
@@ -385,6 +415,8 @@ end
 # Compile-time tuple unrolls (dispatch on each element's concrete type → no runtime dispatch).
 @inline _deliver_all!(::Tuple{}, integ) = nothing
 @inline _deliver_all!(s::Tuple, integ) = (_deliver!(first(s), integ); _deliver_all!(Base.tail(s), integ))
+@inline _deliver_jump_all!(::Tuple{}, integ) = nothing
+@inline _deliver_jump_all!(s::Tuple, integ) = (_deliver_jump!(first(s), integ); _deliver_jump_all!(Base.tail(s), integ))
 @inline _accum_all!(::Tuple{}, gtot, itot, V) = nothing
 @inline _accum_all!(s::Tuple, gtot, itot, V) = (_accumulate!(first(s), gtot, itot, V); _accum_all!(Base.tail(s), gtot, itot, V))
 @inline _decay_all!(::Tuple{}) = nothing
@@ -402,9 +434,7 @@ end
 
 @inline function run_phase!(::Val{:deliver}, integ::DewdropIntegrator)
     _synprestep_all!(integ.syns, integ)                    # streaming drives generate + scatter their own events
-    _deliver_all!(integ.syns, integ)                       # ring-buffer due → per-projection state (or V, for delta)
-    V = integ.state.state.V
-    _apply_kicks!(integ.stimuli, V, integ.model, integ.n, _step_time(integ), integ.dt)   # :kick stimuli → V
+    _deliver_all!(integ.syns, integ)                       # ring-buffer due → per-projection accumulators
     return nothing
 end
 
@@ -424,7 +454,7 @@ end
 # (Fused.jl) so the two paths can't drift; writes through to `integ.itot`/`integ.gtot`.
 @inline function _accum_base!(integ, V)
     m = integ.model; n = integ.n; dt = integ.dt; t = _step_time(integ)
-    _stim_itot!(integ.itot, integ.stimuli, m, n, t, dt)    # itot base: first :current assigns (reproduces `.= input`)
+    _stim_itot!(integ.itot, integ.stimuli, V, m, n, t, dt)   # itot base: first :current assigns (reproduces `.= input`)
     fill!(integ.gtot, zero(eltype(integ.gtot)))
     _accum_all!(integ.syns, integ.gtot, integ.itot, V)
     _stim_gtot!(integ.gtot, integ.itot, integ.stimuli, V, m, n, t, dt)   # prescribed :conductance g(t) (no-op today)
@@ -439,10 +469,13 @@ end
     gtot, itot = integ.gtot, integ.itot
     # per-neuron conductance + input current from external input and every projection
     _accum_base!(integ, V)                                 # itot ← input, gtot ← 0, + per-projection accumulate
+    # Only now do the instantaneous V writes land, so the accumulate above saw the start-of-step V.
+    _deliver_jump_all!(integ.syns, integ)                  # :jump synapses (delta) → V
+    _apply_kicks!(integ.stimuli, V, m, integ.n, _step_time(integ), integ.dt)   # :kick stimuli → V
     Vr = reset_value(m)
     z = zero(eltype(refrac))
     # subthreshold membrane step, dispatched on the model's state shape: V-only models (LIF, every
-    # @neuron) take the exact prior broadcast unchanged; adaptation models co-advance (V, w).
+    # @neuron) take a single broadcast; adaptation models co-advance (V, w).
     _integrate_membrane!(m, st, gtot, itot, dt, refrac, Vr, z)
     _apply_noises!(integ.stimuli, V, refrac, z, m, integ.n, _step_time(integ), dt)   # :noise stimuli (no-op if none)
     @. refrac = max(refrac - dt, z)
@@ -627,8 +660,9 @@ particular spike monitor; by default the first one is used. `of` (a subpopulatio
 function raster(sol::DewdropSolution; name = nothing, of = nothing)
     res = _find_spikes(sol.record, name)
     res === nothing && error("no spikes recorded: pass `record = (spikes = Spikes(),)` to `solve`")
+    _require_unbinned(res, "raster")
     idx = findall(res.data)                          # CartesianIndex(recorded-row, column)
-    times = [I[2] * res.every * sol.dt for I in idx]
+    times = [_coltime(res, I[2], sol.dt, sol.tspan[1]) for I in idx]
     ids = [_neuronid(res.idx, I[1]) for I in idx]
     of === nothing && return times, ids
     r = _subrange(sol.subpops, of)                   # restrict to subpop `of`, rebasing ids into 1:|of|

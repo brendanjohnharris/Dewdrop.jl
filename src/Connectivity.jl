@@ -33,7 +33,7 @@ struct SparseCSR{
     post::PV     # length nedges, postsynaptic target indices
     weight::WV   # length nedges, per-synapse weights
     delay::DV    # length nedges, per-synapse conduction delays (integer time steps)
-    src::PV      # length nedges, presynaptic source of each edge (the inverse of rowptr) ---
+    src::PV      # length nedges, presynaptic source of each edge (the inverse of rowptr);
     # materialised so the GPU scatter can be EDGE-parallel (one thread per synapse) without a
     # per-edge binary search; sorted ascending (edges are grouped by source), so the idle-thread
     # `spiked[src[e]]` reads stay coalesced at sparse firing.
@@ -48,7 +48,7 @@ export SparseCSR
 # every other quantity), resolved to integer steps at the solve `dt`, so its meaning is dt-independent.
 # `steps(n)` is the escape for an exact step count. The connectome stores the delay AS GIVEN (Float ms or
 # Int steps); `init` resolves it via [`_resolve_delays`](@ref) once `dt` is known (the per-step scatter
-# always reads the resolved integer-step connectome). ---
+# always reads the resolved integer-step connectome).
 struct Steps
     n::Int
 end
@@ -78,9 +78,22 @@ function SparseCSR(
     Tw = isempty(edges) ? Float32 : typeof(edges[1][3])
     nE = length(edges)
 
+    # Validate the edge list here, once: every scatter reads `post[e]` under `@inbounds`, so an
+    # out-of-range target would be an out-of-bounds write into the delay ring rather than an error.
     counts = zeros(Int, npre)
     for e in edges
-        counts[e[1]] += 1
+        pre, p, d = e[1], e[2], _edgedelay(e[4])
+        (1 ≤ pre ≤ npre) || throw(ArgumentError("SparseCSR: edge source $pre is outside 1:$npre"))
+        (1 ≤ p ≤ npost) || throw(ArgumentError("SparseCSR: edge target $p is outside 1:$npost"))
+        # A 0-step delay deposits into the slot the deliver phase has just cleared this step, so it is
+        # next read a whole ring length later: silently the LONGEST delay rather than the shortest.
+        (d isa Integer && d < 1) && throw(
+            ArgumentError(
+                "SparseCSR: edge delay $d is < 1 step. The fixed-step engine delivers no earlier than " *
+                    "the next step; use `steps(n)` with n ≥ 1, or a physical (millisecond) delay."
+            )
+        )
+        counts[pre] += 1
     end
     # `index_type = Int32` halves the rowptr/post/delay bandwidth on the scatter (the
     # bandwidth-bound inner loop): safe whenever nedges < 2^31. Counts/positions are computed in
@@ -187,9 +200,18 @@ function correlate_weights!(
     lo = first(targets)
     n = length(targets)
     post = Array(conn.post)          # host copy (no scalar device indexing); bulk on GPU, no-op-ish on CPU
+    # `k` is sized by `targets`, but the index comes from EDGE DATA, so it cannot be assumed in range:
+    # unchecked, a `targets` narrower than the connectome's actual post set writes outside `k`.
     k = zeros(Int, n)
-    @inbounds for p in post
-        k[Int(p) - lo + 1] += 1
+    for p in post
+        j = Int(p) - lo + 1
+        (1 ≤ j ≤ n) || throw(
+            ArgumentError(
+                "correlate_weights!: edge target $p lies outside `targets` = $targets. The in-degree " *
+                    "normalisation is taken over `targets`, so every edge of `conn` must land in it."
+            )
+        )
+        @inbounds k[j] += 1
     end
     sum_k = 0.0
     sum_sqrt = 0.0
@@ -204,9 +226,9 @@ function correlate_weights!(
     J_rec = sum_sqrt > 0 ? J * sum_k / sum_sqrt : 0.0
     T = eltype(conn.weight)
     w = Vector{T}(undef, length(post))
-    # Per-edge weight = wm · (unit-mean factor). Gaussian (default): 1 + jitter·z, bit-identical to the
-    # original `wm + z·jitter·wm`. Lognormal: exp(s·z − s²/2), s = √log(1+jitter²), so E[factor] = 1 and
-    # CV = jitter exactly --- a heavy right tail (few strong synapses) at FIXED mean, leaving the 1/√k balance
+    # Per-edge weight = wm · (unit-mean factor). Gaussian (default): 1 + jitter·z. Lognormal:
+    # exp(s·z − s²/2), s = √log(1+jitter²), so E[factor] = 1 and
+    # CV = jitter exactly: a heavy right tail (few strong synapses) at FIXED mean, leaving the 1/√k balance
     # untouched; `jitter` is the coefficient of variation for both. z is the same reproducible counter draw.
     slog = dist === :lognormal ? sqrt(log1p(Float64(jitter)^2)) : 0.0
     @inbounds for e in eachindex(post)
@@ -243,16 +265,25 @@ the presynaptic index `pre`: the latter gives excitatory/inhibitory neurons sign
 weights. `sources` / `targets` restrict the presynaptic / postsynaptic neuron sets (for
 named-subpopulation projections, e.g. `:E => :I`); flat `pre` / `post` indices stay
 absolute (`1:npre` / `1:npost`). Returns a [`SparseCSR`](@ref).
+
+!!! note "`allow_self` defaults to `true` here"
+    [`distance_prob`](@ref) and [`distance_fixed_count`](@ref) default to `false` instead, and
+    [`project!`](@ref) passes `false` to all three unless told otherwise. So a bare `fixed_prob` call is
+    the one place autapses appear by default; pass `allow_self = false` to match the others.
 """
 function fixed_prob(
         arch::AbstractArchitecture, npre::Integer, npost::Integer, p::Real;
         weight, delay, seed::Unsigned, allow_self::Bool = true, sources = 1:npre, targets = 1:npost,
         index_type::Type = Int,
     )
-    wtype = typeof(to_weight(weight isa Function ? weight(1) : weight))
-    dtype = typeof(_delayval(delay isa Function ? delay(1) : delay))   # Int (steps) or Float (ms)
+    probe = first(sources)                                             # type probe: a real source index
+    wtype = typeof(to_weight(weight isa Function ? weight(probe) : weight))
+    dtype = typeof(_delayval(delay isa Function ? delay(probe) : delay))   # Int (steps) or Float (ms)
     edges = Tuple{Int, Int, wtype, dtype}[]
     pT = Float64(p)
+    # unchecked, p > 1 gives `log1p(-p)` a negative argument and the sampler fails with a DomainError
+    # from inside the gap draw rather than saying which argument was wrong
+    0 ≤ pT ≤ 1 || throw(ArgumentError("fixed_prob: connection probability p must be in [0, 1] (got $p)"))
     pT > 0 || return SparseCSR(arch, edges; npre = npre, npost = npost, index_type = index_type)
     ntargets = length(targets)
     sizehint!(edges, ceil(Int, 1.1 * pT * length(sources) * ntargets))
@@ -263,7 +294,7 @@ function fixed_prob(
     # realisation from per-pair sampling, but the same Bernoulli(p) marginal per target).
     # Sampling runs over the LOCAL target index `1:ntargets`, then maps through `targets` to the
     # absolute post index; with the default `targets = 1:npost` the map is the identity, so the
-    # realised connectome (and draw sequence) is unchanged.
+    # realised connectome (and draw sequence) is the same as sampling absolute indices.
     invlog = inv(log1p(-pT))                              # 1/log(1-p) < 0
     for pre in sources
         w = wtype(to_weight(weight isa Function ? weight(pre) : weight))

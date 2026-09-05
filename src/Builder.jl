@@ -70,7 +70,7 @@ end
 export network
 
 # the builder's float type from `tspan` (units stripped); falls back to Float64 for plain numbers.
-float_type_of_tspan(tspan) = typeof(to_time(tspan[1]) + to_time(tspan[2]) + 0.0)
+float_type_of_tspan(tspan) = typeof(float(to_time(tspan[1]) + to_time(tspan[2])))
 
 """
     population!(nb, name, model, N; input=0.0, positions=nothing) -> nb
@@ -124,8 +124,39 @@ function project!(
         nb::NetworkBuilder, pair::Pair{Symbol, Symbol}, synapse::AbstractSynapseModel;
         plasticity = nothing, kw...
     )
-    push!(nb.projspecs, _ProjSpec(pair.first, pair.second, synapse, NamedTuple(kw), plasticity))
+    nt = NamedTuple(kw)
+    _check_projkw(nt, pair)
+    push!(nb.projspecs, _ProjSpec(pair.first, pair.second, synapse, nt, plasticity))
     return nb
+end
+
+# `_build_projection` reads these as plain fields, so a missing one would otherwise surface as
+# `type NamedTuple has no field weight` at `build` time, far from the offending call.
+const _PROJ_KWARGS = (
+    :p, :weight, :delay, :seed, :connectivity, :kernel, :count, :allow_self, :period, :adjust, :index_type,
+)
+
+function _check_projkw(kw::NamedTuple, pair)
+    # `_build_projection` reads the keywords it knows by name, so an unrecognised one (a misspelling,
+    # typically) is silently dropped and the projection is built with that setting's default.
+    unknown = filter(k -> !(k in _PROJ_KWARGS), keys(kw))
+    isempty(unknown) || throw(
+        ArgumentError(
+            "project!(:$(pair.first) => :$(pair.second), …) got unknown keyword(s) " *
+                join(("`$k`" for k in unknown), ", ", " and ") *
+                "; supported: " * join(("`$k`" for k in _PROJ_KWARGS), ", ")
+        )
+    )
+    _given(k) = haskey(kw, k) && getfield(kw, k) !== nothing
+    _given(:connectivity) && return nothing                    # prebuilt: nothing else is read
+    needed = _given(:kernel) ? (:weight, :delay, :seed) : (:p, :weight, :delay, :seed)
+    missing_kw = filter(k -> !haskey(kw, k), needed)
+    isempty(missing_kw) || throw(ArgumentError(
+        "project!(:$(pair.first) => :$(pair.second), …) is missing " *
+            join(("`$k`" for k in missing_kw), ", ", " and ") *
+            (_given(:kernel) ? " (a `kernel` projection needs `weight`, `delay` and `seed`)" :
+             " (pass `p` for fixed-probability wiring, `kernel` for distance-dependent, or `connectivity` for a prebuilt connectome)")))
+    return nothing
 end
 project!(nb::NetworkBuilder, src::Symbol, synapse::AbstractSynapseModel; kw...) =
     project!(nb, src => :all, synapse; kw...)
@@ -163,7 +194,7 @@ function drive!(
         fire_seed = nothing, adjust = nothing, index_type::Type = Int
     )
     # `seed` keys the wiring (source→target connectome). `fire_seed` keys the per-step Poisson firing; default
-    # `nothing` → reuse `seed` (so a lone drive is unchanged). Give two drives the SAME `fire_seed` with
+    # `nothing` → reuse `seed`, which is what a lone drive wants. Give two drives the SAME `fire_seed` with
     # DIFFERENT `seed` to make them a shared common-mode source (the same external spikes, independent fan-out).
     push!(
         nb.projspecs, _ProjSpec(

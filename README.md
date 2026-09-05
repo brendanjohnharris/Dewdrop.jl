@@ -72,7 +72,7 @@ Experimental, but broad. Implemented and tested:
 - **Connectivity**: fixed-probability and spatial (distance-kernel / top-k) connectomes over
   point positions, with periodic boundaries and narrow (Int32) index options.
 - **Drive & noise**: counter-based (reproducible) RNG, per-neuron Poisson drive, streaming
-  Poisson sources, and an exact Ornstein--Uhlenbeck `WhiteNoise` SDE term.
+  Poisson sources, and an exact Ornstein-Uhlenbeck `WhiteNoise` SDE term.
 - **Plasticity**: event-driven STDP (mutable weights + traces).
 - **Engine**: fixed-step `CommonSolve` interface with pluggable execution backends
   (`Serial`/`Fused`/`Turbo`/`Differentiable`, chosen by `Auto`), a CUDA GPU path via a fused
@@ -81,7 +81,7 @@ Experimental, but broad. Implemented and tested:
   subpopulations (`sol[:E]`), `Unitful` inputs, labelled
   `TimeseriesBase` outputs, and host-side statistical observables.
 
-Currently validated against the analytic LIF f-I curve and the Brunel (2000) and Vogels--Abbott regimes, and
+Currently validated against the analytic LIF f-I curve and the Brunel (2000) and Vogels-Abbott regimes, and
 cross-checked spike-for-spike against Brian2/brian2cuda, NEST/NEST-GPU, GeNN, and BrainPy. The
 design is CPU-first with GPU-readiness enforced in CI (via `JLArrays` + `allowscalar(false)`); the
 test suite is Aqua- and JET-clean.

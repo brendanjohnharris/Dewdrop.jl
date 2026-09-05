@@ -9,7 +9,7 @@ same simulation.
 
 ```
 simulator_comparisons/
-  spec.toml                 # THE shared test-problem spec — every simulator reads this
+  spec.toml                 # THE shared test-problem spec: every simulator reads this
   run_all.sh                # run every simulator sequentially, then compare
   compare_simulators.jl     # the Julia driver: discovers <sim>/out, verifies, plots scaling
   dewdrop/  run.jl          # Dewdrop  (Julia):  Serial / Fused / Turbo × cpu/gpu
@@ -35,7 +35,7 @@ a **language-agnostic splitmix64 fixed-in-degree graph** (algorithm in `spec.tom
 simulator builds the *byte-identical* connectome (verified across Julia and Python). The spec sweeps
 a **doubling range of sizes** (`Ns = [1000 … 32000]`) so the comparison reveals scaling behaviour.
 
-## Data contract
+## Data format
 
 Each `<sim>/run.*` writes two CSVs into `<sim>/out/`:
 

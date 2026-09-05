@@ -32,7 +32,7 @@ bandwidth-bound scatter; safe whenever `nedges < 2^31` (`Int` is the default).
 
 ## Random connectivity: `fixed_prob`
 
-[`fixed_prob`](@ref) is Erdos--Renyi: each ordered `(pre, post)` pair is an edge with probability
+[`fixed_prob`](@ref) is Erdos-Renyi: each ordered `(pre, post)` pair is an edge with probability
 `p`, sampled reproducibly from the counter-based RNG so a given `seed` yields a fixed, copyable
 connectome.
 

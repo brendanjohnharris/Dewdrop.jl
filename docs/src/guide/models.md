@@ -13,7 +13,7 @@ or GPU and across every [backend](backends.md); only the parameters live in it, 
 trivially copyable, `Adapt`-movable, and reproducible. This page tours the built-in zoo.
 
 Each model declares its per-unit state variables (the struct-of-arrays column names). Subthreshold
-dynamics use the **exact linear propagator** (Rotter--Diesmann) for the linear part, kept distinct
+dynamics use the **exact linear propagator** (Rotter-Diesmann) for the linear part, kept distinct
 from the discontinuous spike reset; nonlinear or adaptation terms are layered on as a forcing current
 or an extra conductance over that propagator.
 
@@ -72,7 +72,7 @@ adaptation time constant. State: `V`, `refrac`, `w`.
 
 ### AdEx
 
-[`AdEx`](@ref) (Brette--Gerstner) adds an exponential spike-initiation term, so `V` diverges past a
+[`AdEx`](@ref) (Brette-Gerstner) adds an exponential spike-initiation term, so `V` diverges past a
 numerical cutoff `Vpeak` rather than crossing a hard threshold at `VT`.
 
 ```math

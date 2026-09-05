@@ -50,7 +50,11 @@ function _commas(n::Integer)
 end
 
 # host-resident? (avoid triggering a device reduction at show-time for extrema summaries)
-_onhost(x::AbstractArray) = x isa Array
+_onhost(::Array) = true
+_onhost(::AbstractRange) = true
+_onhost(x::SubArray) = _onhost(parent(x))          # a view is host-resident iff its storage is
+_onhost(x::Base.ReshapedArray) = _onhost(parent(x))
+_onhost(::AbstractArray) = false
 
 # units: the canonical display unit for a field, where the dimension is known (built-ins only)
 # `_field_dims(::Type)` defaults to `nothing` (e.g. @neuron models) → bare numbers, no invented units.

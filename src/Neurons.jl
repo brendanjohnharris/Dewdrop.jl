@@ -2,7 +2,7 @@
 # scalar, allocation-free functions for its dynamics, threshold and reset.
 #
 # The subthreshold update is deliberately structured as the EXACT linear propagator
-# (Rotter--Diesmann) for the linear part of the dynamics, kept distinct from the
+# (Rotter-Diesmann) for the linear part of the dynamics, kept distinct from the
 # discontinuous reset. For models with nonlinear coupling (e.g. AdEx's adaptation
 # variable) the extension point is a symplectic-Euler coupling step layered on top of
 # this propagator (Baronig et al. 2025); LIF, being fully linear, needs only the

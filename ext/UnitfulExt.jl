@@ -2,7 +2,7 @@ module UnitfulExt
 
 # Optional Unitful boundary: physical-unit inputs (`τ = 20u"ms"`, `g = 6u"nS"`) are converted
 # and stripped to Dewdrop's coherent canonical float system at construction, so the engine state
-# stays plain isbits floats (the GPU contract). Activated automatically by `using Unitful`.
+# stays plain isbits floats (what the GPU path requires). Activated automatically by `using Unitful`.
 #
 # Canonical system (coherent: the dynamics carry no stray factors):
 #   time ms · voltage mV · conductance nS · current pA · capacitance pF · resistance GΩ · rate kHz

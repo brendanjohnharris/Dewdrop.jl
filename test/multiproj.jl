@@ -12,7 +12,7 @@ using JLArrays
     conn = Dewdrop.SparseCSR(Dewdrop.CPU(), [(1, 2, 15.0, 1)]; npre = 2, npost = 2)
     base() = (input = [0.5, 0.0], tspan = (0.0, 300.0))
 
-    # two CUBA projections (fast + slow) onto neuron 2 — contributions sum
+    # two CUBA projections (fast + slow) onto neuron 2: contributions sum
     p_fast = Projection(CurrentSynapse(τ = 2.0), conn)
     p_slow = Projection(CurrentSynapse(τ = 10.0), conn)
     sol2 = solve(DewdropNetwork(m, 2; base()..., projections = (p_fast, p_slow)), FixedStep(0.1))

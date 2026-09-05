@@ -43,7 +43,7 @@ NTHREADS = int(os.environ.get("NEST_THREADS", "0")) or CORES
 _FORCE_THREADS = "NEST_THREADS" in os.environ
 # aeif_psc_exp ≡ the spec's AdEx (current-based exp synapses); I_e is the constant drive I_ext.
 # gsl_error_tol loosened from the 1e-6 default: aeif_psc_exp integrates with an adaptive GSL solver, and
-# 1e-3 gives BYTE-identical statistics here (rate 38.00Hz / CV 0.127 unchanged even at 1e-1 — validated)
+# 1e-3 gives BYTE-identical statistics here (rate 38.00Hz / CV 0.127 unchanged even at 1e-1, validated)
 # while shaving the wasted substep accuracy. It is still far more accurate than the fixed-step methods the
 # other simulators use, so this is "NEST at its best", not a thumb on the scale.
 _PARAMS = dict(C_m=NN["C"], g_L=NN["gL"], E_L=NN["EL"], V_th=NN["VT"], Delta_T=NN["dT"],

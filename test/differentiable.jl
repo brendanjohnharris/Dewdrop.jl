@@ -57,7 +57,7 @@ using ForwardDiff
     @testset "connected surrogate-gradient training (trainable weights)" begin
         # a recurrent CUBA net at surrogate-training params. The whole net is built at eltype T so a
         # ForwardDiff `Dual` flows through the state, the synapse accumulators, the delay ring, and the
-        # surrogate-WEIGHTED scatter — gradients reach the synaptic weights. Impossible before the scatter.
+        # surrogate-WEIGHTED scatter: gradients reach the synaptic weights.
         function netspikes(; R, w, N = 12, β = 25.0)
             T = promote_type(typeof(R), typeof(w))
             m = LIF(; τ = T(20.0), EL = T(0.0), Vθ = T(20.0), Vr = T(0.0), R = T(R), tref = T(0.0))
@@ -79,6 +79,33 @@ using ForwardDiff
         # gradient w.r.t. a neuron parameter through the connected path
         gR = ForwardDiff.derivative(R -> netspikes(; R = R, w = 0.3), 1.0)
         @test isfinite(gR) && gR > 0
+    end
+
+    @testset "streaming drives fire on the surrogate path too" begin
+        # A `PoissonSource` generates its events in the once-per-step `_synprestep!` hook. The surrogate
+        # step is written from `_fused_unit!`, so omitting that hook leaves the drive silent and the
+        # network trains against an input that is not there.
+        N, next = 12, 16
+        ext = Dewdrop.SparseCSR(
+            Dewdrop.CPU(), [(i, j, 1.5, 1) for i in 1:next for j in 1:N]; npre = next, npost = N
+        )
+        driven(rate, bk) = sum(
+            solve(
+                DewdropNetwork(
+                    LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 0.0, R = 1.0, tref = 0.0),
+                    N; input = 0.0, tspan = (0.0, 200.0),
+                    projection = Projection(
+                        Dewdrop.PoissonSource(CurrentSynapse(; τ = 5.0), ext; rate = rate, seed = UInt64(3)),
+                        Dewdrop._empty_csr(Dewdrop.CPU(), N)
+                    )
+                ), FixedStep(0.1); backend = bk, progress = false
+            ).spike_count
+        )
+        @test driven(200.0, Fused()) > 0                        # the drive alone makes the net fire
+        @test driven(200.0, Differentiable()) > 0               # ...and it is not silently dropped here
+        # the surrogate sums fractional spikes, so it does not match the hard count; what must hold is
+        # that the drive actually reaches the membrane, i.e. more drive gives more surrogate spiking.
+        @test driven(300.0, Differentiable()) > driven(200.0, Differentiable())
     end
 
     @testset "error paths (CPU-only, no plastic projections, canonical for now)" begin

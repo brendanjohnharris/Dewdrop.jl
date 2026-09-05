@@ -8,6 +8,7 @@
 
 const _ADVISE = Ref(true)
 const _ADVISED = Set{Symbol}()
+const _ADVISED_LOCK = ReentrantLock()      # `solve` may be called from several threads at once
 const _RUNTIME_DONE = Ref(false)   # runtime advice needs a device reduction; do it once per session
 
 """
@@ -23,9 +24,30 @@ export set_advice!
 # Re-arm the once-per-session dedup (used by the advisor's own tests).
 reset_advice!() = (empty!(_ADVISED); _RUNTIME_DONE[] = false; nothing)
 
-@inline function _emit(key::Symbol, msg::AbstractString)
-    (_ADVISE[] && key ∉ _ADVISED) || return false
-    push!(_ADVISED, key)
+# Claim `key` for this session, returning false if another call already took it.
+function _claim!(seen, key)
+    lock(_ADVISED_LOCK)
+    try
+        key ∈ seen && return false
+        push!(seen, key)
+        return true
+    finally
+        unlock(_ADVISED_LOCK)
+    end
+end
+function _claim_runtime!()
+    lock(_ADVISED_LOCK)
+    try
+        _RUNTIME_DONE[] && return false
+        _RUNTIME_DONE[] = true
+        return true
+    finally
+        unlock(_ADVISED_LOCK)
+    end
+end
+
+function _emit(key::Symbol, msg::AbstractString)
+    (_ADVISE[] && _claim!(_ADVISED, key)) || return false
     @info "Dewdrop performance advisor: " * msg * "\n(silence with `Dewdrop.set_advice!(false)` or `solve(...; advise = false)`)"
     return true
 end
@@ -116,8 +138,8 @@ function _advise_cpu(prob::DewdropNetwork)
             :turbo_cpu,
             "a large CPU network (N = $(prob.n)): the default `Auto` backend already runs the threaded " *
                 "`Fused` step here (a single fused pass, ~2× the per-phase `Serial` baseline, bit-identical). " *
-                "For close to compiled-C++ throughput, `using LoopVectorization` unlocks `backend = Turbo()` " *
-                "--- a SIMD-vectorised step for models with a Turbo specialization (AdEx, LIF, …; see the " *
+                "For close to compiled-C++ throughput, `using LoopVectorization` unlocks `backend = Turbo()`: " *
+                "a SIMD-vectorised step for models with a Turbo specialization (AdEx, LIF, …; see the " *
                 "backend docs). Turbo is spike-identical but not bit-identical (SIMD `exp`)."
         )
     end
@@ -129,10 +151,8 @@ function _run_advisor(prob::DewdropNetwork, sol, scatter::Symbol = :auto)
     _ADVISE[] || return nothing
     if _is_gpu(prob)
         _advise_static(prob)                             # GPU precision/index advice (free)
-        if !_RUNTIME_DONE[]                              # GPU firing-rate advice: one device reduction per session
-            _RUNTIME_DONE[] = true
-            _advise_runtime(prob, _firing_fraction(sol), scatter)
-        end
+        # GPU firing-rate advice: one device reduction per session
+        _claim_runtime!() && _advise_runtime(prob, _firing_fraction(sol), scatter)
     else
         _advise_cpu(prob)                                # CPU step-strategy advice (free)
     end

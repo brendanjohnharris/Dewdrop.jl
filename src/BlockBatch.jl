@@ -66,13 +66,23 @@ function _apply_sweep(net::DewdropNetwork, nt::NamedTuple)
     keys(nt) == (:input,) && return _swap_input(net, nt.input)
     return _setparams(net, (; model = _setparams(net.model, nt)))
 end
+# Rebuild a network with named fields replaced, carrying every other field through. The ONE place that
+# knows `DewdropNetwork`'s field list, so a new field cannot be silently dropped by a mode's rebuild
+# (`stimuli` was, leaving `:multirun` and input-swept members running with no stimulus at all).
+function _respec(net::DewdropNetwork; kw...)
+    over = NamedTuple(kw)
+    keep(f) = haskey(over, f) ? over[f] : getfield(net, f)
+    return DewdropNetwork(
+        keep(:model), net.n; input = keep(:input), tspan = keep(:tspan), arch = keep(:arch),
+        schedule = keep(:schedule), projections = keep(:projections), drive = keep(:drive),
+        noise = keep(:noise), subpops = keep(:subpops), positions = keep(:positions),
+        projlabels = keep(:projlabels), stimuli = keep(:stimuli),
+    )
+end
+
 # a fresh network with `input` swapped but the SAME model + projections objects (`===`), so a pure-input
 # sweep is detected as a shared-connectivity batch and runs as the fused Mode-0 ensemble.
-_swap_input(net::DewdropNetwork, input) = DewdropNetwork(
-    net.model, net.n; input = input, tspan = net.tspan,
-    arch = net.arch, schedule = net.schedule, projections = net.projections, drive = net.drive,
-    noise = net.noise, subpops = net.subpops, positions = net.positions, projlabels = net.projlabels
-)
+_swap_input(net::DewdropNetwork, input) = _respec(net; input = input)
 
 function batch(base; cartesian::Bool = false, kw...)
     isempty(kw) && error("batch(base; param = values, …) needs at least one swept parameter")
@@ -97,9 +107,14 @@ _expand_input(x::AbstractVector, n::Int) =
 # a member projection's edges shifted into its block (src/post offset by `off`); the delays stay
 # unresolved (ms / steps) and resolve at the stacked network's `init`.
 function _offset_edges(conn::SparseCSR, off::Int)
-    src, post, w, d = conn.src, conn.post, conn.weight, conn.delay
+    src, post, w, d = _host_edges(conn)
     return [(Int(src[e]) + off, Int(post[e]) + off, w[e], d[e]) for e in 1:nedges(conn)]
 end
+
+# The edge arrays as host `Array`s. A member built on a GPU holds them as device arrays, which the
+# edge-list comprehensions above would otherwise read one scalar at a time (forbidden under
+# `allowscalar(false)`, and ruinous otherwise). A no-op on CPU.
+_host_edges(conn::SparseCSR) = (Array(conn.src), Array(conn.post), Array(conn.weight), Array(conn.delay))
 
 # per-member stateful-synapse offset (so block-stacking carries EVERY member's drive)
 # A synapse is block-MERGEABLE when its behaviour is fully captured by its edge list + shared scalar params,
@@ -122,7 +137,7 @@ _offset_synapse(p::PoissonSource, off::Int, Ntot::Int, arch) =
 # A CSR with every post index shifted by `off` and the post dimension grown to `Ntot` (sources / weights /
 # delays unchanged), rebuilt on `arch`. Mirrors `_offset_edges` but shifts ONLY the target index.
 function _shift_post(conn::SparseCSR, off::Int, Ntot::Int, arch)
-    src, post, w, d = conn.src, conn.post, conn.weight, conn.delay
+    src, post, w, d = _host_edges(conn)
     edges = [(Int(src[e]), Int(post[e]) + off, w[e], d[e]) for e in 1:nedges(conn)]
     return SparseCSR(arch, edges; npre = npre(conn), npost = Ntot)
 end
@@ -154,15 +169,24 @@ function _block_diagonal(nets::AbstractVector{<:DewdropNetwork})
     # silently undriven; their `extconn` would still point at member 1's block).
     projlist = Projection[]
     for j in 1:nproj
-        syn = first(nets).projections[j].synapse
-        if _block_mergeable(syn)
+        syns = [net.projections[j].synapse for net in nets]
+        plas = [net.projections[j].plasticity for net in nets]
+        syn, rule = first(syns), first(plas)
+        # Merge only when the members really SHARE the projection's synapse and learning rule: the merged
+        # projection carries one of each, so members differing in a synaptic constant (τ, τr/τd, Erev) would
+        # all silently run member 1's. When they differ, each member gets its own projection over its own
+        # offset edges, which is the same branch a non-mergeable (self-wired) synapse already takes.
+        if _block_mergeable(syn) && all(==(syn), syns) && all(==(rule), plas)
             edges = reduce(vcat, [_offset_edges(nets[b].projections[j].conn, offs[b]) for b in 1:B])
-            push!(projlist, Projection(syn, SparseCSR(arch, edges; npre = Ntot, npost = Ntot)))
+            push!(projlist, Projection(syn, SparseCSR(arch, edges; npre = Ntot, npost = Ntot); plasticity = rule))
         else
             for b in 1:B
-                synb = _offset_synapse(nets[b].projections[j].synapse, offs[b], Ntot, arch)
+                synb = _offset_synapse(syns[b], offs[b], Ntot, arch)
                 edgesb = _offset_edges(nets[b].projections[j].conn, offs[b])
-                push!(projlist, Projection(synb, SparseCSR(arch, edgesb; npre = Ntot, npost = Ntot)))
+                push!(
+                    projlist,
+                    Projection(synb, SparseCSR(arch, edgesb; npre = Ntot, npost = Ntot); plasticity = plas[b])
+                )
             end
         end
     end
@@ -171,10 +195,11 @@ function _block_diagonal(nets::AbstractVector{<:DewdropNetwork})
     # Carry the network `drive` field and the SDE `noise` term onto the stacked network. Both are keyed by
     # global neuron index, so a uniform member drive/noise applies correctly across every block; per-member
     # DIFFERING drive/noise fields are not block-expressible (attach a per-member drive as a projection via
-    # `drive!` / `PoissonSource`, which offsets per member). Previously `noise` was silently dropped.
+    # `drive!` / `PoissonSource`, which offsets per member).
     return DewdropNetwork(
         model, Ntot; input = input, tspan = first(nets).tspan, arch = arch,
-        projections = projs, drive = first(nets).drive, noise = first(nets).noise, subpops = subpops
+        schedule = first(nets).schedule, projections = projs, drive = first(nets).drive,
+        noise = first(nets).noise, subpops = subpops, stimuli = first(nets).stimuli
     )
 end
 
@@ -186,9 +211,9 @@ The result of solving a [`NetworkBatch`](@ref): per-member per-neuron spike coun
 `duration`, the execution `mode` that ran (`:shared` / `:multirun` / `:block`), and `raw` (the underlying
 solution(s) for full access). `firing_rate(bs)` gives the per-member rates.
 """
-struct BatchSolution{T, R}
-    spike_counts::Vector{Vector{T}}
-    duration::Float64
+struct BatchSolution{T, D <: Real, R}
+    spike_counts::Vector{Vector{T}}   # always host-resident: every mode collects (a device run included)
+    duration::D                       # the member float type, so `firing_rate` keeps the model's precision
     mode::Symbol
     raw::R
 end
@@ -203,6 +228,20 @@ export BatchSolution
 _materialize_member(net::DewdropNetwork, alg, tspan) = net
 _materialize_member(spec::AbstractNetworkSpec, alg, tspan) = materialize(spec, alg; tspan = tspan)
 
+# Every execution mode keys these off member 1, and none of them is expressible per member, so a
+# member that differs is refused rather than silently replaced. Per-member external input belongs in
+# `input` (which IS per member), or in a per-member projection via `drive!` / `PoissonSource`.
+function _check_uniform_members(nets)
+    length(nets) <= 1 && return nothing
+    for (field, what) in ((:drive, "drive"), (:noise, "noise"), (:stimuli, "stimuli"), (:schedule, "schedule"))
+        vals = [getfield(n, field) for n in nets]
+        all(v -> v == first(vals), vals) || throw(ArgumentError(
+            "batch members differ in `$what`, which is not expressible per member; give every member the " *
+                "same `$what` and vary `input` (per member) or attach a per-member projection instead"))
+    end
+    return nothing
+end
+
 # pick the mode from what varies across members (cheap `===` identity checks).
 function _choose_mode(nets)
     length(nets) ≤ 1 && return :block
@@ -212,8 +251,14 @@ function _choose_mode(nets)
     # shared connectome, per-member model: prefer fused Mode A (one launch, O(edges)) if the model TYPE is
     # uniform; else the shared-connectome multi-run.
     M = typeof(nets[1].model)
-    return all(n -> typeof(n.model) === M, nets) ? :fused : :multirun
+    return (all(n -> typeof(n.model) === M, nets) && _fusable_model(M)) ? :fused : :multirun
 end
+
+# `:fused` diffs the model's OWN fields, while `_resolve_member` (src/Batch.jl) matches those override keys
+# against the underlying scalar model's fields. The two agree only for a model that IS its own leaf; a
+# wrapper (`Heterogeneous`) would contribute keys like `:base`/`:params` that match nothing, leaving every
+# member silently running member 1's parameters. Those go to the multi-run instead.
+_fusable_model(::Type{M}) where {M} = _leaf_model(M) === M
 
 # Mode 0, fused shared-CSR ensemble: ONE network broadcast over B `(N,B)` state columns; per-column input.
 function _solve_shared(nets, alg; kwargs...)
@@ -233,15 +278,15 @@ function _solve_multirun(nets, alg; threads = :auto, kwargs...)
         Projection(p.synapse, _resolve_delays(p.conn, alg.dt); plasticity = p.plasticity)
             for p in first(nets).projections
     )          # resolve delays once → ONE shared connectome
-    _net(net) = DewdropNetwork(
-        net.model, net.n; input = net.input, tspan = net.tspan, arch = net.arch,
-        schedule = net.schedule, projections = rprojs, drive = net.drive, noise = net.noise,
-        subpops = net.subpops, positions = net.positions, projlabels = net.projlabels
-    )
+    _net(net) = _respec(net; projections = rprojs)
     dothread = threads === true || (threads === :auto && length(nets) ≥ 2 && Threads.nthreads() > 1)
     sols = Vector{Any}(undef, length(nets))
     if dothread
-        inner = merge((; backend = Serial()), (; kwargs...))   # single-threaded inner (user `backend=` overrides)
+        # single-threaded inner (user `backend =` overrides). A per-neuron model (Heterogeneous /
+        # MultiModel) has no Serial method, so it keeps the fused loop, which is bit-identical at any
+        # thread count and gates its own threading on work size.
+        base_bk = _is_hetero(first(nets).model) ? Fused() : Serial()
+        inner = merge((; backend = base_bk), (; kwargs...))
         Threads.@threads for b in eachindex(nets)
             sols[b] = solve(_net(nets[b]), alg; inner...)
         end
@@ -250,7 +295,7 @@ function _solve_multirun(nets, alg; threads = :auto, kwargs...)
             sols[b] = solve(_net(nets[b]), alg; kwargs...)
         end
     end
-    return BatchSolution([s.spike_count for s in sols], duration(first(sols)), :multirun, sols)
+    return BatchSolution([collect(s.spike_count) for s in sols], duration(first(sols)), :multirun, sols)
 end
 
 # Fused Mode A, per-member params in the (N,B) megakernel: ONE shared connectome, a `BatchedModel` with
@@ -262,19 +307,22 @@ function _solve_fused(nets, alg; kwargs...)
     M = typeof(base.model)
     all(net -> typeof(net.model) === M, nets) ||
         error(":fused needs a uniform neuron-model type across members (got $(unique([typeof(net.model) for net in nets])))")
+    _fusable_model(M) ||
+        error(
+        ":fused cannot sweep a $(nameof(M)) model: its per-member overrides are matched against the " *
+            "underlying $(nameof(_leaf_model(M))) fields, so the wrapper's own fields would be silently " *
+            "ignored and every member would run member 1's parameters. Use mode = :multirun."
+    )
     overrides = Pair{Symbol, Any}[]
     for f in fieldnames(M)
         vals = [getfield(net.model, f) for net in nets]
         all(==(first(vals)), vals) || push!(overrides, f => collect(vals))   # only the fields that vary
     end
-    bmodel = isempty(overrides) ? base.model : BatchedModel(base.model, NamedTuple(overrides))
     inputmat = reduce(hcat, [_expand_input(net.input, net.n) for net in nets])
-    prob = DewdropNetwork(
-        bmodel, base.n; input = base.input, tspan = base.tspan, arch = base.arch,
-        schedule = base.schedule, projections = base.projections, drive = base.drive, noise = base.noise,
-        subpops = base.subpops, positions = base.positions, projlabels = base.projlabels
-    )
-    bsol = solve(prob, alg; batch = B, input = inputmat, kwargs...)
+    prob = _respec(base)
+    # Hand the overrides to `solve` rather than wrapping the model here: it uploads them to `arch`,
+    # which a `BatchedModel` built from host vectors would not survive on a GPU.
+    bsol = solve(prob, alg; batch = B, input = inputmat, model_overrides = NamedTuple(overrides), kwargs...)
     return BatchSolution([collect(view(bsol.spike_count, :, b)) for b in 1:B], bsol.nsteps * bsol.dt, :fused, bsol)
 end
 
@@ -284,7 +332,7 @@ function _solve_block(nets, alg; kwargs...)
     Ns = [net.n for net in nets]
     offs = [0; cumsum(Ns)[1:(end - 1)]]   # exclusive prefix sum of member sizes (member b's base offset)
     return BatchSolution(
-        [sol.spike_count[(offs[b] + 1):(offs[b] + Ns[b])] for b in eachindex(nets)],
+        [collect(sol.spike_count[(offs[b] + 1):(offs[b] + Ns[b])]) for b in eachindex(nets)],
         duration(sol), :block, sol
     )
 end
@@ -302,6 +350,7 @@ function CommonSolve.solve(
         threads = :auto, kwargs...
     )
     nets = DewdropNetwork[_materialize_member(m, alg, tspan) for m in b.members]
+    _check_uniform_members(nets)
     m = mode === :auto ? _choose_mode(nets) : mode
     m === :shared && return _solve_shared(nets, alg; kwargs...)
     m === :multirun && return _solve_multirun(nets, alg; threads = threads, kwargs...)

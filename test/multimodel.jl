@@ -60,6 +60,30 @@ end
     @test mm1.state.state.V ≈ bare.state.state.V
 end
 
+@testset "MultiModel: a Heterogeneous group is resolved at the flat neuron index" begin
+    # A group's model is resolved at the GLOBAL neuron index, so its override arrays span the whole
+    # population. A group-length array would be read past its end under `@inbounds` (silently wrong),
+    # and the per-group `V` init reads a VIEW, so it must be offset to the same global position.
+    lif(vθ; EL = -70.0) = LIF(; τ = 20.0, EL = EL, Vθ = vθ, Vr = -60.0, R = 100.0, tref = 2.0)
+    run8(m) = solve(DewdropNetwork(m, 8; input = 0.32, tspan = (0.0, 200.0)), FixedStep(0.1); progress = false)
+    lo = sum(run8(lif(-50.0)).spike_count) ÷ 8       # per-neuron count at each uniform threshold
+    hi = sum(run8(lif(-55.0)).spike_count) ÷ 8
+    @test hi > lo > 0
+
+    # full-length override, low threshold on the second group only
+    h = Heterogeneous(lif(-50.0); Vθ = vcat(fill(-50.0, 4), fill(-55.0, 4)))
+    sc = run8(Dewdrop.MultiModel([lif(-50.0), h], [4, 4])).spike_count
+    @test sc[1:4] == fill(lo, 4) && sc[5:8] == fill(hi, 4)
+
+    # a group-length array is refused, not read out of bounds
+    @test_throws ArgumentError run8(Dewdrop.MultiModel([lif(-50.0), Heterogeneous(lif(-50.0); Vθ = fill(-55.0, 4))], [4, 4]))
+
+    # the per-group default v0 reads the group's OWN slice of a heterogeneous EL
+    hEL = Heterogeneous(lif(-50.0); EL = vcat(fill(-70.0, 4), fill(-61.0, 4)))
+    integ = init(DewdropNetwork(Dewdrop.MultiModel([lif(-50.0), hEL], [4, 4]), 8; input = 0.0, tspan = (0.0, 1.0)), FixedStep(0.1))
+    @test integ.state.state.V == vcat(fill(-70.0, 4), fill(-61.0, 4))
+end
+
 @testset "MultiModel: batched run errors clearly (scope)" begin
     mm = Dewdrop.MultiModel([mE(), mI()], [30, 30])
     prob = DewdropNetwork(mm, 60; input = vcat(fill(700.0, 30), fill(400.0, 30)), tspan = (0.0, 50.0))

@@ -107,7 +107,61 @@ end
     @test mua(sol; bin = 5.0) |> length == sol.nsteps ÷ 50     # bin=5ms / dt=0.1 → 50-step bins
     psd, freqs = power_spectrum(sol; n_segments = 2)
     @test length(psd) == length(freqs)
-    @test cv_isi(sol) ≥ 0
+    @test cv_isi(sol) ≈ 0 atol = 1.0e-12        # constant drive → perfectly regular firing
     g_r, r_bins = radial_autocorrelation(sol; dr = 1.0)        # uses sol.positions
     @test g_r[1] ≈ 1.0 atol = 1.0e-8
+end
+
+# `temporal_average(sol, var)` used to stop at the FIRST trace in the record regardless of `var`, so
+# asking for one variable silently returned another.
+@testset "temporal_average selects the requested variable" begin
+    m = LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 10.0, R = 1.0, tref = 2.0)
+    sol = solve(
+        DewdropNetwork(m, 8; input = 15.0, tspan = (0.0, 50.0)), FixedStep(0.1);
+        record = (V = Trace(:V), it = Trace(:itot)), progress = false
+    )
+    @test all(≈(15.0), temporal_average(sol, :itot))          # itot is the constant input
+    @test all(<(15.0), temporal_average(sol, :V))             # V sits below it, and they differ
+    @test temporal_average(sol) == temporal_average(sol, :V)  # the default is still :V
+    # asking for something that was not recorded says so, and lists what was
+    @test_throws ErrorException temporal_average(sol, :refrac)
+end
+
+# `cv_isi(sol)` grouped spikes with `t[id .== n]` inside a loop over neurons, rescanning the whole
+# raster once per neuron. The grouped form must give exactly the same number.
+@testset "cv_isi groups spikes in one pass" begin
+    m = LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 10.0, R = 1.0, tref = 2.0)
+    het = Heterogeneous(m; R = collect(range(1.0, 2.0; length = 40)))   # a spread of rates
+    sol = solve(
+        DewdropNetwork(het, 40; input = 15.0, tspan = (0.0, 400.0)), FixedStep(0.1);
+        record = (spikes = Spikes(),), progress = false
+    )
+    t, id = raster(sol)
+    @test !isempty(id)
+    reference = let cvs = Float64[]                       # the original O(neurons × spikes) form
+        for n in unique(id)
+            ts = sort(t[id .== n])
+            length(ts) ≥ 2 && push!(cvs, cv_isi(ts))
+        end
+        sum(cvs) / length(cvs)
+    end
+    @test cv_isi(sol) == reference
+end
+
+@testset "coarsegrain is unchanged by the traversal order" begin
+    S = reshape(collect(1.0:60.0), 5, 12)
+    reference = let bs = 4, nb = 3, out = zeros(5, 3)      # the original neuron-outer form
+        for b in 1:nb, i in 1:5
+            acc = 0.0
+            for t in ((b - 1) * bs + 1):(b * bs)
+                acc += S[i, t]
+            end
+            out[i, b] = acc
+        end
+        out
+    end
+    @test Dewdrop.coarsegrain(S, 4) == reference
+    @test Dewdrop.coarsegrain(S .> 30, 4) == [count(>(30.0), S[i, ((b - 1) * 4 + 1):(b * 4)]) for i in 1:5, b in 1:3]
+    @test eltype(Dewdrop.coarsegrain(S .> 30, 4)) === Int
+    @test size(Dewdrop.coarsegrain(S, 5)) == (5, 2)        # the trailing remainder is discarded
 end

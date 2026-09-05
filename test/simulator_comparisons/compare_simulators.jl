@@ -82,11 +82,11 @@ function verify(vals)
     cv_ok = (maximum(cvs) - minimum(cvs)) < 0.1
     println("-"^66)
     println("  identical connectome (nedges): ", same_conn ? "✓" : "✗ DIFFER")
-    println("  rates agree (<10% spread):     ", rate_ok ? "✓" : "✗ ($(round(minimum(rates); digits = 1))–$(round(maximum(rates); digits = 1)) Hz)")
+    println("  rates agree (<10% spread):     ", rate_ok ? "✓" : "✗ ($(round(minimum(rates); digits = 1)) to $(round(maximum(rates); digits = 1)) Hz)")
     println("  CV-ISI agree (<0.10 spread):   ", cv_ok ? "✓" : "✗")
     println(
         "  → ", (same_conn && rate_ok && cv_ok) ? "all simulators ran the SAME problem." :
-            "MISMATCH — inspect the configs."
+            "MISMATCH: inspect the configs."
     )
     return println("="^66)
 end

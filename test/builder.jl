@@ -1,10 +1,10 @@
 using Dewdrop
 using Test
 
-# A fluent builder for E/I networks: one population of NE+NI neurons with named
+# A chained builder for E/I networks: one population of NE+NI neurons with named
 # :E (1:NE) and :I (NE+1:end) subpopulations, projections added by `connect!`, an external
 # drive by `drive!`, assembled with `build`. Removes the manual fixed_prob / sources /
-# Projection boilerplate that Brunel and Vogels–Abbott otherwise need.
+# Projection boilerplate that Brunel and Vogels-Abbott otherwise need.
 @testset "network builder API" begin
     m = LIF(; τ = 20.0, EL = -60.0, Vθ = -50.0, Vr = -60.0, R = 1.0, tref = 5.0)
 
@@ -46,11 +46,11 @@ using Test
     @test build(nb2).subpops.I == 81:100
 end
 
-# Fluent multi-population builder: `network(; tspan)` accumulates named populations via
+# Chained multi-population builder: `network(; tspan)` accumulates named populations via
 # `population!`, projections via `project!(src => dst, …)`, an external drive by `drive!`, assembled
 # by `build` into a flat DewdropNetwork with a subpop registry. Same-type groups with differing
 # parameters are merged into one `Heterogeneous` model (block per-neuron arrays).
-@testset "fluent multi-population builder" begin
+@testset "chained multi-population builder" begin
     @testset "named populations → registry + runs" begin
         nb = network(; arch = Dewdrop.CPU(), tspan = (0.0, 200.0))
         mE = LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 10.0, R = 1.0, tref = 2.0)
@@ -120,4 +120,18 @@ end
         @test sum(firing_rate(sol, :E)) > 0          # AdEx excitatory group fires
         @test sum(firing_rate(sol, :I)) > 0          # LIF inhibitory group fires
     end
+end
+
+# `_build_projection` reads the keywords it knows by name, so a misspelling was silently dropped and
+# the projection was built with that setting's default.
+@testset "project! rejects unknown keywords" begin
+    nb() = (b = network(; tspan = (0.0, 20.0)); population!(b, :E, LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 100.0, tref = 2.0), 8; input = 0.3); b)
+    good = nb()
+    @test project!(good, :E => :E, DeltaSynapse(); p = 0.3, weight = 0.2, delay = steps(1), seed = UInt64(1), allow_self = true) === good
+    @test_throws ArgumentError project!(
+        nb(), :E => :E, DeltaSynapse(); p = 0.3, weight = 0.2, delay = steps(1), seed = UInt64(1), allowself = true
+    )
+    @test_throws ArgumentError project!(
+        nb(), :E => :E, DeltaSynapse(); p = 0.3, weight = 0.2, delay = steps(1), seed = UInt64(1), wieght = 3.0
+    )
 end

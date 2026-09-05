@@ -106,7 +106,7 @@ prob = DewdropNetwork(m32, N; input = 0.0f0, tspan = (0.0, 1000.0),
 sol = solve(prob, FixedStep(0.1f0))   # Float32 dt keeps the propagator single-precision end to end
 ```
 
-Float32 state with `Int32` indices runs roughly 1.7--2.4× faster than Float64 and matches the Float64
+Float32 state with `Int32` indices runs roughly 1.7 to 2.4× faster than Float64 and matches the Float64
 dynamics to within ~5%.
 
 ## The performance advisor

@@ -14,7 +14,7 @@ using Dewdrop
         # project_extras, stale_deps, deps_compat with check_weakdeps, piracies).
         #
         # FUTURE NOTE: when ext/ weakdeps are added (CUDA, KernelAbstractions, DimensionalData,
-        # Makie, ...), deps_compat(check_weakdeps=true) REQUIRES a [compat] entry for each ---
+        # Makie, ...), deps_compat(check_weakdeps=true) REQUIRES a [compat] entry for each:
         # add the bound in the same commit as the weakdep or this check fails.
     )
 end

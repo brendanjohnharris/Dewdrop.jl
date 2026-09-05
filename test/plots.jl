@@ -42,7 +42,7 @@ isdir(PLOTDIR) || mkpath(PLOTDIR)
     end
 
     @testset "network raster (input gradient)" begin
-        # a population driven by a gradient of input currents fires at a gradient of rates ---
+        # a population driven by a gradient of input currents fires at a gradient of rates:
         # the canonical raster + per-neuron rate panel.
         N = 60
         m = LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 100.0, tref = 2.0)

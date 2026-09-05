@@ -24,7 +24,7 @@ function mean_cv_isi(times, ids, N)
     return isempty(cvs) ? NaN : mean(cvs)
 end
 
-@testset "Vogels–Abbott COBA network (asynchronous-irregular)" begin
+@testset "Vogels-Abbott COBA network (asynchronous-irregular)" begin
     arch = Dewdrop.CPU()
     N, NE, NI, ε = 4000, 3200, 800, 0.02
     m = LIF(; τ = 20.0, EL = -60.0, Vθ = -50.0, Vr = -60.0, R = 1.0, tref = 5.0)
@@ -56,7 +56,7 @@ end
     poprate = [count(t -> e ≤ t < e + 1.0, times) for e in edges[1:(end - 1)]] .* (1000.0 / N)
 
     fig = Figure()
-    ax1 = Axis(fig[1, 1]; ylabel = "Neuron", title = "Vogels–Abbott COBA (CV ≈ $(round(cv; digits = 2)))")
+    ax1 = Axis(fig[1, 1]; ylabel = "Neuron", title = "Vogels-Abbott COBA (CV ≈ $(round(cv; digits = 2)))")
     scatter!(ax1, times[keep], ids[keep]; markersize = 2)
     ax2 = Axis(fig[2, 1]; xlabel = "Time (ms)", ylabel = "Pop. rate (Hz)")
     lines!(ax2, collect(edges[1:(end - 1)]), poprate)

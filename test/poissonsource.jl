@@ -81,3 +81,22 @@ end
     @test !occursin("SparseCSR", s)                      # NOT a raw CSR field dump
     @test occursin("PoissonSource(", sprint(show, ps))   # compact form
 end
+
+# `_synprestep!` replays column `n + 1` every step, so a pattern shorter than the run was a BoundsError
+# deep in the loop rather than a shape error at init (as `TimedArray` already gives).
+@testset "SpikeSourceArray pattern length is checked at init" begin
+    N, next, nsteps = 6, 4, 200
+    ext = Dewdrop.SparseCSR(
+        Dewdrop.CPU(), [(i, j, 0.5, 1) for i in 1:next for j in 1:N]; npre = next, npost = N
+    )
+    mk(nrows) = DewdropNetwork(
+        LIF(; τ = 20.0, EL = 0.0, Vθ = 20.0, Vr = 10.0, R = 1.0, tref = 2.0), N;
+        input = 0.0, tspan = (0.0, 20.0),
+        projection = Projection(
+            Dewdrop.SpikeSourceArray(CurrentSynapse(; τ = 5.0), ext, rand(Bool, next, nrows)),
+            Dewdrop._empty_csr(Dewdrop.CPU(), N)
+        )
+    )
+    @test init(mk(nsteps), FixedStep(0.1)) isa Dewdrop.DewdropIntegrator
+    @test_throws ArgumentError init(mk(nsteps - 1), FixedStep(0.1))
+end

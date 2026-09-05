@@ -2,10 +2,10 @@
 #
 # `backend = Differentiable()` makes a CPU forward pass automatically differentiable so a scalar loss
 # can be back-propagated to the model parameters through the whole time loop (gradient-based fitting and
-# surrogate-gradient training). It is a SEPARATE step path: the default `_fused_unit!` / `_tight_step!`
-# are left byte-for-byte untouched, so every other backend stays bit-identical BY CONSTRUCTION.
+# surrogate-gradient training). It is a SEPARATE step path, so the default `_fused_unit!` / `_tight_step!`
+# carry none of its cost.
 #
-# Only two things change versus the bit-identical engine:
+# Only two things differ from the ordinary step:
 #   1. the discontinuous spike (hard threshold + reset + integer count) becomes a smooth fast-sigmoid
 #      surrogate + soft reset + real-valued count (this file);
 #   2. `spiked` / `spike_count` take the state float type so a `Dual`/`Active` eltype flows (Backends.jl
@@ -49,17 +49,17 @@ stand-in for the spike indicator, with steepness `β`. As `β → ∞` it approa
 # swaps the hard threshold + reset + integer count for the smooth surrogate + soft reset + real count.
 @inline function _diff_unit!(V, refrac, spiked, spike_count, stimuli, syns, m, dt, n, t, aux, β, i)
     @inbounds begin
-        v = V[i]
+        v0 = V[i]
         r = refrac[i]
         z = zero(r)
         gtot = zero(eltype(V))
-        x0 = stim_ctx(m, v, i, 1, n, t, dt, 0)
+        x0 = stim_ctx(m, v0, i, 1, n, t, dt, 0)
         itot = oftype(gtot, _stim_itot(stimuli, gtot, x0))
-        v, gtot, itot = _syn_contribute(syns, i, n, v, gtot, itot)   # no-op for an unconnected population
+        vj, gtot, itot = _syn_contribute(syns, i, n, v0, false, gtot, itot)   # no-op for an unconnected population
         Δg, Δi = _stim_gtot(stimuli, x0)
         gtot = _addcond(gtot, Δg)
         itot = _addcond(itot, Δi)
-        v += _stim_kick(stimuli, x0)
+        v = (v0 + vj) + _stim_kick(stimuli, x0)
         m_i = _resolve(m, i)
         w0 = _aux_read(aux, i)
         v_adv, w_adv = _advance_unit(m_i, v, w0, gtot, itot, dt)
@@ -82,13 +82,17 @@ end
 # Surrogate-weighted scatter: the connected-training seam. Deposit `weight·s_pre` into the delay ring,
 # UNGATED: a serial per-edge walk (the differentiable path is CPU-only and single-threaded, so no atomics,
 # AD-safe). The regular `scatter!` gates on `spiked[pre] || continue`, which a real-valued / `Dual` surrogate
-# spike cannot take; here `iszero(s)` short-circuits the exact-zero (refractory / far-subthreshold) case,
-# recovering the spike sparsity without a boolean gate. Differentiable through BOTH `weight[e]` (→ trainable
+# spike cannot take; here `iszero(s)` short-circuits only the EXACT zeros, which for a logistic surrogate
+# means the refractory-gated rows (and the far-subthreshold ones that underflow). A quiescent neuron just
+# below threshold still has a tiny non-zero `s`, so this walks most rows most steps: the cost is O(edges)
+# per step, not O(spikes·degree). Acceptable for the small networks this backend targets; a magnitude
+# threshold would recover the sparsity at the price of dropping small gradient contributions.
+# Differentiable through BOTH `weight[e]` (→ trainable
 # synapses, when the connectome weight is a `Dual`/`Active` eltype) AND the presynaptic surrogate spike
 # `s_pre` (→ gradients flow back to V_pre); the scatter's adjoint is a gather, handled implicitly by the AD.
 @inline function _surrogate_scatter!(buf::DelayBuffer, conn::SparseCSR, spiked, now::Integer)
     # A `Dual`/`Active` run gets a VALUE ring (`_ring_eltype`), so `_fp_quantise` is the identity here
-    # and the gradient flows through untouched --- rounding to fixed point would kill it. This path is
+    # and the gradient flows through untouched; rounding to fixed point would kill it. This path is
     # CPU-serial anyway, so it is already order-deterministic and gains nothing from quantisation.
     slots, L, scale = buf.slots, buf.L, buf.scale
     rowptr, post, weight, delay = conn.rowptr, conn.post, conn.weight, conn.delay
@@ -116,6 +120,7 @@ function _diff_step!(integ::DewdropIntegrator)
     stimuli, syns, dt, n = integ.stimuli, integ.syns, integ.dt, integ.n
     t, aux = _step_time(integ), _aux_col(st, m)
     β = integ.backend.β
+    _synprestep_all!(integ.syns, integ)                             # streaming drives generate their events
     @inbounds for i in 1:length(V)
         _diff_unit!(V, refrac, spiked, spike_count, stimuli, syns, m, dt, n, t, aux, β, i)
     end

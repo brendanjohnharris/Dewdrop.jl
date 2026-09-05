@@ -41,7 +41,7 @@ function __init__()
     return nothing
 end
 
-# ─────────────────────────── input side: TimedArray from a regularly-sampled series ───────────────────────────
+# * input side: TimedArray from a regularly-sampled series
 """
     TimedArray(ts::RegularTimeseries; as = :current)
 
@@ -56,8 +56,7 @@ function Dewdrop.TimedArray(ts::RegularTimeseries; as::Symbol = :current)
     return Dewdrop.TimedArray(data; as = as)
 end
 
-# recorded column c of a monitor sampled every `e` steps → time c·e·dt (matching `raster`)
-_times(res, sol) = (1:size(res.data, 2)) .* (res.every * sol.dt)
+_times(res, sol) = Dewdrop._coltimes(res, sol.dt, sol.tspan[1])
 _neurons(res) = res.idx isa Colon ? collect(1:size(res.data, 1)) : collect(res.idx)
 
 # rows of a per-unit monitor restricted to subpopulation `of` (and the global neuron indices they

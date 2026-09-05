@@ -1,4 +1,4 @@
-# * Fused device step: the launch-bound fix for the GPU step kernel.
+# * Fused device step: the dense per-neuron phases collapsed into one launch.
 #
 # At small/medium N the per-step cost is dominated by KERNEL LAUNCHES, not compute: the
 # broadcast-per-phase engine issues ~10 dense launches per step (deliver, drive, accumulate,
@@ -9,7 +9,7 @@
 # KernelAbstractions megakernel and removes the per-step host synchronisation, so the step
 # sequence pipelines on a single device stream (host syncs only at the windowed monitor flush
 # and at host reads). The SPARSE scatter stays a separate kernel (folding it in would serialise
-# it), and the monitors stay separate (their windowed device→host machinery is unchanged).
+# it), and the monitors stay separate (they keep their own windowed device→host machinery).
 #
 # It is a DEVICE-ONLY fast path: dispatched on `get_backend(V)`, the CPU backend keeps the
 # tuned broadcast phases (CPU is not launch-bound, and this avoids any change to the CPU
@@ -28,10 +28,14 @@ using KernelAbstractions: @kernel, @index
 #   - decay the per-neuron synaptic state for the next step.
 # CUBA contributes a decaying current; COBA a conductance (effective leak + reversal drive);
 # delta an instantaneous voltage jump (added straight to `v`, no accumulator, no decay).
-@inline _syn_contribute(::Tuple{}, i, n, v, gtot, itot) = (v, gtot, itot)
-@inline function _syn_contribute(syns::Tuple, i, n, v, gtot, itot)
-    v, gtot, itot = _syn_one(first(syns), i, n, v, gtot, itot)
-    return _syn_contribute(Base.tail(syns), i, n, v, gtot, itot)
+# `v0` is the FROZEN start-of-step membrane potential: every v-reading synapse evaluates against it,
+# so the fold is independent of projection order. `vj` accumulates voltage jumps, applied by the
+# caller after the fold. Both match BrainPy (`sum_current_inputs(V)` before `sum_delta_inputs()`) and
+# Brian2 (the `groups` slot before the `synapses` slot).
+@inline _syn_contribute(::Tuple{}, i, n, v0, vj, gtot, itot) = (vj, gtot, itot)
+@inline function _syn_contribute(syns::Tuple, i, n, v0, vj, gtot, itot)
+    vj, gtot, itot = _syn_one(first(syns), i, n, v0, vj, gtot, itot)
+    return _syn_contribute(Base.tail(syns), i, n, v0, vj, gtot, itot)
 end
 
 # Read and clear neuron `i`'s due ring-buffer slot at step `n` (the per-projection "deliver"); shared
@@ -43,21 +47,27 @@ end
     return due
 end
 
-# Fused per-neuron synaptic contribution, generated from the descriptor (replaces the five hand-written
-# bodies): read + clear the ring slot, then apply the shared `_syn_kinetics` (deliver → membrane → decay),
-# or the voltage-jump short-circuit for a `:jump` synapse (delta). Byte-identical to the prior code: for
-# CUBA `Δgtot` is a strong-zero `false` (gtot untouched); the dual `g = a·(g_decay − g_rise)` is computed
-# once in `_syn_membrane`; frozen injects `g·(Erev − v)` into itot only.
-@inline function _syn_one(s::SynState, i, n, v, gtot, itot)
+# Fused per-neuron synaptic contribution, generated from the descriptor: read + clear the ring slot, then
+# apply the shared `_syn_kinetics` (deliver → membrane → decay), or the voltage-jump short-circuit for a
+# `:jump` synapse (delta). For CUBA `Δgtot` is a strong-zero `false` (gtot untouched); the dual
+# `g = a·(g_decay − g_rise)` is computed once in `_syn_membrane`; frozen injects `g·(Erev − v)` into itot only.
+@inline function _syn_one(s::SynState, i, n, v0, vj, gtot, itot)
     due = _ring_take!(s.buf, i, n)
-    return _syn_apply(_syn_couple(typeof(s.model)), s, i, due, v, gtot, itot)
+    return _syn_apply(_syn_couple(typeof(s.model)), s, i, due, v0, vj, gtot, itot)
 end
-@inline _syn_apply(::Val{:jump}, s, i, due, v, gtot, itot) = (v + due, gtot, itot)
-@inline function _syn_apply(::Union{Val{:current}, Val{:conductance}}, s, i, due, v, gtot, itot)
-    Δg, Δi, newacc = _syn_kinetics(s.model, _read_acc(s.acc, i), due, s.coeffs, v)
+@inline _syn_apply(::Val{:jump}, s, i, due, v0, vj, gtot, itot) = (vj + due, gtot, itot)
+@inline function _syn_apply(::Union{Val{:current}, Val{:conductance}}, s, i, due, v0, vj, gtot, itot)
+    Δg, Δi, newacc = _syn_kinetics(s.model, _read_acc(s.acc, i), due, _cellcoeffs(s.coeffs, i), v0)
     _write_acc!(s.acc, i, newacc)
-    return (v, gtot + Δg, itot + Δi)
+    return (vj, gtot + Δg, itot + Δi)
 end
+
+# Resolve a coefficient to postsynaptic neuron `i`: a vector entry (a per-neuron τ) indexes, a scalar
+# passes through, so the `map` folds away when nothing is per-neuron. The neuron-axis counterpart of
+# `_resolve_coeffs` (Batch.jl), which resolves the ensemble axis; the two compose.
+@inline _cellcoeff(x::AbstractVector, i) = @inbounds x[i]
+@inline _cellcoeff(x, i) = x
+@inline _cellcoeffs(c::NamedTuple, i) = map(x -> _cellcoeff(x, i), c)
 
 # The per-neuron fused step body for neuron `i`: deliver + stimuli + accumulate + membrane + decay +
 # threshold + reset + count. Written ONCE as a plain `@inline` function so it drives BOTH the GPU
@@ -65,18 +75,18 @@ end
 # a plain Julia `for`/`@threads` loop). Each neuron writes only its own state, so the loop is
 # embarrassingly parallel → bit-identical regardless of thread count or driver. Every external input is
 # a stimulus in the `stimuli` tuple, applied at its compile-time point via the ctx unrolls (Stimuli.jl):
-# `:current`/`:conductance` → itot/gtot, `:kick` → v at deliver, `:noise` → v at the membrane step; an
-# absent kind folds to a strong-zero `false` (byte-identical to the prior `_inputval`/`_drive_kick`/`_noise_kick`).
+# `:current`/`:conductance` → itot/gtot, `:kick` → v after the synaptic fold, `:noise` → v at the membrane
+# step; an absent kind folds to a strong-zero `false`, leaving its accumulator untouched.
 @inline function _fused_unit!(V, refrac, spiked, spike_count, stimuli, itotarr, gtotarr, syns, m, dt, n, t, aux, i)
     @inbounds begin
-        v = V[i]
+        v0 = V[i]
         r = refrac[i]
         z = zero(r)
         gtot = zero(eltype(V))
-        x0 = stim_ctx(m, v, i, 1, n, t, dt, 0)                       # :current/:kick/:conductance ctx (b=1, stream=0)
-        itot = oftype(gtot, _stim_itot(stimuli, gtot, x0))           # itot base: first :current ASSIGNS (was `_inputval`)
-        # synaptic deliver + accumulate + decay (delta also kicks `v`)
-        v, gtot, itot = _syn_contribute(syns, i, n, v, gtot, itot)
+        x0 = stim_ctx(m, v0, i, 1, n, t, dt, 0)                      # :current/:kick/:conductance ctx (b=1, stream=0)
+        itot = oftype(gtot, _stim_itot(stimuli, gtot, x0))           # itot base: first :current ASSIGNS
+        # synaptic deliver + accumulate + decay, all against the frozen `v0`; jumps land below
+        vj, gtot, itot = _syn_contribute(syns, i, n, v0, false, gtot, itot)
         # prescribed :conductance g(t), folded AFTER synapse accumulation (no-op today; strong-zero identity)
         Δg, Δi = _stim_gtot(stimuli, x0)
         gtot = _addcond(gtot, Δg)
@@ -86,15 +96,15 @@ end
         # negligible against the membrane `exp`.
         itotarr[i] = itot
         gtotarr[i] = gtot
-        v += _stim_kick(stimuli, x0)                                 # :kick stimuli → v at deliver (was `_drive_kick`)
+        v = (v0 + vj) + _stim_kick(stimuli, x0)                       # :jump synapses, then :kick stimuli → v
         # resolve the per-neuron model: `_resolve(m, i) = m` for a scalar model (bit-identical),
         # the i-th override values for a Heterogeneous one.
         m_i = _resolve(m, i)
         # subthreshold (V, aux) advance + SDE noise (refractory clamps V to reset, no noise). For a
-        # V-only model `aux` is `nothing` and this is exactly the prior membrane_step (bit-identical).
+        # V-only model `aux` is `nothing`, which reduces to a plain `membrane_step`.
         w0 = _aux_read(aux, i)
         v_adv, w_adv = _advance_unit(m_i, v, w0, gtot, itot, dt)
-        # :noise under the refractory gate; ctx carries the RESOLVED model (for `_tau`) + advanced v (was `_noise_kick`)
+        # :noise under the refractory gate; ctx carries the RESOLVED model (for `_tau`) and the advanced v
         v = ifelse(r > z, reset_value(m_i), v_adv + _stim_noise(stimuli, stim_ctx(m_i, v_adv, i, 1, n, t, dt, 0)))
         r = max(r - dt, z)
         # threshold (respecting refractory), then reset + arm refractory + spike-triggered adaptation
@@ -172,7 +182,7 @@ end
 # plain Julia loop instead of KA; it drops the per-workitem KA machinery (measured ~2× over the
 # KA.CPU megakernel and the multi-pass broadcast). Threaded when >1 thread; each neuron writes only
 # its own state, so the dense loop is bit-identical regardless of thread count (only the existing
-# threaded atomic scatter is order-dependent, unchanged). One range per group (MultiModel).
+# threaded atomic scatter remains order-dependent). One range per group (MultiModel).
 function _tight_step!(integ::DewdropIntegrator)
     st = integ.state.state
     _synprestep_all!(integ.syns, integ)         # streaming drives (the fused tight loop has no global :deliver)
@@ -220,9 +230,11 @@ end
 # core; the vectorised kernels live in the extension. `_check_backend` (init) guarantees a supported
 # model + a loaded extension, so `turbo_kernel(...)` is non-`nothing` here.
 function _turbo_step!(integ::DewdropIntegrator)
-    run_phase!(Val(:deliver), integ)                       # ring → synaptic accumulators / V (delta), drive → V
+    run_phase!(Val(:deliver), integ)                       # ring → synaptic accumulators
     st = integ.state.state
     _accum_base!(integ, st.V)                              # itot ← input, gtot ← 0, + per-projection accumulate
+    _deliver_jump_all!(integ.syns, integ)                  # :jump synapses → V, after the accumulate
+    _apply_kicks!(integ.stimuli, st.V, integ.model, integ.n, _step_time(integ), integ.dt)
     turbo_kernel(typeof(integ.model))(integ)               # the SIMD dense membrane/threshold/reset/count kernel
     _decay_all!(integ.syns)                                # advance each projection's synaptic state
     _propagate_step!(integ.compaction, integ)              # sparse scatter (scalar / threaded as usual)

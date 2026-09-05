@@ -57,9 +57,15 @@ using Test
         fns = FNSNeuron()
         pf = DewdropNetwork(fns, 32; input = 0.5, tspan = (0.0, 10.0))
         @test_throws Exception init(pf, FixedStep(0.1); backend = Turbo())
-        # WhiteNoise → unsupported under Turbo
+        # a :noise stimulus → unsupported under Turbo, by either route (the step has no `_apply_noises!`,
+        # so a guard that only tested the `noise` field let the `stimuli =` route through silently)
         pn = DewdropNetwork(m, 32; input = 400.0f0, tspan = (0.0f0, 10.0f0), noise = WhiteNoise(1.0f0))
         @test_throws Exception init(pn, FixedStep(0.1f0); backend = Turbo())
+        ps = DewdropNetwork(m, 32; input = 400.0f0, tspan = (0.0f0, 10.0f0), stimuli = (WhiteNoise(1.0f0),))
+        @test_throws Exception init(ps, FixedStep(0.1f0); backend = Turbo())
+        # a non-noise stimulus stays supported
+        pc = DewdropNetwork(m, 32; input = 400.0f0, tspan = (0.0f0, 10.0f0), stimuli = (TimedArray(fill(1.0f0, 101)),))
+        @test init(pc, FixedStep(0.1f0); backend = Turbo()) isa Dewdrop.DewdropIntegrator
         # deprecated step alias also reaches Turbo
         @test sum(
             solve(

@@ -19,6 +19,9 @@ Wrap a scalar neuron `base` model, overriding the named parameter `field`s with 
 (each length `N`, the population size). Fields not overridden keep the scalar value. Use for E/I
 populations with different parameters, or any per-neuron heterogeneity. Fill arrays reproducibly with
 [`per_neuron`](@ref) + the counter RNG. Requires the canonical schedule (runs via the fused megakernel).
+
+As one group of a [`MultiModel`](@ref) the arrays still span the WHOLE population (length `N`, indexed
+by the flat neuron index), not just the group's range; entries outside the group are never read.
 """
 struct Heterogeneous{M <: AbstractNeuronModel, NT <: NamedTuple} <: AbstractNeuronModel
     base::M
@@ -54,6 +57,22 @@ float_type(h::Heterogeneous) = float_type(h.base)
     return :($(M)($(args...)))
 end
 
+# Default initial V reads each neuron's RESOLVED model, so an overridden `EL` (or `VL`) sets that
+# neuron's resting potential instead of every neuron starting at the base scalar. One fused broadcast
+# (`_resolve` is the same GPU-safe generated function the fused kernel uses); an explicit `v0` takes
+# the generic path.
+@inline _resting_of(h::Heterogeneous, i) = _resting(_resolve(h, i))
+# `offset` shifts the read into the FLAT population index. As a `MultiModel` group this model's `V`
+# slice is a view over the group's range while its override arrays span the whole population (the
+# indexing the fused kernel uses), so the slice must be read at its global position.
+function _init_voltage_model!(V, h::Heterogeneous, ::Nothing, ::Type{T}, seed, offset::Int = 0) where {T}
+    idx = reshape((1 + offset):(size(V, 1) + offset), :, ntuple(_ -> 1, ndims(V) - 1)...)
+    V .= T.(_resting_of.(h, idx))
+    return V
+end
+# A plain scalar model carries no override arrays to validate; the seam exists so a `MultiModel` can
+# check its groups uniformly.
+_check_hetero(::AbstractNeuronModel, N::Integer) = nothing
 # validate the override arrays against the population size (called from init)
 function _check_hetero(h::Heterogeneous, N::Integer)
     for (k, a) in pairs(h.params)

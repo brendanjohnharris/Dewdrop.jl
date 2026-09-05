@@ -51,3 +51,12 @@ image bounded. Requires a Makie backend and `TimeseriesMakie` loaded.
 function connectivity end
 function connectivity! end
 export connectivity, connectivity!
+
+# Every method lives in the TimeseriesMakie extension. Without it, a call would be a bare MethodError
+# that does not say what is missing, so each front end falls back to naming the package to load.
+_plot_ext_error(f) = error(
+    "`$f` needs the plotting extension: run `using TimeseriesMakie` and a Makie backend (e.g. CairoMakie)")
+for f in (:traceplot, :traceplot!, :phaseplane, :phaseplane!,
+          :positionplot, :positionplot!, :connectivity, :connectivity!)
+    @eval $f(args...; kwargs...) = _plot_ext_error($(QuoteNode(f)))
+end

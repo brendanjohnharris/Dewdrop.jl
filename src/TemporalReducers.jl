@@ -98,7 +98,9 @@ function _welch_nfft(fs::Real, f_min::Real)
     f_min > 0 || throw(ArgumentError("Welch f_min must be > 0 (got $f_min)"))
     nfft = ceil(Int, float(fs) / float(f_min))
     isodd(nfft) && (nfft += 1)
-    nfft ≥ 2 || throw(ArgumentError("Welch nfft = $nfft < 2; lower f_min or raise fs"))
+    # 4, not 2: the symmetric Hann window `0.5 - 0.5cos(2πj/(nfft-1))` is exactly [0, 0] at nfft = 2,
+    # so the window power (and every normalisation derived from it) would be zero.
+    nfft ≥ 4 || throw(ArgumentError("Welch nfft = $nfft < 4; lower f_min or raise fs"))
     return nfft
 end
 
@@ -110,10 +112,15 @@ function StreamingWelch(arch, ::Type{T}, n_out::Integer, B::Integer, fs::Real, f
     A = sum(abs2, hann_h)
     H = rfft(hann_h)                                                            # (nfreq,) host complex
     buf = fill!(allocate(arch, T, nfft, Int(n_out), Int(B)), zero(T))
-    accP2 = fill!(allocate(arch, T, nfreq, Int(n_out), Int(B)), zero(T))
-    accP1 = fill!(allocate(arch, Complex{T}, nfreq, Int(n_out), Int(B)), zero(Complex{T}))
-    sumr = fill!(allocate(arch, T, Int(n_out), Int(B)), zero(T))
-    sumr2 = fill!(allocate(arch, T, Int(n_out), Int(B)), zero(T))
+    # The accumulators are Float64 whatever the state type: removing the mean analytically means
+    # differencing operands that both scale with the RAW signal, and for a membrane trace they agree to
+    # ~8 significant digits. In Float32 that difference is round-off, which turns the variance negative
+    # and leaves the removed mean as a DC peak bigger than the signal. `buf` (much the largest array
+    # here) keeps the state type; only these reductions widen.
+    accP2 = fill!(allocate(arch, Float64, nfreq, Int(n_out), Int(B)), 0.0)
+    accP1 = fill!(allocate(arch, ComplexF64, nfreq, Int(n_out), Int(B)), zero(ComplexF64))
+    sumr = fill!(allocate(arch, Float64, Int(n_out), Int(B)), 0.0)
+    sumr2 = fill!(allocate(arch, Float64, Int(n_out), Int(B)), 0.0)
     hann = on_architecture(arch, hann_h)
     plan = plan_rfft(buf, 1)
     return StreamingWelch{
@@ -157,8 +164,9 @@ function result(m::StreamingWelch, nseen::Integer)
     duration = (nseen - 1) / fs                         # (last − first) time, = (n−1)·dt
     norm = nfft^2 * A
     n_out, B = size(sr)
-    out = Array{eltype(P2)}(undef, nfreq, n_out, B)
-    meanS = Vector{eltype(P2)}(undef, nfreq)
+    Tout = typeof(A)                                    # the state float type; accumulation is Float64
+    out = Array{Tout}(undef, nfreq, n_out, B)
+    meanS = Vector{Float64}(undef, nfreq)
     @inbounds for b in 1:B, i in 1:n_out
         μ = sr[i, b] / nseen
         sumx2 = sr2[i, b] - sr[i, b]^2 / nseen          # Σ (r − μ)²
@@ -168,7 +176,9 @@ function result(m::StreamingWelch, nseen::Integer)
         scalar1 = (sum(meanS) - 0.5 * meanS[1]) * df
         fac = 0.5 * (sumx2 / fs) / (scalar1 * duration)
         for f in 1:nfreq
-            out[f, i, b] = fac * meanS[f]
+            # The mean is removed analytically (`|Yr|² − 2μRe(Yr H̄) + μ²|H|²`), so a bin whose true power
+            # is far below the transform's round-off can land a few ulps negative. Power is not, so floor it.
+            out[f, i, b] = max(fac * meanS[f], zero(eltype(out)))
         end
     end
     return out
@@ -230,7 +240,7 @@ function StreamingFano(arch, ::Type{T}, n_out::Integer, B::Integer, taus, dt::Re
     close_off = Vector{Int}(undef, Int(nrec) + 1)
     close_off[1] = 0
     @inbounds for s in 1:Int(nrec)
-        if s >= 2                                            # s = 1 completes no window (matches the old `s >= 2`)
+        if s >= 2                                            # s = 1 completes no window
             t = T(s - 1) * dtT
             for k in 1:ntau
                 (floor(t / tv[k]) > floor((t - dtT) / tv[k])) && push!(close_k, Int32(k))
@@ -248,7 +258,7 @@ end
 # Fold the windows that close THIS step: one thread per (neuron, member, closing-τ). The closing set is
 # precomputed, so there is no per-thread boundary test and no idle threads. `off` indexes this step's slice
 # of `close_k`. A τ closes at most once per step ⇒ threads write disjoint (i,b,k) cells (no races), and each
-# (i,b,k) is folded in step order ⇒ bit-identical to the old per-thread kernel.
+# (i,b,k) is folded in step order, so the result does not depend on the launch geometry.
 @kernel function _fano_fold_kernel!(@Const(cum), cum_last, sumc, sumc2, @Const(close_k), off)
     i, b, j = @index(Global, NTuple)
     @inbounds begin

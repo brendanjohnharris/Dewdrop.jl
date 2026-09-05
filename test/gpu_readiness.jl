@@ -50,7 +50,7 @@ using GPUArrays
         @test par == seq
     end
 
-    @testset "hot-path type stability + allocation (RNG)" begin
+    @testset "per-step type stability + allocation (RNG)" begin
         @test (@inferred Dewdrop.draw_uniform(Float64, UInt64(1), 1, 1)) isa Float64
         Dewdrop.draw_uniform(Float64, UInt64(1), 1, 1)  # warm
         @test @allocated(Dewdrop.draw_uniform(Float64, UInt64(1), 1, 1)) == 0

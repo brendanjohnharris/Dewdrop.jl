@@ -29,6 +29,38 @@ using Test
         @test sf.state.state.V == ss.state.state.V       # bit-identical V (exact-weight delta scatter)
     end
 
+    # A synapse whose `_syn_membrane` reads `v` (today only `FrozenDualExpSynapse`) evaluates
+    # `g·(Erev − V)` itself, so it is the only case that can see a different V on the two paths. Both
+    # must use the START-of-step V, with :jump deliveries and :kick stimuli applied afterwards
+    # (BrainPy's `sum_current_inputs` before `sum_delta_inputs`; Brian2's `groups` slot before
+    # `synapses`). The delta-only test above cannot catch this: delta never reads v.
+    @testset "Serial ≡ Fused for a V-reading synapse (start-of-step V)" begin
+        fz = FrozenDualExpSynapse(; τr = 1.0, τd = 5.0, Erev = 0.0)
+        conn2 = fixed_prob(Dewdrop.CPU(), N, N, 0.1; weight = 0.5, delay = steps(3), seed = UInt64(7))
+        both(p) = (solve(p, FixedStep(0.1); backend = Serial()), solve(p, FixedStep(0.1); backend = Fused()))
+
+        kick = DewdropNetwork(
+            m, N; input = 30.0, tspan = (0.0, 100.0),
+            projection = Projection(fz, conn), stimuli = (FunctionalKick((i, t) -> 0.05),)
+        )
+        sk, fk = both(kick)
+        @test sum(sk.spike_count) > 0
+        @test sk.spike_count == fk.spike_count
+        @test sk.state.state.V == fk.state.state.V
+
+        # …and with an instantaneous jump alongside it, in both projection orders.
+        first_fz = DewdropNetwork(m, N; input = 30.0, tspan = (0.0, 100.0),
+            projections = (Projection(fz, conn), Projection(DeltaSynapse(), conn2)))
+        first_delta = DewdropNetwork(m, N; input = 30.0, tspan = (0.0, 100.0),
+            projections = (Projection(DeltaSynapse(), conn2), Projection(fz, conn)))
+        sa, fa = both(first_fz)
+        sb, fb = both(first_delta)
+        @test sa.state.state.V == fa.state.state.V
+        @test sb.state.state.V == fb.state.state.V
+        @test sa.state.state.V == sb.state.state.V     # projection order must not matter
+        @test sa.spike_count == sb.spike_count
+    end
+
     @testset "Auto resolution" begin
         @test Dewdrop._resolve_backend(Serial(), prob) isa Serial   # explicit passes through
         @test Dewdrop._resolve_backend(Auto(), prob) isa Fused      # canonical CPU → work-aware tight loop
@@ -51,8 +83,8 @@ using Test
         hm = Heterogeneous(m; Vθ = fill(m.Vθ, N))
         hp = DewdropNetwork(hm, N; input = 30.0, tspan = (0.0, 50.0))
         @test_throws Exception init(hp, FixedStep(0.1); backend = Serial())
-        @test sum(solve(hp, FixedStep(0.1); backend = Fused()).spike_count) ≥ 0   # Fused works
-        @test sum(solve(hp, FixedStep(0.1)).spike_count) ≥ 0                       # Auto → Fused
+        @test sum(solve(hp, FixedStep(0.1); backend = Fused()).spike_count) == 128   # Fused works
+        @test sum(solve(hp, FixedStep(0.1)).spike_count) == 128                       # Auto → Fused
     end
 
     # (the Turbo backend, numerics + with-extension error paths, is tested in test/turbo.jl,

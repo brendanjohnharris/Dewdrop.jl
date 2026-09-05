@@ -9,7 +9,7 @@
 # contiguous column read (coalescing-friendly on GPU). Deposit is a scatter-add into a
 # column: a host loop here, a single Atomix.@atomic kernel on the device.
 
-# * Fixed-point accumulation --------------------------------------------------------------------
+# * Fixed-point accumulation.
 # The ring accumulates FIXED-POINT COUNTS, not floats. Deposits land through `Atomix.@atomic`, and
 # several presynaptic spikes may hit the same (target, slot) in one step, so the order in which they
 # are summed varies with thread count, backend and scatter strategy. Float addition is not
@@ -18,12 +18,12 @@
 #
 # That matters far more than the last bit suggests: a spiking network is chaotic, so a one-ulp
 # difference sits dormant until it flips which side of threshold a neuron lands on, and the network
-# then decorrelates completely within a step or two. Measured on the spatial E/I model, the flip came
-# at 3.4 s of a 25 s run --- i.e. every run was an independent realisation.
+# then decorrelates completely within a step or two. On the spatial E/I model the flip lands around
+# 3.4 s of a 25 s run, which is early enough to make every run a separate realisation.
 #
 # The weights are quantised in the kernel (`w * scale`, one multiply) rather than stored twice. The
 # weights are already `Float32`, so quantising at `Float32` relative precision is no worse than how
-# they are held today, while the SUM becomes exact --- strictly better than float accumulation, which
+# they are held today, while the SUM becomes exact; strictly better than float accumulation, which
 # rounds at every add.
 const FPCount = Int64
 
@@ -34,8 +34,8 @@ const _FP_SAFETY = 1024
 # N, maxdelay)`): 2^30 counts per unit weight, i.e. ~1e-9 resolution and ~8.6e9 of range.
 const _FP_DEFAULT_SCALE = 2.0^30
 
-# Fixed point applies to plain IEEE floats. Anything else --- a `Dual`/`Active` from the
-# differentiable backend --- keeps a VALUE ring: rounding is not differentiable, and those paths are
+# Fixed point applies to plain IEEE floats. Anything else (a `Dual`/`Active` from the
+# differentiable backend) keeps a VALUE ring: rounding is not differentiable, and those paths are
 # CPU-serial, so they are already order-deterministic and gain nothing from quantisation.
 _ring_eltype(::Type{<:Base.IEEEFloat}) = FPCount
 _ring_eltype(::Type{T}) where {T} = T
@@ -51,8 +51,8 @@ _ring_scale(::Type{T}, scale) where {T} = one(T)
     fixedpoint_scale(post, weight, N; safety = $(_FP_SAFETY))
 
 Counts per unit weight for a ring fed by the edges `(post, weight)` over `N` targets: the largest
-power of two that keeps the worst case a single slot can hold --- every incoming synapse of one
-target depositing in the same step --- inside `$(FPCount)` with `safety` to spare. A power of two
+power of two that keeps the worst case a single slot can hold (every incoming synapse of one
+target depositing in the same step) inside `$(FPCount)` with `safety` to spare. A power of two
 makes `w * scale` exact in binary, so the only quantisation is the weight's own mantissa round.
 """
 function fixedpoint_scale(post, weight, N::Integer; safety = _FP_SAFETY)
@@ -114,7 +114,7 @@ end
 """
     slotvalues(buf)
 
-The pending increments in PHYSICAL units, as a plain array --- the ring itself holds fixed-point
+The pending increments in PHYSICAL units, as a plain array; the ring itself holds fixed-point
 counts, so read it through this rather than touching `buf.slots` directly.
 """
 slotvalues(buf::DelayBuffer) = Array(buf.slots) .* inv(buf.scale)

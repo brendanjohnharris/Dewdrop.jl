@@ -11,7 +11,7 @@ import Dewdrop: DewdropSolution, SubSolution, DewdropNetwork, Projection, Sparse
 using Makie
 import TimeseriesMakie: SpikeRaster, PSTH, RateMap, traces, traces!, trajectory, trajectory!
 
-# ─────────────────────────── L3: core recipe adapters ───────────────────────────
+# * L3: core recipe adapters
 # A solution feeds the base recipes as plain arrays: `raster` (times, ids), `_spike_raster` (the
 # Neuron × Time mask) and the recorded-column time axis. No TimeseriesBase needed.
 
@@ -32,14 +32,13 @@ Makie.convert_arguments(::Type{<:RateMap}, sol::DewdropSolution) = (_rec_times(s
 Makie.convert_arguments(::Type{<:RateMap}, ss::SubSolution) =
     (_rec_times(ss.parent), Dewdrop._spike_raster(ss.parent; of = ss.name))
 
-# recorded-column times: column c of a monitor sampled every `e` steps → time c·e·dt (matches `raster`)
 function _rec_times(sol)
     res = Dewdrop._find_spikes(sol.record, nothing)
     res === nothing && error("no spikes recorded; pass `record = (spikes = Spikes(),)` to `solve`")
-    return (1:size(res.data, 2)) .* (res.every * sol.dt)
+    return Dewdrop._coltimes(res, sol.dt, sol.tspan[1])
 end
 
-# ─────────────────────────── traces (reuse TimeseriesMakie `traces`) ───────────────────────────
+# * traces (reuse TimeseriesMakie `traces`)
 function Dewdrop.traceplot(sol::DewdropSolution, name::Symbol = :V; of = :all, kwargs...)
     x, colorby, Z = _trace_args(sol, name, of)
     return traces(x, colorby, Z; kwargs...)
@@ -55,7 +54,7 @@ function _trace_args(sol, name, of)
     res.kind === :aggregate && error("`traceplot` needs a per-unit `Trace` monitor; `$name` is an aggregate")
     rows, neurons = _sub_rows(sol, res, of)
     data = rows === Colon() ? res.data : res.data[rows, :]        # (unit, time)
-    x = (1:size(data, 2)) .* (res.every * sol.dt)
+    x = Dewdrop._coltimes(res, sol.dt, sol.tspan[1])
     return (collect(x), collect(float.(neurons)), permutedims(data))   # Z: (time, unit)
 end
 
@@ -67,7 +66,7 @@ function _sub_rows(sol, res, of)
     return (r, collect(r))
 end
 
-# ─────────────────────────── phase plane (reuse TimeseriesMakie `trajectory`) ───────────────────────────
+# * phase plane (reuse TimeseriesMakie `trajectory`)
 function Dewdrop.phaseplane(sol::DewdropSolution; vars = (:V, :w), neuron::Integer = 1, kwargs...)
     a, b = _phase_args(sol, vars, neuron)
     return trajectory(a, b; kwargs...)
@@ -87,7 +86,7 @@ function _trace_row(sol, name, neuron)
     return collect(res.data[row, :])
 end
 
-# ─────────────────────────── positions ───────────────────────────
+# * positions
 function Dewdrop.positionplot(sol::DewdropSolution; color = :rate, kwargs...)
     pts = _pos_points(sol)
     fig = Figure()
@@ -120,7 +119,7 @@ function _subpop_index(sol)
     return idx
 end
 
-# ─────────────────────────── connectivity ───────────────────────────
+# * connectivity
 Dewdrop.connectivity(x; kwargs...) = heatmap(_weight_matrix(x); kwargs...)
 Dewdrop.connectivity!(ax, x; kwargs...) = heatmap!(ax, _weight_matrix(x); kwargs...)
 
@@ -128,37 +127,38 @@ _weight_matrix(proj::Projection) = _dense_csr(proj.conn)
 _weight_matrix(csr::SparseCSR) = _dense_csr(csr)
 function _weight_matrix(net::DewdropNetwork)
     isempty(net.projections) && error("network has no projections to show")
-    Ms = [_dense_csr(p.conn; maxdim = typemax(Int)) for p in net.projections]   # bin the sum, not each
+    Ms = [_dense_csr(p.conn) for p in net.projections]   # each binned onto the same grid
     shp = size(first(Ms))
-    all(size(M) == shp for M in Ms) || return _maybe_bin(first(Ms))
-    return _maybe_bin(reduce(+, Ms))
+    # Returning `first(Ms)` here would draw ONE projection while looking like the whole network: a plot
+    # that silently omits connections is worse than no plot.
+    all(size(M) == shp for M in Ms) || error(
+        "connectivity(network): the projections bin to different shapes $(unique(size.(Ms))), so they " *
+            "cannot be summed onto one grid. Plot a single projection instead, e.g. " *
+            "`connectivity(net.projections[1])`."
+    )
+    return reduce(+, Ms)
 end
 
-# densify a CSR into a `post × pre` weight matrix (host-side), then bound its size
+# Densify a CSR into a `post × pre` weight matrix, block-mean binned so neither dimension exceeds
+# `maxdim`. Binning happens while walking the EDGES, so the full `npost × npre` dense form is never
+# allocated (it is 8 GB at N = 32k). The trailing partial block is kept and divided by its true size,
+# so no neuron is dropped from the edge of the plot.
 function _dense_csr(csr::SparseCSR; maxdim::Integer = 2048)
-    post = collect(csr.post); src = collect(csr.src); w = collect(csr.weight)
-    M = zeros(eltype(w), csr.npost, csr.npre)
+    post, src, w = collect(csr.post), collect(csr.src), collect(csr.weight)
+    r = max(cld(csr.npost, maxdim), 1)
+    c = max(cld(csr.npre, maxdim), 1)
+    nr, nc = cld(csr.npost, r), cld(csr.npre, c)
+    M = zeros(float(eltype(w)), nr, nc)
     @inbounds for e in eachindex(post)
-        M[post[e], src[e]] = w[e]
+        M[cld(post[e], r), cld(src[e], c)] += w[e]
     end
-    return _maybe_bin(M, maxdim)
-end
-
-# block-mean downsample so neither dimension exceeds `maxdim` (keeps a dense connectome plottable)
-function _maybe_bin(M::AbstractMatrix, maxdim::Integer = 2048)
-    (size(M, 1) <= maxdim && size(M, 2) <= maxdim) && return M
-    @warn "connectivity: binning a $(size(M)) weight matrix to ≤ $(maxdim)²" maxlog = 1
-    r = cld(size(M, 1), maxdim); c = cld(size(M, 2), maxdim)
-    nr = size(M, 1) ÷ r; nc = size(M, 2) ÷ c
-    out = zeros(float(eltype(M)), nr, nc)
-    @inbounds for j in 1:nc, i in 1:nr
-        acc = 0.0
-        for ii in ((i - 1) * r + 1):(i * r), jj in ((j - 1) * c + 1):(j * c)
-            acc += M[ii, jj]
+    if r > 1 || c > 1
+        @warn "connectivity: binning a $(csr.npost)×$(csr.npre) weight matrix to $(nr)×$(nc)" maxlog = 1
+        for j in 1:nc, i in 1:nr        # divide by the block's TRUE size (the last one is partial)
+            @inbounds M[i, j] /= (min(i * r, csr.npost) - (i - 1) * r) * (min(j * c, csr.npre) - (j - 1) * c)
         end
-        out[i, j] = acc / (r * c)
     end
-    return out
+    return M
 end
 
 end # module TimeseriesMakieExt

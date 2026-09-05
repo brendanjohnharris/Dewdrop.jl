@@ -117,4 +117,93 @@ _solve(net) = solve(net, FixedStep(0.1); progress = false)
         a = network(; tspan = (0.0, 20.0)); population!(a, :E, _lif(), 4; input = 0.3)
         @test_throws ErrorException Dewdrop._block_diagonal([_mk(0.3), build(a)])
     end
+
+    @testset "block-diagonal keeps each member's synapse and learning rule" begin
+        # The merged projection carries ONE synapse object, so members differing in a synaptic constant
+        # would all run member 1's kinetics; and `plasticity` was dropped from the rebuilt Projection
+        # entirely, silently turning a plastic member static.
+        mkτ(τ; rule = nothing) = (
+            nb = network(; tspan = (0.0, 200.0));
+            population!(nb, :E, _lif(), 8; input = 0.45);
+            project!(
+                nb, :E => :E, CurrentSynapse(; τ = τ); p = 0.5, weight = 4.0, delay = steps(2),
+                seed = UInt64(11), allow_self = true, plasticity = rule
+            );
+            build(nb)
+        )
+        solo = [sum(_solve(mkτ(1.0)).spike_count), sum(_solve(mkτ(40.0)).spike_count)]
+        @test solo[1] != solo[2]                        # the synaptic constant really matters here
+        bs = solve(batch([mkτ(1.0), mkτ(40.0)]), FixedStep(0.1); mode = :block, progress = false)
+        @test [sum(bs[1]), sum(bs[2])] == solo
+
+        # a plastic projection survives the stack: `Projection(syn, conn)` dropped the rule outright,
+        # silently turning a plastic member static
+        stdp = STDP(; Aplus = 0.02, Aminus = 0.005, τplus = 20.0, τminus = 20.0, wmin = 0.0, wmax = 8.0)
+        bd = Dewdrop._block_diagonal([mkτ(5.0; rule = stdp), mkτ(5.0; rule = stdp)])
+        @test all(p -> p.plasticity == stdp, bd.projections)
+        psolo = sum(_solve(mkτ(5.0; rule = stdp)).spike_count)
+        pb = solve(batch([mkτ(5.0; rule = stdp), mkτ(5.0; rule = stdp)]), FixedStep(0.1); mode = :block, progress = false)
+        @test sum(pb[1]) == psolo && sum(pb[2]) == psolo
+    end
+
+    @testset "a wrapped (Heterogeneous) model routes away from :fused" begin
+        # `:fused` diffs `fieldnames(typeof(model))`, but `_resolve_member` matches those keys against the
+        # LEAF model's fields: for a wrapper they match nothing, so every member would silently run
+        # member 1's parameters. Such a sweep must route to :multirun and stay correct there.
+        h(vθ) = Heterogeneous(_lif(); Vθ = fill(vθ, 6))
+        nh(vθ) = DewdropNetwork(h(vθ), 6; input = 0.35, tspan = (0.0, 50.0))
+        solo = [sum(_solve(nh(-50.0)).spike_count), sum(_solve(nh(-58.0)).spike_count)]
+        @test solo[1] != solo[2]                        # the members really differ
+        bs = solve(batch([nh(-50.0), nh(-58.0)]), FixedStep(0.1); progress = false)
+        @test bs.mode == :multirun
+        @test [sum(bs[1]), sum(bs[2])] == solo
+        @test [sum(bs[1]), sum(bs[2])] ==
+            [sum(x) for x in solve(batch([nh(-50.0), nh(-58.0)]), FixedStep(0.1); mode = :multirun, threads = true, progress = false).spike_counts]
+        # forcing it is refused rather than quietly wrong
+        @test_throws ErrorException solve(batch([nh(-50.0), nh(-58.0)]), FixedStep(0.1); mode = :fused, progress = false)
+
+        # a plain scalar model still takes :fused, and is still correct there
+        ns(vθ) = DewdropNetwork(LIF(; τ = 20.0, EL = -70.0, Vθ = vθ, Vr = -60.0, R = 100.0, tref = 2.0),
+                                6; input = 0.35, tspan = (0.0, 50.0))
+        solos = [sum(_solve(ns(-50.0)).spike_count), sum(_solve(ns(-58.0)).spike_count)]
+        bf = solve(batch([ns(-50.0), ns(-58.0)]), FixedStep(0.1); progress = false)
+        @test bf.mode == :fused && [sum(bf[1]), sum(bf[2])] == solos
+    end
+
+    @testset "every mode carries the members' `stimuli`" begin
+        # `stimulate!`-attached stimuli live in their own field, separate from `input`/`drive`/`noise`;
+        # a rebuild that forgets it runs the member with no stimulus at all, silently and without error.
+        ta = TimedArray(fill(0.3, 501); as = :current)
+        mkst(I) = DewdropNetwork(_lif(), 6; input = I, tspan = (0.0, 50.0), stimuli = (ta,))
+        solo = [sum(_solve(mkst(0.0)).spike_count), sum(_solve(mkst(0.05)).spike_count)]
+        @test solo[1] > 0 && solo[2] > solo[1]          # the stimulus really drives the members
+        for mode in (:shared, :multirun, :block)
+            bs = solve(batch([mkst(0.0), mkst(0.05)]), FixedStep(0.1); mode = mode, progress = false)
+            @test [sum(bs[1]), sum(bs[2])] == solo
+        end
+        bi = solve(batch(mkst(0.0); input = [0.0, 0.05]), FixedStep(0.1); progress = false)
+        @test [sum(bi[1]), sum(bi[2])] == solo          # the input-sweep rebuild carries it too
+    end
+
+    @testset "a Float32 model solves in every mode" begin
+        # `duration` is `nsteps * dt`, so it takes the MEMBER float type; a `Float64`-typed field would
+        # reject every Float32 model after the whole simulation had already run.
+        m32 = LIF(; τ = 20.0f0, EL = -70.0f0, Vθ = -50.0f0, Vr = -60.0f0, R = 100.0f0, tref = 2.0f0)
+        n32(I) = DewdropNetwork(m32, 6; input = Float32(I), tspan = (0.0f0, 50.0f0))
+        for mode in (:shared, :multirun, :block)
+            bs = solve(batch([n32(0.3), n32(0.5)]), FixedStep(0.1f0); mode = mode, progress = false)
+            @test nmembers(bs) == 2
+            @test bs.duration isa Float32
+            @test eltype(firing_rate(bs, 1)) === Float32
+        end
+    end
+
+    @testset "spike counts come back host-resident in every mode" begin
+        # `:shared`/`:fused` collect; `:block`/`:multirun` must too, or a device run returns device
+        # vectors (and does not even construct, since the field is a `Vector{Vector{T}}`).
+        for mode in (:shared, :multirun, :block)
+            bs = solve(batch([_mk(0.3), _mk(0.3)]), FixedStep(0.1); mode = mode, progress = false)
+            @test bs.spike_counts isa Vector{Vector{Int}}
+        end
+    end
 end

@@ -40,7 +40,7 @@ using Test
     @test Dewdrop.phases(prob.schedule) == (:deliver, :integrate, :threshold, :reset, :propagate, :record)
 end
 
-# The fixed-step loop runs millions of times, so the step must be allocation-free ---
+# The fixed-step loop runs millions of times, so the step must be allocation-free:
 # this also pins that the Val-dispatched schedule unrolls and the phases stay type-stable.
 @testset "step! is allocation-free" begin
     m = LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 100.0, tref = 2.0)

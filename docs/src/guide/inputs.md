@@ -16,7 +16,7 @@ builder; everything else is passed through `stimuli =`.
 | `noise =` | [`WhiteNoise`](@ref) | membrane noise |
 | `stimuli =` | any `AbstractStimulus` (or a tuple) | its own point |
 
-Stimuli of the current kind sum into `itot`; kicks add to `V` at delivery; noise adds under the refractory
+Stimuli of the current kind sum into `itot`; kicks add to `V` after the synaptic currents have been accumulated and before the membrane advance, so a voltage-dependent synaptic current sees the start-of-step `V` (the BrainPy and Brian2 convention); noise adds under the refractory
 gate. All families run identically on every execution backend (Serial, Fused-CPU, GPU megakernel, batched),
 and are byte-identical to the hand-written path for the three legacy inputs.
 
@@ -35,7 +35,7 @@ To combine a constant current with other stimuli, pass it explicitly as [`Consta
 ## Poisson drive and membrane noise
 
 [`PoissonDrive`](@ref) gives every neuron an independent background of external spikes each step (a voltage
-kick `weight · Poisson(rate · dt)`); [`WhiteNoise`](@ref) adds an exact Ornstein--Uhlenbeck membrane
+kick `weight · Poisson(rate · dt)`); [`WhiteNoise`](@ref) adds an exact Ornstein-Uhlenbeck membrane
 increment. Both draw from the reproducible counter-based RNG.
 
 ```julia

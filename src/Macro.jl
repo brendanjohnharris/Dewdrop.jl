@@ -100,12 +100,18 @@ macro neuron(name, block)
             struct $name{T} <: Dewdrop.AbstractNeuronModel
                 $(fields...)
             end
-            $name(; $(kwargs...)) = $name(Base.promote($(params...))...)
+            # `float` first: all-integer defaults would otherwise give a `{Int}` model, hence integer
+            # state columns, hence an InexactError on the first membrane store.
+            $name(; $(kwargs...)) = $name(Base.promote(Base.map(Base.float, ($(params...),))...)...)
             Dewdrop.statevars(::Type{<:$name}) = $statetuple
             Dewdrop.float_type(::$name{T}) where {T} = T
             @inline Dewdrop.asymptote(m::$name, I) = $sa
+            # The default initial V. The generic `_resting` reads a field named `EL`, which a model is
+            # free not to have; the asymptote at zero input IS the resting potential, whatever it is called.
+            @inline Dewdrop._resting(m::$name) = Dewdrop.asymptote(m, 0)
             @inline Dewdrop.membrane_step(m::$name, V, gtot, itot, dt) =
                 Dewdrop._linear_membrane_step(Dewdrop.asymptote(m, itot), m.$Rparam, m.$τparam, V, gtot, dt)
+            @inline Dewdrop._tau(m::$name) = m.$τparam           # SDE noise needs the membrane time constant
             @inline Dewdrop.threshold(m::$name, V) = $st
             @inline Dewdrop.reset_value(m::$name) = $sr
             @inline Dewdrop.refractory(m::$name) = $sf

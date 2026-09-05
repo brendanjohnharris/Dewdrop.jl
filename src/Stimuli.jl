@@ -1,11 +1,10 @@
 # * Unified stimulus seam. Every external input (constant current, Poisson voltage drive, OU membrane
-# noise, and the new time-varying / functional / inhomogeneous families) is an `AbstractStimulus` applied
+# noise, and the time-varying / functional / inhomogeneous families) is an `AbstractStimulus` applied
 # at ONE point in the per-neuron step: `:current`/`:conductance` fold into `itot`/`gtot` at accumulate,
-# `:kick` into `v` at deliver, `:noise` into `v` at the membrane step. A compile-time `stim_point` trait plus
-# point-filtered tuple unrolls generate the Serial / fused / GPU / batched paths from ONE source (mirroring
-# the synapse-descriptor collapse), and the fold of the three existing inputs stays BYTE-IDENTICAL. The
-# `input=` / `drive=` / `noise=` kwargs remain the public sugar, lowering to `ConstantCurrent` / `PoissonDrive`
-# / `WhiteNoise`. See .claude/docs/2026-07-08-unified-stimulus-design.md.
+# `:kick` into `v` after the synaptic fold, `:noise` into `v` at the membrane step. A compile-time
+# `stim_point` trait plus point-filtered tuple unrolls generate the Serial / fused / GPU / batched paths
+# from one source, mirroring the synapse descriptor. The `input=` / `drive=` / `noise=` kwargs are the
+# public sugar, lowering to `ConstantCurrent` / `PoissonDrive` / `WhiteNoise`.
 
 abstract type AbstractStimulus end
 Base.Broadcast.broadcastable(s::AbstractStimulus) = Ref(s)
@@ -14,7 +13,7 @@ Base.Broadcast.broadcastable(s::AbstractStimulus) = Ref(s)
 stim_point(::Type{S}) where {S <: AbstractStimulus} = error("$(nameof(S)) must define stim_point (one of :current/:conductance/:kick/:noise)")
 
 # Per-(neuron, step) context, isbits, rebuilt inside every kernel. The ONLY scalar-vs-batched delta is
-# `b`/`stream` (scalar: b=1, stream=0 --- bit-identical to the 4-arg RNG; batched: b, streams[b]). `m` is the
+# `b`/`stream` (scalar: b=1, stream=0, matching the 4-arg RNG; batched: b, streams[b]). `m` is the
 # resolved per-neuron model (`:noise` needs `_tau`); `v` the membrane; `t = muladd(n,dt,t0)` the current time.
 @inline stim_ctx(m, v, i, b, n, t, dt, stream) = (; m, v, i, b, n, t, dt, stream)
 
@@ -28,7 +27,7 @@ stim_point(::Type{S}) where {S <: AbstractStimulus} = error("$(nameof(S)) must d
 @inline _binputval(input::AbstractVector, i, b) = @inbounds input[i]
 @inline _binputval(input::AbstractMatrix, i, b) = @inbounds input[i, b]
 
-# ─────────────────────────── point-filtered tuple unrolls (compile-time, Base.tail) ───────────────────────────
+# * point-filtered tuple unrolls (compile-time, Base.tail)
 # Each point sums only its own kind; non-matching stimuli compile to a no-op (so a wrong-kind stimulus never
 # consumes an RNG counter at the wrong point). The strong-zero `false` is the additive identity: an all-absent
 # unroll vanishes byte-identically (`v + false === v`, type-preserving), reproducing `_drive_kick(::Nothing)`.
@@ -46,7 +45,7 @@ stim_point(::Type{S}) where {S <: AbstractStimulus} = error("$(nameof(S)) must d
 @inline _noise1(::Val{:noise}, s, r, x) = stim_noise(s, x) + _stim_noise(r, x)
 
 # :current → the itot base. The FIRST :current stimulus ASSIGNS (byte-preserving, incl. signed zero), the rest
-# ADD; with no :current stimulus the base is `z` (the gtot-typed zero == today's untouched accumulator).
+# ADD; with no :current stimulus the base is `z`, the gtot-typed zero.
 @inline _stim_itot(::Tuple{}, z, x) = z
 @inline _stim_itot(t::Tuple, z, x) = _cur0(stim_point(typeof(first(t))), first(t), Base.tail(t), z, x)
 @inline _cur0(::Val, s, r, z, x) = _stim_itot(r, z, x)
@@ -73,9 +72,9 @@ stim_point(::Type{S}) where {S <: AbstractStimulus} = error("$(nameof(S)) must d
     return (g + gr, i + ir)
 end
 
-# ─────────────────────────── serial (broadcast) drivers ───────────────────────────
-# The Serial backend is CPU-only (GPU always uses the megakernel). Each driver reproduces the exact prior
-# broadcast for the single-stimulus case; multiple same-point stimuli sum left-to-right. `m` is the scalar
+# * serial (broadcast) drivers
+# The Serial backend is CPU-only (GPU always uses the megakernel). Multiple same-point stimuli sum
+# left-to-right. `m` is the scalar
 # model (heterogeneous forces the fused path). Per-neuron contribution via a ctx built per broadcast element
 # (isbits → allocation-free).
 @inline _cur_bc(s, m, v, i, n, t, dt) = stim_current(s, stim_ctx(m, v, i, 1, n, t, dt, 0))
@@ -84,28 +83,31 @@ end
 
 # itot base: first :current assigns, rest add; no :current → itot .= 0 (never happens: init always adds a
 # ConstantCurrent, so the assign path always runs and reproduces `itot .= input`).
-function _stim_itot!(itot, stimuli, m, n, t, dt)
-    _sitot!(itot, stimuli, m, n, t, dt) || fill!(itot, zero(eltype(itot)))
+function _stim_itot!(itot, stimuli, V, m, n, t, dt)
+    _sitot!(itot, stimuli, V, m, n, t, dt) || fill!(itot, zero(eltype(itot)))
     return nothing
 end
-@inline _sitot!(itot, ::Tuple{}, m, n, t, dt) = false
-@inline function _sitot!(itot, stims::Tuple, m, n, t, dt)
-    return _sit1(stim_point(typeof(first(stims))), itot, first(stims), Base.tail(stims), m, n, t, dt)
+@inline _sitot!(itot, ::Tuple{}, V, m, n, t, dt) = false
+@inline function _sitot!(itot, stims::Tuple, V, m, n, t, dt)
+    return _sit1(stim_point(typeof(first(stims))), itot, first(stims), Base.tail(stims), V, m, n, t, dt)
 end
-@inline _sit1(::Val, itot, s, r, m, n, t, dt) = _sitot!(itot, r, m, n, t, dt)   # skip non-current
-@inline function _sit1(::Val{:current}, itot, s, r, m, n, t, dt)
+@inline _sit1(::Val, itot, s, r, V, m, n, t, dt) = _sitot!(itot, r, V, m, n, t, dt)   # skip non-current
+@inline function _sit1(::Val{:current}, itot, s, r, V, m, n, t, dt)
     idx = eachindex(itot)
-    itot .= _cur_bc.(Ref(s), Ref(m), itot, idx, n, t, dt)                      # first :current ASSIGNS
-    _sitot_add!(itot, r, m, n, t, dt)                                          # subsequent :current add
+    # `V`, not `itot`, in the ctx's membrane slot: the fused kernel builds its ctx from the frozen
+    # start-of-step V, so passing the accumulator here would make a V-dependent :current stimulus
+    # compute something different on this path.
+    itot .= _cur_bc.(Ref(s), Ref(m), V, idx, n, t, dt)                         # first :current ASSIGNS
+    _sitot_add!(itot, r, V, m, n, t, dt)                                       # subsequent :current add
     return true
 end
-@inline _sitot_add!(itot, ::Tuple{}, m, n, t, dt) = nothing
-@inline function _sitot_add!(itot, stims::Tuple, m, n, t, dt)
+@inline _sitot_add!(itot, ::Tuple{}, V, m, n, t, dt) = nothing
+@inline function _sitot_add!(itot, stims::Tuple, V, m, n, t, dt)
     if stim_point(typeof(first(stims))) === Val(:current)
         idx = eachindex(itot)
-        itot .+= _cur_bc.(Ref(first(stims)), Ref(m), itot, idx, n, t, dt)
+        itot .+= _cur_bc.(Ref(first(stims)), Ref(m), V, idx, n, t, dt)
     end
-    return _sitot_add!(itot, Base.tail(stims), m, n, t, dt)
+    return _sitot_add!(itot, Base.tail(stims), V, m, n, t, dt)
 end
 
 # conductance stims: append (Δg, Δi) into gtot/itot after synapse accumulation (no-op unless :conductance).
@@ -158,7 +160,7 @@ end
     return _anoises!(Base.tail(stims), V, refrac, z, m, n, t, dt)
 end
 
-# ─────────────────────────── ConstantCurrent (the `input=` default) ───────────────────────────
+# * ConstantCurrent (the `input=` default)
 """
     ConstantCurrent(input)
 
@@ -174,24 +176,40 @@ stim_point(::Type{<:ConstantCurrent}) = Val(:current)
 @inline stim_current(c::ConstantCurrent, x) = _binputval(c.input, x.i, x.b)
 export ConstantCurrent
 
-# ─────────────────────────── WhiteNoise gains the :noise point (struct in Noise.jl) ───────────────────────────
+# * WhiteNoise gains the :noise point (struct in Noise.jl)
 stim_point(::Type{<:WhiteNoise}) = Val(:noise)
 @inline function stim_noise(w::WhiteNoise, x)
-    s = _noise_scale(w, x.m, x.dt)                       # exact-OU scale (Noise.jl), unchanged
+    s = _noise_scale(w, x.m, x.dt)                       # exact-OU scale (Noise.jl)
     return s * draw_normal(typeof(s), w.seed, x.n, x.i, x.stream)
 end
 
-# ─────────────────────────── init-time hooks: device upload + shape validation ───────────────────────────
+# * init-time hooks: device upload + shape validation
 # Two OPTIONAL per-stimulus hooks the engine applies once (upload at network construction, validate at init),
-# defaulting to no-ops (the three legacy inputs and any isbits stimulus need neither): `stim_upload` moves a
+# defaulting to no-ops (`input`/`drive`/`noise` and any isbits stimulus need neither): `stim_upload` moves a
 # stimulus's backing arrays to the run architecture (mirrors `on_architecture(arch, input)`); `stim_validate`
 # checks its shapes against the run's `(N, nsteps, dt)`. Applied across the extras tuple by the `_*_stimuli`.
-stim_upload(s::AbstractStimulus, arch) = s
-stim_validate(::AbstractStimulus, N, nsteps, dt) = nothing
-@inline _upload_stimuli(t::Tuple, arch) = map(s -> stim_upload(s, arch), t)
+stim_upload(s, arch) = s
+stim_validate(s, N, nsteps, dt) = nothing
+@inline _upload_stimuli(t::Tuple, arch) = map(s -> stim_upload(_check_stimulus(s), arch), t)
 _validate_stimuli(t::Tuple, N, nsteps, dt) = foreach(s -> stim_validate(s, N, nsteps, dt), t)
 
-# ─────────────────────────── FunctionalCurrent / FunctionalKick / FunctionalConductance (live f) ───────────
+# Membership is `stim_point`, not the abstract type: `WhiteNoise` and `PoissonDrive` are defined before
+# `AbstractStimulus` and take part through the trait alone, so hooks keyed on the abstract type would
+# miss them (and did: passing either through `stimuli =` was a MethodError at construction). Checked
+# once, where the tuple is built, so a wrong object says so there rather than deep inside a kernel.
+function _check_stimulus(s)
+    applicable(stim_point, typeof(s)) || throw(
+        ArgumentError(
+            "$(typeof(s)) is not a stimulus: it defines no `stim_point` (one of " *
+                ":current / :conductance / :kick / :noise). Pass an AbstractStimulus (ConstantCurrent, " *
+                "FunctionalCurrent, TimedArray, InhomogeneousPoisson, SpikeSourceArray, …), a WhiteNoise, " *
+                "or a PoissonDrive."
+        )
+    )
+    return s
+end
+
+# * FunctionalCurrent / FunctionalKick / FunctionalConductance (live f)
 # Normalise a user input function to the canonical (i, t) call form: a 2-arg `f(i, t)` passes through, a 1-arg
 # `f(t)` is wrapped uniform over neurons. Arity is resolved ONCE (host-side, at construction), so the per-neuron
 # call is a plain static dispatch; GPU-safe when the wrapped `f` is isbits (a bare function or a closure over
@@ -252,7 +270,7 @@ stim_point(::Type{<:FunctionalConductance}) = Val(:conductance)
 @inline stim_conductance(c::FunctionalConductance, x) = (g = c.f(x.i, x.t); (g, g * c.Erev))
 export FunctionalConductance
 
-# ─────────────────────────── TimedArray (tabulated, indexed by step) ───────────────────────────
+# * TimedArray (tabulated, indexed by step)
 """
     TimedArray(data; as = :current)
 
@@ -264,7 +282,13 @@ for recorded / tabulated signals; for closed-form signals prefer [`FunctionalCur
 struct TimedArray{P, A} <: AbstractStimulus
     data::A
 end
-TimedArray(data; as::Symbol = :current) = TimedArray{as, typeof(data)}(data)
+function TimedArray(data; as::Symbol = :current)
+    # unchecked, `as` becomes a type parameter matching no application point, so the stimulus is a
+    # silent no-op (a misspelling contributes nothing and raises nothing)
+    as in (:current, :kick) ||
+        throw(ArgumentError("TimedArray `as` must be :current or :kick (got :$as)"))
+    return TimedArray{as, typeof(data)}(data)
+end
 Adapt.adapt_structure(to, ta::TimedArray{P}) where {P} = (d = adapt(to, ta.data); TimedArray{P, typeof(d)}(d))
 stim_point(::Type{<:TimedArray{P}}) where {P} = Val(P)
 @inline _timed_read(data::AbstractVector, i, n) = @inbounds data[n + 1]     # step n (0-based) → 1-based slot
@@ -281,7 +305,7 @@ function stim_validate(ta::TimedArray, N, nsteps, dt)
 end
 export TimedArray
 
-# ─────────────────────────── InhomogeneousPoisson (:kick, per-neuron / time-varying rate) ───────────────────────────
+# * InhomogeneousPoisson (:kick, per-neuron / time-varying rate)
 # Resolve the instantaneous rate for neuron `i` at step `n` / time `t`: a shared scalar, a per-neuron vector
 # `rate[i]`, an `N × nsteps` matrix `rate[i, n]`, or a live function `rate(t)` / `rate(i, t)` (lifted to (i,t)
 # at construction). A per-neuron vector with zeros outside a subpopulation is the targeting mechanism.
@@ -294,7 +318,8 @@ export TimedArray
     InhomogeneousPoisson(rate; weight, seed = 0)
 
 A Poisson voltage drive whose rate varies in space and/or time (the generalisation of [`PoissonDrive`](@ref)).
-`rate` (in Hz) is a shared scalar, a per-neuron vector `rate[i]`, an `N × nsteps` matrix `rate[i, n]`, or a
+`rate` is in events per unit time, in the same units as `dt` (the canonical kHz, so 20 Hz is `0.02`), and
+may be a shared scalar, a per-neuron vector `rate[i]`, an `N × nsteps` matrix `rate[i, n]`, or a
 live function `rate(t)` / `rate(i, t)`; each step every neuron draws `weight · Poisson(rate · dt)` from the
 counter RNG keyed by `(seed, step, neuron[, stream])` (independent per batch column). A per-neuron vector
 that is zero outside a subpopulation targets the drive to that subpopulation.
@@ -323,7 +348,7 @@ function stim_validate(d::InhomogeneousPoisson, N, nsteps, dt)
 end
 export InhomogeneousPoisson
 
-# ─────────────────────────── analytic input shapes (live, → FunctionalCurrent) ───────────────────────────
+# * analytic input shapes (live, → FunctionalCurrent)
 """
     ramp(; t1, to, t0 = 0, from = 0) -> FunctionalCurrent
 
@@ -331,6 +356,7 @@ A linear ramp from `from` (at `t0`) to `to` (at `t1`), flat outside `[t0, t1]`.
 """
 function ramp(; t1, to, t0 = 0.0, from = 0.0)
     t0, t1, from, to = promote(float(t0), float(t1), float(from), float(to))
+    t1 == t0 && return FunctionalCurrent(t -> ifelse(t < t0, from, to))   # zero width: a step, not 0/0
     return FunctionalCurrent(t -> from + (to - from) * clamp((t - t0) / (t1 - t0), zero(t), oneunit(t)))
 end
 

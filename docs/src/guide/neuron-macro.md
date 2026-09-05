@@ -14,7 +14,7 @@ emits the struct, a keyword constructor, and every method.
 ## The linear-membrane constraint
 
 [`@neuron`](@ref) covers the LIF family: the subthreshold dynamics must be **linear** in `V`, so the
-exact propagator (the Rotter--Diesmann exponential step) applies over a time step at constant input.
+exact propagator (the Rotter-Diesmann exponential step) applies over a time step at constant input.
 That is the same step every built-in linear model uses, and it is what lets conductance synapses fold
 in as an effective leak. You do not write `dV/dt`; you declare its two consequences directly:
 
