@@ -56,7 +56,7 @@ byte-exact reproducibility needs a single CPU thread, but the statistics are ide
 
 Recording is **windowed**: each monitor stages its samples in a device buffer and flushes in bulk, so
 host transfers are `O(1)` per window rather than per step. Positions stay **host-side** (they are
-metadata for the spatial measures in [analysis](analysis.md), never touched in the hot loop).
+metadata for the spatial measures in [analysis](analysis.md), never touched in the step loop).
 
 ## Spike scatter strategy
 
@@ -114,8 +114,8 @@ dynamics to within ~5%.
 On a GPU run the [advisor](backends.md) emits a one-off `@info` hint when the
 regime suggests a faster path: Float64 state (suggests Float32), 64-bit indices (suggests
 `index_type = Int32`), sparse firing over a large connectome (suggests `scatter = :compacted`), or a
-small quiet network that is launch-bound (suggests `batch = B`). Silence it with
-`Dewdrop.set_advice!(false)` or `solve(...; advise = false)`.
+small quiet network that is launch-bound (suggests `batch = B`). It is off by default; enable it
+with `Dewdrop.set_advice!(true)`, and suppress a single call with `solve(...; advise = false)`.
 
 ## Progress bars during GPU compilation
 
@@ -169,6 +169,6 @@ end
 ```
 
 Approach 2 is robust by construction (it never puts a custom logger in the global slot); approach 1 is
-convenient when you always want the bar and are willing to register the logger first. Note that
+convenient when you always want the bar and are willing to register the logger first.
 `invokelatest` on the `solve` call does *not* help: GPUCompiler captures the compile world through a
 generated-function path, not the runtime world.

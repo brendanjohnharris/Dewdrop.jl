@@ -16,7 +16,7 @@ using Test
     )   # exact weights → scatter order-independent
 
     @testset "types exported + are SimBackends" begin
-        for b in (Auto(), Serial(), Fused(), Turbo())
+        for b in (Dewdrop.Auto(), Serial(), Fused(), Turbo())
             @test b isa SimBackend
         end
     end
@@ -63,12 +63,12 @@ using Test
 
     @testset "Auto resolution" begin
         @test Dewdrop._resolve_backend(Serial(), prob) isa Serial   # explicit passes through
-        @test Dewdrop._resolve_backend(Auto(), prob) isa Fused      # canonical CPU → work-aware tight loop
+        @test Dewdrop._resolve_backend(Dewdrop.Auto(), prob) isa Fused      # canonical CPU → work-aware tight loop
         big = DewdropNetwork(m, 20_000; input = 30.0, tspan = (0.0, 1.0))
-        @test Dewdrop._resolve_backend(Auto(), big) isa Fused       # large net → Fused (threads itself)
+        @test Dewdrop._resolve_backend(Dewdrop.Auto(), big) isa Fused       # large net → Fused (threads itself)
         hm = Heterogeneous(m; Vθ = fill(m.Vθ, N))
         hp = DewdropNetwork(hm, N; input = 30.0, tspan = (0.0, 50.0))
-        @test Dewdrop._resolve_backend(Auto(), hp) isa Fused        # hetero → Fused
+        @test Dewdrop._resolve_backend(Dewdrop.Auto(), hp) isa Fused        # hetero → Fused
     end
 
     @testset "step=:fused deprecated alias maps to Fused" begin
@@ -98,4 +98,18 @@ using Test
         step!(warm)
         @test @allocated(step!(warm)) == 0
     end
+end
+
+# The guard against recording an accumulator a backend never materialises matched a bare `Trace`
+# only, so wrapping the same variable in an `Aggregate` slipped past it and returned silent zeros.
+@testset "accumulator-record guard sees through Aggregate" begin
+    m = LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 100.0, tref = 2.0)
+    prob = DewdropNetwork(m, 3; input = 0.5, tspan = (0.0, 20.0))
+    for spec in (Trace(:itot), Aggregate(Trace(:itot), :sum), Aggregate(Trace(:gtot), :mean))
+        @test_throws ArgumentError solve(
+            prob, FixedStep(0.1); backend = Differentiable(), record = (r = spec,)
+        )
+    end
+    @test solve(prob, FixedStep(0.1); backend = Differentiable(),   # a non-accumulator aggregate is fine
+                record = (r = Aggregate(Trace(:V), :mean),)) isa Any
 end

@@ -8,7 +8,7 @@ module UnitfulExt
 #   time ms · voltage mV · conductance nS · current pA · capacitance pF · resistance GΩ · rate kHz
 #   R·I = GΩ·pA = mV   ·   R·g = GΩ·nS = 1   ·   R·C = GΩ·pF = ms   ·   rate·dt = kHz·ms = 1
 #
-# `ustrip(unit, x)` converts `x` to `unit` and drops it, THROWING a `DimensionError` if `x` has
+# `ustrip(unit, x)` converts `x` to `unit` and drops it, throwing a `DimensionError` if `x` has
 # the wrong dimension, so a mis-dimensioned input is rejected at the boundary. `float` keeps
 # the canonical system in floating point even for integer-valued quantities.
 
@@ -26,7 +26,7 @@ using Unitful: Unitful, Quantity, ustrip, dimension, @u_str
 # Per-neuron input may be a unitful array.
 @inline Dewdrop.to_current(x::AbstractArray{<:Quantity}) = float.(ustrip.(u"pA", x))
 
-# A synaptic weight's role (voltage jump / current / conductance) is fixed by its OWN dimension.
+# A synaptic weight's role (voltage jump / current / conductance) is fixed by its own dimension.
 function Dewdrop.to_weight(x::Quantity)
     d = dimension(x)
     d === dimension(u"mV") && return float(ustrip(u"mV", x))   # delta-synapse voltage jump

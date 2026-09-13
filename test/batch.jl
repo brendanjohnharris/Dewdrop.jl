@@ -99,9 +99,12 @@ _ncols_expected(T) = round(Int, T / 0.1)                                 # recor
         scal = [solve(_ei_delta(inputs[b]; N), FixedStep(0.1); v0 = 5.0).spike_count for b in 1:B]
         bs = solve(_ei_delta(0.0; N), FixedStep(0.1); batch = B, input = _colmat(inputs, N), streams = fill(0, B), v0 = 5.0)
         @test all(bs.spike_count[:, b] == scal[b] for b in 1:B)
-        # random per-column v0 → distinct initial conditions per column
-        br = solve(_ei_delta(0.5; N), FixedStep(0.1); batch = B, streams = fill(0, B), v0 = (0.0, 20.0))
-        @test all(br.spike_count[:, b] != br.spike_count[:, 1] for b in 2:B)   # v0 drawn on the batch axis
+        # random per-column v0 is drawn on the column's own stream, so the default `streams = 0:(B-1)`
+        # gives distinct initial conditions and pinning every column to one stream deliberately shares them
+        br = solve(_ei_delta(0.5; N), FixedStep(0.1); batch = B, v0 = (0.0, 20.0))
+        @test all(br.spike_count[:, b] != br.spike_count[:, 1] for b in 2:B)
+        b0 = solve(_ei_delta(0.5; N), FixedStep(0.1); batch = B, streams = fill(0, B), v0 = (0.0, 20.0))
+        @test all(b0.spike_count[:, b] == b0.spike_count[:, 1] for b in 2:B)
         # per-neuron VECTOR v0 (length N) is broadcast across the batch: every column == scalar(vec)
         vec0 = [5.0 + 8.0 * (i / N) for i in 1:N]
         sv = solve(_ei_delta(0.5; N), FixedStep(0.1); v0 = vec0).spike_count
@@ -126,6 +129,8 @@ _ncols_expected(T) = round(Int, T / 0.1)                                 # recor
         @test all(bs.record.V.data[:, b, :] == scal[b].record.V.data for b in 1:B)
         @test all(bs.record.sub.data[:, b, :] == scal[b].record.sub.data for b in 1:B)
         @test all(bs.record.rate.data[b, :] == vec(scal[b].record.rate.data) for b in 1:B)
+        # `≈`: the scalar CPU aggregate walks the units with `@simd` while the batched path reduces
+        # with `sum!`, so the summation order (not the scaling) still differs.
         @test all(bs.record.mv.data[b, :] ≈ vec(scal[b].record.mv.data) for b in 1:B)
     end
 
@@ -194,4 +199,50 @@ end
     @test size(firing_rate(sol, :I)) == (4, B)
     # each subpopulation's rate agrees with the corresponding rows of the full (N,B) rate
     @test firing_rate(sol, :E) == firing_rate(sol)[net.subpops[:E], :]
+end
+
+# `streams` keys the per-column RNG. It must key the initial condition too, or an all-zero `streams`
+# stops reproducing the scalar reference the way the batched drive documents it does.
+@testset "batched v0 is drawn on the column\'s own stream" begin
+    m = LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 100.0, tref = 2.0)
+    prob = DewdropNetwork(m, 6; input = 0.0, tspan = (0.0, 10.0))
+    v0 = (-70.0, -60.0)
+    ref = init(prob, FixedStep(0.1); v0 = v0).state.state.V
+    zeroed = init(prob, FixedStep(0.1); batch = 3, v0 = v0, streams = zeros(Int, 3)).state.state.V
+    dflt = init(prob, FixedStep(0.1); batch = 3, v0 = v0).state.state.V
+    @test all(zeroed[:, b] == ref for b in 1:3)           # stream 0 everywhere = the scalar draw
+    @test dflt[:, 1] == ref                               # default 0:(B-1) puts column 1 on stream 0
+    @test length(unique(eachcol(dflt))) == 3                     # and all three are mutually independent
+end
+
+# The batched megakernel keeps the accumulators in registers too, so the same gate applies: their
+# per-(neuron, member) stores must appear exactly when a monitor reads them back.
+@testset "batched :itot/:gtot are materialised exactly when recorded" begin
+    N, B = 32, 3
+    m = LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 100.0, tref = 2.0)
+    prob = DewdropNetwork(m, N; input = 0.5, tspan = (0.0, 20.0))
+    inputs = [0.5, 0.7, 0.9]
+    b = solve(
+        prob, FixedStep(0.1); batch = B, input = _colmat(inputs, N),
+        record = (it = Trace(:itot), gt = Trace(:gtot))
+    )
+    d = b.record.it.data
+    @test all(all(≈(inputs[c]), d[:, c, :]) for c in 1:B)   # each member's own input, materialised
+    @test all(iszero, b.record.gt.data)
+    @test Dewdrop._accum_sinks(init(prob, FixedStep(0.1); batch = B)) === (nothing, nothing)
+    rec = init(prob, FixedStep(0.1); batch = B, record = (it = Trace(:itot),))
+    @test Dewdrop._accum_sinks(rec) === (rec.itot, rec.gtot)
+end
+
+# The spatial reduction scales a `:mean` by dividing, not by multiplying by a precomputed reciprocal:
+# `x * inv(n)` differs from `x / n` in the last ulp for about a third of all `x`. Both aggregates come
+# from the same reduction here, so the mean is exactly the sum over n whenever the scaling is a division.
+@testset "batched :mean aggregate is the :sum divided by n, exactly" begin
+    N, B = 60, 4
+    prob = _ei_delta(0.0; N)
+    sol = solve(
+        prob, FixedStep(0.1); batch = B, input = _colmat([0.5(b - 1) for b in 1:B], N),
+        record = (s = Aggregate(Trace(:V), :sum), m = Aggregate(Trace(:V), :mean))
+    )
+    @test sol.record.m.data == sol.record.s.data ./ N
 end

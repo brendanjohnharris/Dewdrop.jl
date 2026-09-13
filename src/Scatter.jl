@@ -1,4 +1,4 @@
-# * Event-driven sparse scatter: the spike-propagation inner loop, written ONCE as a
+# * Event-driven sparse scatter: the spike-propagation inner loop, written once as a
 # KernelAbstractions kernel so the same source runs on CPU (`@threads`) and GPU (PTX/AIR).
 # One thread per presynaptic neuron; spiking neurons walk their CSR row and deposit each
 # synapse's weight into the delay ring buffer at (now + per-synapse delay), accumulating with
@@ -9,7 +9,7 @@
 using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
 import Atomix
 
-# EDGE-PARALLEL scatter: ONE thread per synapse, not per presynaptic neuron. Every synapse is an
+# edge-parallel scatter: one thread per synapse, not per presynaptic neuron. Every synapse is an
 # independent thread with uniform work (one conditional atomic), so the device saturates even when
 # only a few neurons fire; a per-neuron thread would instead walk a whole row serially and leave
 # most of the device idle. The presynaptic source is read from the materialised `src` array (sorted,
@@ -60,6 +60,20 @@ end
 # fixed presynaptic order, so it is deterministic and needs no atomics. Dispatched on plain
 # `Array` storage; the device path keeps the kernel above. Result matches the kernel for any
 # input (same set of additions).
+
+# Threading costs a fixed `@threads` dispatch (~13 µs here, independent of the work), so it only pays
+# once enough edges are deposited to amortise it. Below the threshold the serial walk wins, by up to
+# 14x at the sparse end, where most rows are skipped and each thread gets almost nothing to do.
+# Both the dispatch cost and the speedup scale with the thread count, so the threshold is per thread,
+# as in `_TIGHT_MIN_PER_THREAD` for the dense loop. Measured crossover on 16 threads: serial ahead at
+# ~4·10^3 deposits per step, threaded ahead at ~10^4, hence ~625 each. The work estimate is this step's
+# spiking rows times the mean out-degree. Both branches leave the same ring contents (fixed-point
+# counts, so integer addition is associative), so the choice changes speed and nothing else.
+const _SCATTER_MIN_PER_THREAD = 625
+# `size(spiked, 1)` is the presynaptic count for both a scalar `(N,)` mask and a batched `(N, B)` one,
+# so the batched scatters (which thread over the member axis) use the same estimate and threshold.
+@inline _scatter_work(conn, spiked) = count(spiked) * (nedges(conn) ÷ max(size(spiked, 1), 1))
+
 function scatter!(
         buf::DelayBuffer{<:Array},
         conn::SparseCSR{<:Array, <:Array, <:Array, <:Array},
@@ -68,7 +82,7 @@ function scatter!(
     slots, L, scale = buf.slots, buf.L, buf.scale
     rowptr, post, weight, delay = conn.rowptr, conn.post, conn.weight, conn.delay
     n = Int(now)
-    if Threads.nthreads() == 1
+    if Threads.nthreads() == 1 || _scatter_work(conn, spiked) < Threads.nthreads() * _SCATTER_MIN_PER_THREAD
         # serial: no contention, so no atomics needed.
         @inbounds for pre in eachindex(spiked)
             spiked[pre] || continue

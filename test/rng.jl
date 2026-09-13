@@ -1,5 +1,6 @@
 using Dewdrop
 using Test
+using Statistics
 
 # Counter-based RNG keyed by (step, entity): a *pure* function,
 # so draws are identical regardless of thread count or iteration order. This fixes
@@ -76,4 +77,53 @@ end
     # zero allocation in the inner loop
     Dewdrop.draw_poisson(2.0, UInt64(1), 1, 1)
     @test @allocated(Dewdrop.draw_poisson(2.0, UInt64(1), 2, 3)) == 0
+end
+
+# Each builder keys its draws on a `(step, entity)` pair taken from whatever indices it has to hand, so
+# `random_positions` (neuron, dim), `distance_prob` (pre, post) and `fixed_prob` (gap, pre) all land in
+# one key space. Sharing a seed across them would correlate geometry with connectivity; each entry point
+# mixes in its own tag (src/RNG.jl).
+@testset "counter-RNG domain separation across builders" begin
+    seed = UInt64(12345)
+    tags = (
+        Dewdrop.DOMAIN_POSITIONS, Dewdrop.DOMAIN_DISTPROB, Dewdrop.DOMAIN_DISTCOUNT,
+        Dewdrop.DOMAIN_FIXEDPROB, Dewdrop.DOMAIN_WEIGHTS, Dewdrop.DOMAIN_POISSON,
+        Dewdrop.DOMAIN_INITIALV, Dewdrop.DOMAIN_NOISE, Dewdrop.DOMAIN_DRIVE,
+        Dewdrop.DOMAIN_INHOMPOISSON,
+    )
+    @test length(unique(tags)) == length(tags)
+    ks = [Dewdrop.domain_seed(seed, t) for t in tags]
+    @test length(unique(ks)) == length(ks)
+    # the shared `(step, entity)` slot now yields a different draw at every call site
+    @test length(unique(Dewdrop.draw_uniform(Float64, k, 5, 1) for k in ks)) == length(ks)
+    @test Dewdrop.domain_seed(seed, first(tags)) == Dewdrop.domain_seed(seed, first(tags))   # pure
+
+    # the concrete case: one seed reused for placement and for wiring
+    pos = random_positions(64, (1.0, 1.0); seed = seed)
+    conn = distance_prob(
+        Dewdrop.CPU(), pos; kernel = gaussian_kernel(0.3), weight = 1.0,
+        delay = steps(1), seed = seed
+    )
+    @test Dewdrop.nedges(conn) > 0
+    @test pos == random_positions(64, (1.0, 1.0); seed = seed)          # still reproducible
+    @test pos != random_positions(64, (1.0, 1.0); seed = UInt64(999))   # still seed-dependent
+    # a neuron\'s coordinate is no longer the draw that decides its first connections
+    @test pos != random_positions(64, (1.0, 1.0); seed = Dewdrop.domain_seed(seed, Dewdrop.DOMAIN_DISTPROB))
+end
+
+# The per-step stimuli collide harder than the builders do: `WhiteNoise` and `PoissonDrive` both key on
+# `(step, neuron)` and both default to `seed = 0`, and `draw_normal` builds its Box-Muller radius from
+# the very word `draw_uniform` returns. Undefended, the noise magnitude is then a deterministic
+# decreasing function of the drive's draw (measured cor = -0.67), not an independent process.
+@testset "per-step stimuli draw on separated streams" begin
+    n, d = WhiteNoise(0.5), PoissonDrive(rate = 10.0, weight = 0.5)
+    ip = InhomogeneousPoisson(5.0; weight = 0.5)
+    @test length(unique((n.seed, d.seed, ip.seed))) == 3        # one user seed → three streams
+    @test n.seed != UInt64(0)                                   # and none is the raw seed
+    pts = [(s, i) for s in 1:200, i in 1:50]
+    u = [Dewdrop.draw_uniform(Float64, d.seed, s, i) for (s, i) in pts]
+    z = [Dewdrop.draw_normal(Float64, n.seed, s, i) for (s, i) in pts]
+    @test abs(cor(vec(u), abs.(vec(z)))) < 0.05
+    # the shared-word signature of the collision: |z| == sqrt(-2log u) * |cos θ| ≤ sqrt(-2log u)
+    @test !all(abs.(vec(z)) .<= sqrt.(-2 .* log.(vec(u))) .+ 1.0e-9)
 end

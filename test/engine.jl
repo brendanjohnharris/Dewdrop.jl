@@ -48,4 +48,18 @@ end
     step!(integ)            # warm
     step!(integ)
     @test @allocated(step!(integ)) == 0
+
+    # and with a projection: a small connected network must not pay the scatter's `@threads`
+    # dispatch (see `_SCATTER_MIN_PER_THREAD`), which an unconnected network never exercises
+    conn = fixed_prob(Dewdrop.CPU(), 64, 64, 0.1; weight = 0.5, delay = steps(3), seed = UInt64(1))
+    ci = init(
+        DewdropNetwork(
+            m, 64; input = 0.5, tspan = (0.0, 10.0),
+            projections = (Projection(CurrentSynapse(τ = 5.0), conn),)
+        ), FixedStep(0.1)
+    )
+    for _ in 1:5
+        step!(ci)
+    end
+    @test @allocated(step!(ci)) == 0
 end

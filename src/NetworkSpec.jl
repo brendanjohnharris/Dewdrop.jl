@@ -1,6 +1,6 @@
 # * Deferred network spec: an immutable, run-parameter-free description of a network that
 # materialises into a `DewdropNetwork` only at solve time, when `dt`/`tspan` are known. This lets a
-# network be SPECIFIED without building its (expensive) connectome up front, supports constructors whose
+# network be specified without building its (expensive) connectome up front, supports constructors whose
 # assembly genuinely needs `dt`/`tspan` (the spatial-FNS streaming drive), makes parameter sweeps cheap +
 # serialisable ("define once, solve over many durations"), and is the future front-end for vmap-style
 # batching (a batch is "B materialisations of B spec-variations"; `materialize` is the pure seam each mode
@@ -10,11 +10,11 @@
 #   FrozenBuilder   : an immutable freeze of a `NetworkBuilder` (structured; retains projection recipes;
 #                       carries a default `tspan`). Built via `freeze(nb)`; materialises via `_build_network`.
 #   DeferredNetwork : an opaque thunk: a captured build function + its kwargs (model params, seed, arch;
-#                       NOT tspan/dt). Built via `defer(f; kw...)`; materialises by calling `f(; kw…, tspan, dt)`.
+#                       not tspan/dt). Built via `defer(f; kw...)`; materialises by calling `f(; kw…, tspan, dt)`.
 #                       Use for `dt`-dependent constructors (the deferred `f` must accept `tspan` + `dt`).
 #
 # The CommonSolve seam dispatches on the spec (no clash with `DewdropNetwork`): `init`/`solve` materialise,
-# then delegate to the existing network `init`/`solve`; so every kwarg (record/v0/backend/BATCH/progress/…)
+# then delegate to the existing network `init`/`solve`; so every kwarg (record/v0/backend/batch/progress/…)
 # and the shared-CSR ensemble (`batch=B`) work through a spec on day one.
 
 """
@@ -61,7 +61,7 @@ export freeze
 # thunk spec: a captured constructor + its kwargs
 struct DeferredNetwork{F, KW <: NamedTuple} <: AbstractNetworkSpec
     build::F        # build(; kw..., tspan, dt) -> DewdropNetwork
-    kw::KW          # captured construction kwargs (NOT tspan/dt)
+    kw::KW          # captured construction kwargs (not tspan/dt)
     label::Symbol   # for `show` (the constructor's name)
 end
 
@@ -71,7 +71,7 @@ end
 Capture a network constructor `f` and its construction `kw...` as a deferred [`AbstractNetworkSpec`](@ref),
 materialised at solve time by calling `f(; kw..., tspan = …, dt = …)`. Makes any constructor (e.g. a
 parametric network builder) a reusable, `tspan`-free spec with no refactor. `f` must accept `tspan` and `dt` keywords
-(it may ignore `dt`); do NOT put `tspan`/`dt` in `kw` (they are injected at materialise time). `seed`/`arch`
+(it may ignore `dt`); do not put `tspan`/`dt` in `kw` (they are injected at materialise time). `seed`/`arch`
 belong in `kw` (they are part of the model's identity; vary them by constructing a new spec).
 """
 defer(f; kw...) = DeferredNetwork(f, NamedTuple(kw), nameof(f))
@@ -109,7 +109,7 @@ CommonSolve.init(spec::AbstractNetworkSpec, alg::FixedStep; tspan = nothing, kwa
     init(materialize(spec, alg; tspan = tspan), alg; kwargs...)
 
 # reuse the advisor-wrapped network `solve` (Advisor.jl) on the materialised network. The connectome build
-# (`materialize`) can be slow and runs BEFORE the solve loop's progress bar, so announce it (see below).
+# (`materialize`) can be slow and runs before the solve loop's progress bar, so announce it (see below).
 function CommonSolve.solve(
         spec::AbstractNetworkSpec, alg::FixedStep; tspan = nothing, advise::Bool = true,
         progress = :auto, kwargs...
@@ -119,8 +119,8 @@ function CommonSolve.solve(
 end
 
 # Materialise the spec, announcing "Building network" while the (possibly slow) connectome build runs. It
-# happens BEFORE the solve loop's bar, so without this the UI sits dead during the build. Emits an
-# indeterminate ProgressLogging record (`progress = nothing`) on the SAME level/convention as the solve bar,
+# happens before the solve loop's bar, so without this the UI sits dead during the build. Emits an
+# indeterminate ProgressLogging record (`progress = nothing`) on the same level/convention as the solve bar,
 # under its own id, and clears it (`progress = "done"`) when the build finishes; so a terminal/VSCode
 # progress logger renders a "Building network…" spinner that gives way to the solve bar. `progress = false`
 # suppresses it (matching the solve bar).

@@ -162,3 +162,19 @@ end
     @test d((1.0,), (9.0,); period = nothing) ≈ 8.0        # no wrap requested
     @test d((0.0, 0.0), (9.0, 9.0); period = (10.0, 10.0)) ≈ sqrt(2)
 end
+
+# `distance_fixed_count` promises an exact total edge count, so a request the kernel and the
+# source/target sets cannot meet is an error rather than a quietly smaller connectome.
+@testset "fixed-count connectivity refuses an unreachable count" begin
+    pos = line_positions(10; spacing = 1.0)
+    k = box_kernel(1.5)                       # only near-neighbour pairs have p > 0
+    @test_throws ArgumentError distance_fixed_count(
+        Dewdrop.CPU(), pos; kernel = k, count = 10_000, weight = 1.0,
+        delay = steps(1), seed = UInt64(1)
+    )
+    c = distance_fixed_count(
+        Dewdrop.CPU(), pos; kernel = k, count = 8, weight = 1.0,
+        delay = steps(1), seed = UInt64(1)
+    )
+    @test Dewdrop.nedges(c) == 8              # a reachable count is still delivered exactly
+end

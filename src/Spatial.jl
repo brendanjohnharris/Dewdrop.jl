@@ -44,7 +44,7 @@ export line_positions, grid_positions, ring_positions
     @inbounds for k in 1:D
         δ = abs(a[k] - b[k])
         # minimum-image wraparound. The `mod` first makes it correct for a separation wider than the
-        # box too; without it, `period - δ` goes NEGATIVE there and squares into a spurious distance.
+        # box too; without it, `period - δ` goes negative there and squares into a spurious distance.
         period !== nothing && (δ = (w = mod(δ, period[k]); min(w, period[k] - w)))
         s += δ * δ
     end
@@ -94,6 +94,10 @@ function distance_prob(
         sources = eachindex(positions), targets = eachindex(positions), index_type::Type = Int
     )
     npost = length(positions)
+    # no sources or targets ⇒ no edges, and no real index for the type probe below (see `fixed_prob`)
+    (isempty(sources) || isempty(targets)) &&
+        return SparseCSR(arch, Tuple{Int, Int, Float32, Int}[]; npre = npost, npost = npost, index_type = index_type)
+    dseed = domain_seed(seed, DOMAIN_DISTPROB)                         # independent of positions / other builders
     probe = first(sources)                                             # type probe: a real source index
     wtype = typeof(to_weight(weight isa Function ? weight(probe) : weight))
     dtype = typeof(_delayval(delay isa Function ? delay(probe) : delay))   # Int (steps) or Float (ms)
@@ -104,7 +108,7 @@ function distance_prob(
         ppos = positions[pre]
         for post in targets
             (!allow_self && pre == post) && continue
-            draw_uniform(Float64, seed, pre, post) < kernel(distance(ppos, positions[post], period)) || continue
+            draw_uniform(Float64, dseed, pre, post) < kernel(distance(ppos, positions[post], period)) || continue
             push!(edges, (Int(pre), Int(post), w, d))
         end
     end
@@ -123,7 +127,8 @@ points.
 """
 function random_positions(N::Integer, domain::Tuple; seed::Unsigned, sort::Bool = false)
     D = length(domain)
-    pts = [ntuple(d -> Float64(domain[d]) * draw_uniform(Float64, seed, i, d), D) for i in 1:Int(N)]
+    pseed = domain_seed(seed, DOMAIN_POSITIONS)   # independent of the connectivity builders' streams
+    pts = [ntuple(d -> Float64(domain[d]) * draw_uniform(Float64, pseed, i, d), D) for i in 1:Int(N)]
     sort && sort!(pts)
     return pts
 end
@@ -180,7 +185,7 @@ end
 """
     distance_fixed_count(arch, positions; kernel, count, weight, delay, seed, allow_self=false, period=nothing, sources=…, targets=…)
 
-Distance-dependent connectivity with an EXACT total edge `count`: samples `count` `(pre, post)` pairs
+Distance-dependent connectivity with an exact total edge `count`: samples `count` `(pre, post)` pairs
 without replacement, with probability ∝ `kernel(distance(positions[pre], positions[post]))`, via the
 Gumbel-max top-k trick (`score = log p + Gumbel`, keep the top `count`), reproducibly from the
 counter-based RNG. Unlike per-pair Bernoulli [`distance_prob`](@ref) (random edge count), this fixes
@@ -194,6 +199,14 @@ function distance_fixed_count(
     )
     cnt = Int(count)
     cnt ≥ 0 || throw(ArgumentError("count must be ≥ 0 (got $cnt)"))
+    # no sources or targets ⇒ no pairs to draw, and no real index for the type probe below. A non-zero
+    # `count` against an empty set is caught by the exact-count check instead, which says more.
+    (isempty(sources) || isempty(targets)) && cnt == 0 &&
+        return SparseCSR(
+        arch, Tuple{Int, Int, Float32, Int}[];
+        npre = length(positions), npost = length(positions), index_type = index_type
+    )
+    dseed = domain_seed(seed, DOMAIN_DISTCOUNT)                        # independent of positions / other builders
     h = _TopK(cnt)
     for pre in sources
         ppos = positions[pre]
@@ -201,10 +214,18 @@ function distance_fixed_count(
             (!allow_self && pre == post) && continue
             p = kernel(distance(ppos, positions[post], period))
             p > 0 || continue                                 # zero-probability pairs are never selected
-            u = draw_uniform(Float64, seed, pre, post)
+            u = draw_uniform(Float64, dseed, pre, post)
             _topk_push!(h, log(p) + _gumbel(u), Int(pre), Int(post))
         end
     end
+    # the exact-count promise is the point of this builder, so a short heap is an error rather than a
+    # quietly smaller connectome: it means the kernel and the source/target sets admit too few pairs
+    h.n == cnt || throw(
+        ArgumentError(
+            "distance_fixed_count: only $(h.n) of the requested count = $cnt pairs have non-zero kernel " *
+                "probability; widen the kernel, enlarge `sources`/`targets`, or lower `count`"
+        )
+    )
     probe = first(sources)                                             # type probe: a real source index
     wtype = typeof(to_weight(weight isa Function ? weight(probe) : weight))
     dtype = typeof(_delayval(delay isa Function ? delay(probe) : delay))   # Int (steps) or Float (ms)

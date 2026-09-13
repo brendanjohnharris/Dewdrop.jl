@@ -163,3 +163,30 @@ end
     # a narrower `targets` used to index `k` out of bounds under `@inbounds` and return silently
     @test_throws ArgumentError correlate_weights!(conn, 1.0; targets = 21:40, seed = UInt64(2))
 end
+
+# An empty `sources`/`targets` admits no edges, but also leaves no real index to probe the weight and
+# delay types against: `first` on it used to escape as a `BoundsError` from inside the builder.
+@testset "connectivity builders accept an empty source/target set" begin
+    pos = random_positions(12, (1.0, 1.0); seed = UInt64(1))
+    k = d -> exp(-d / 0.2)
+    empties = (
+        fixed_prob(Dewdrop.CPU(), 12, 12, 0.5; weight = 1.0, delay = steps(1), seed = UInt64(1), sources = Int[]),
+        fixed_prob(Dewdrop.CPU(), 12, 12, 0.5; weight = 1.0, delay = steps(1), seed = UInt64(1), targets = Int[]),
+        distance_prob(Dewdrop.CPU(), pos; kernel = k, weight = 1.0, delay = steps(1), seed = UInt64(1), sources = Int[]),
+        distance_fixed_count(Dewdrop.CPU(), pos; kernel = k, count = 0, weight = 1.0, delay = steps(1), seed = UInt64(1), sources = Int[]),
+    )
+    for conn in empties
+        @test Dewdrop.nedges(conn) == 0
+        @test Dewdrop.npre(conn) == Dewdrop.npost(conn) == 12
+    end
+    # the weight/delay callbacks are never invoked: there is no valid index to pass them
+    @test Dewdrop.nedges(
+        fixed_prob(
+            Dewdrop.CPU(), 12, 12, 0.5;
+            weight = _ -> error("probed an empty source set"), delay = steps(1), seed = UInt64(1), sources = Int[]
+        )
+    ) == 0
+    # an empty `targets` normalises nothing, but an edge outside it still reports the clear error
+    conn = fixed_prob(Dewdrop.CPU(), 12, 12, 0.3; weight = 1.0, delay = 1.0, seed = UInt64(3))
+    @test_throws ArgumentError correlate_weights!(conn, 1.0; targets = Int[], seed = UInt64(4))
+end

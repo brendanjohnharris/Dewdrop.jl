@@ -50,7 +50,7 @@ using Dewdrop
 
 m = LIF(; τ = 20.0, EL = -65.0, Vθ = -50.0, Vr = -65.0, R = 1.0, tref = 2.0)
 prob = DewdropNetwork(m, 1000; input = 1.5, tspan = (0.0, 1000.0))
-sol = solve(prob, FixedStep(0.1))                 # backend = Auto()
+sol = solve(prob, FixedStep(0.1))                 # the default Auto backend
 ```
 
 `input` is the external drive: a scalar constant current shared by every unit, or a per-unit array. It is
@@ -93,7 +93,6 @@ it with random connectivity from [`fixed_prob`](@ref), and feed it external spik
 ```@setup gs
 using Dewdrop, CairoMakie, TimeseriesMakie, Fathom
 set_theme!(fathom())
-Dewdrop.set_advice!(false)
 ```
 
 ```@example gs

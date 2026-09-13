@@ -1,21 +1,21 @@
 # * Progress reporting (host-side) for the `solve` time loop.
 #
-# A progress bar here is just a LOGGING CONVENTION (the ProgressLogging protocol): emit a
+# A progress bar here is just a logging convention (the ProgressLogging protocol): emit a
 # `@logmsg LogLevel(-1) name progress=frac _id=id` per update, keyed to one stable `id`. VSCode,
 # TerminalLoggers, Pluto and Juno all render such records as a live bar with an ETA; a bare
 # `julia script.jl` (default ConsoleLogger, min level Info) filters them cheaply, so the loop stays
-# silent and near-free off the interactive path. We therefore add NO dependency: stdlib `Logging`
+# silent and near-free off the interactive path. We therefore add no dependency: stdlib `Logging`
 # (the producer side is a convention, not the ProgressLogging package) + `UUIDs` suffice.
 #
 # The user-facing `progress` kwarg on `solve` / `init`:
-#   :auto (default) → on, but SUPPRESSED until ~`_PROGRESS_CALIBRATE` s of wall-clock have elapsed
+#   :auto (default) → on, but suppressed until ~`_PROGRESS_CALIBRATE` s of wall-clock have elapsed
 #                     (so trivial runs never flash a bar); the update stride is calibrated to ~2 Hz.
 #   true            → force on from the start (also renders during the calibration window).
 #   false           → off (no reporter is built; every loop hook compiles to a no-op).
 #   name::String    → force on with a custom bar name.
 #   N::Integer (>0) → force on, update every N steps (skip calibration).
 #
-# The reporter is built at the TOP of `solve!` (not at `init`), so the integrator stores only the
+# The reporter is built at the top of `solve!` (not at `init`), so the integrator stores only the
 # cheap immutable spec and never carries a UUID across an `adapt` to the device.
 
 import UUIDs
@@ -39,7 +39,7 @@ mutable struct ProgressReporter
     shown::Bool                           # has any update been emitted? (gates the completion record)
 end
 
-# build a reporter from the user spec, or `nothing` (no bar). `Bool` is matched BEFORE `Integer`
+# build a reporter from the user spec, or `nothing` (no bar). `Bool` is matched before `Integer`
 # so `true`/`false` never fall through to the cadence path (Bool <: Integer in Julia).
 _progress_reporter(spec, total::Integer) = _progress_reporter(spec, Int(total))
 _progress_reporter(::Nothing, ::Int) = nothing
@@ -69,7 +69,7 @@ end
 @inline _progress_start!(::Nothing) = nothing
 @inline _progress_start!(rep::ProgressReporter) = (rep.t0 = time(); nothing)
 
-# The per-step hook: its ONLY cost on the common path is the `n >= rep.next_emit` compare (a single,
+# The per-step hook: its only cost on the common path is the `n >= rep.next_emit` compare (a single,
 # well-predicted branch). `time()` and `@logmsg` are touched only at emit points: O(log n) during
 # calibration (probes at powers of two) and ~2 Hz thereafter.
 @inline _progress_step!(::Nothing, ::Integer) = nothing

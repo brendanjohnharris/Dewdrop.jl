@@ -1,17 +1,17 @@
 # * Fused device step: the dense per-neuron phases collapsed into one launch.
 #
-# At small/medium N the per-step cost is dominated by KERNEL LAUNCHES, not compute: the
+# At small/medium N the per-step cost is dominated by kernel launches, not compute: the
 # broadcast-per-phase engine issues ~10 dense launches per step (deliver, drive, accumulate,
 # membrane, refrac, decay, threshold, reset, count) plus the sparse scatter and the monitors,
 # and the device `scatter!`/`_aggregate!` each `synchronize` (a host round-trip) every step.
 #
-# This module collapses the DENSE per-neuron phases of the canonical schedule into ONE
+# This module collapses the dense per-neuron phases of the canonical schedule into one
 # KernelAbstractions megakernel and removes the per-step host synchronisation, so the step
 # sequence pipelines on a single device stream (host syncs only at the windowed monitor flush
-# and at host reads). The SPARSE scatter stays a separate kernel (folding it in would serialise
+# and at host reads). The sparse scatter stays a separate kernel (folding it in would serialise
 # it), and the monitors stay separate (they keep their own windowed device→host machinery).
 #
-# It is a DEVICE-ONLY fast path: dispatched on `get_backend(V)`, the CPU backend keeps the
+# It is a device-only fast path: dispatched on `get_backend(V)`, the CPU backend keeps the
 # tuned broadcast phases (CPU is not launch-bound, and this avoids any change to the CPU
 # validation path). The fused kernel is model-generic (it calls the same `membrane_step` /
 # `threshold` / `reset_value` / `refractory` hooks), so `@neuron` models fuse too, and it is
@@ -28,7 +28,7 @@ using KernelAbstractions: @kernel, @index
 #   - decay the per-neuron synaptic state for the next step.
 # CUBA contributes a decaying current; COBA a conductance (effective leak + reversal drive);
 # delta an instantaneous voltage jump (added straight to `v`, no accumulator, no decay).
-# `v0` is the FROZEN start-of-step membrane potential: every v-reading synapse evaluates against it,
+# `v0` is the frozen start-of-step membrane potential: every v-reading synapse evaluates against it,
 # so the fold is independent of projection order. `vj` accumulates voltage jumps, applied by the
 # caller after the fold. Both match BrainPy (`sum_current_inputs(V)` before `sum_delta_inputs()`) and
 # Brian2 (the `groups` slot before the `synapses` slot).
@@ -70,13 +70,26 @@ end
 @inline _cellcoeffs(c::NamedTuple, i) = map(x -> _cellcoeff(x, i), c)
 
 # The per-neuron fused step body for neuron `i`: deliver + stimuli + accumulate + membrane + decay +
-# threshold + reset + count. Written ONCE as a plain `@inline` function so it drives BOTH the GPU
-# megakernel (`_fused_kernel!` below, one thread per neuron) AND the CPU tight loop (`_tight_step!`,
+# threshold + reset + count. Written once as a plain `@inline` function so it drives both the GPU
+# megakernel (`_fused_kernel!` below, one thread per neuron) and the CPU tight loop (`_tight_step!`,
 # a plain Julia `for`/`@threads` loop). Each neuron writes only its own state, so the loop is
 # embarrassingly parallel → bit-identical regardless of thread count or driver. Every external input is
 # a stimulus in the `stimuli` tuple, applied at its compile-time point via the ctx unrolls (Stimuli.jl):
 # `:current`/`:conductance` → itot/gtot, `:kick` → v after the synaptic fold, `:noise` → v at the membrane
 # step; an absent kind folds to a strong-zero `false`, leaving its accumulator untouched.
+# The fused step keeps `itot`/`gtot` in registers, so the array stores exist only so `Trace(:itot)` /
+# `Trace(:gtot)` (or a `Probe`, whose `f` is opaque) can read them back. `_accum_sinks` passes `nothing`
+# when nothing records them, folding both stores away: two N-length global stores per step, ~24% of a
+# 10^6-neuron GPU step. Serial and Turbo genuinely read the arrays (`_accum_all!` / `_accum_base!`),
+# so they are unaffected.
+@inline _store_accum!(::Nothing, i, v) = nothing
+@inline _store_accum!(a, i, v) = (@inbounds a[i] = v; nothing)
+@inline _store_accum!(::Nothing, i, b, v) = nothing
+@inline _store_accum!(a, i, b, v) = (@inbounds a[i, b] = v; nothing)
+@inline _accum_sinks(integ) = _accum_sinks(Val(_any_reads_accum(typeof(integ.monitors))), integ)
+@inline _accum_sinks(::Val{true}, integ) = (integ.itot, integ.gtot)
+@inline _accum_sinks(::Val{false}, integ) = (nothing, nothing)
+
 @inline function _fused_unit!(V, refrac, spiked, spike_count, stimuli, itotarr, gtotarr, syns, m, dt, n, t, aux, i)
     @inbounds begin
         v0 = V[i]
@@ -84,18 +97,18 @@ end
         z = zero(r)
         gtot = zero(eltype(V))
         x0 = stim_ctx(m, v0, i, 1, n, t, dt, 0)                      # :current/:kick/:conductance ctx (b=1, stream=0)
-        itot = oftype(gtot, _stim_itot(stimuli, gtot, x0))           # itot base: first :current ASSIGNS
+        itot = oftype(gtot, _stim_itot(stimuli, gtot, x0))           # itot base: first :current assigns
         # synaptic deliver + accumulate + decay, all against the frozen `v0`; jumps land below
         vj, gtot, itot = _syn_contribute(syns, i, n, v0, false, gtot, itot)
-        # prescribed :conductance g(t), folded AFTER synapse accumulation (no-op today; strong-zero identity)
+        # prescribed :conductance g(t), folded after synapse accumulation (a strong-zero identity when absent)
         Δg, Δi = _stim_gtot(stimuli, x0)
         gtot = _addcond(gtot, Δg)
         itot = _addcond(itot, Δi)
         # materialise the membrane accumulators so `Trace(:itot)`/`Trace(:gtot)` record real values under
         # the fused/GPU path too (bit-identical to what the Serial `_accum_all!` writes); one store each,
         # negligible against the membrane `exp`.
-        itotarr[i] = itot
-        gtotarr[i] = gtot
+        _store_accum!(itotarr, i, itot)
+        _store_accum!(gtotarr, i, gtot)
         v = (v0 + vj) + _stim_kick(stimuli, x0)                       # :jump synapses, then :kick stimuli → v
         # resolve the per-neuron model: `_resolve(m, i) = m` for a scalar model (bit-identical),
         # the i-th override values for a Heterogeneous one.
@@ -104,7 +117,7 @@ end
         # V-only model `aux` is `nothing`, which reduces to a plain `membrane_step`.
         w0 = _aux_read(aux, i)
         v_adv, w_adv = _advance_unit(m_i, v, w0, gtot, itot, dt)
-        # :noise under the refractory gate; ctx carries the RESOLVED model (for `_tau`) and the advanced v
+        # :noise under the refractory gate; ctx carries the resolved model (for `_tau`) and the advanced v
         v = ifelse(r > z, reset_value(m_i), v_adv + _stim_noise(stimuli, stim_ctx(m_i, v_adv, i, 1, n, t, dt, 0)))
         r = max(r - dt, z)
         # threshold (respecting refractory), then reset + arm refractory + spike-triggered adaptation
@@ -131,7 +144,7 @@ end
 
 # Launch the fused kernel (no synchronisation: it pipelines with the scatter and monitors on
 # the device stream; host syncs happen at the windowed flush and at host reads). A single (scalar)
-# model is one launch over `1:N` (offset 0); a `MultiModel` launches the SAME kernel once per group
+# model is one launch over `1:N` (offset 0); a `MultiModel` launches the same kernel once per group
 # over the group's range with the group's concrete model (so each launch is monomorphic). The aux
 # column is selected per group; `nothing` for a V-only group keeps its byte-identical fast path.
 function _launch_fused!(integ::DewdropIntegrator)
@@ -152,8 +165,9 @@ end
     return _launch_grouped!(backend, Base.tail(models), Base.tail(ranges), integ, st)
 end
 @inline function _launch_group!(backend, m, integ, st, offset::Int, len::Int)
+    ia, ga = _accum_sinks(integ)
     _fused_kernel!(backend)(
-        st.V, st.refrac, integ.spiked, integ.spike_count, integ.stimuli, integ.itot, integ.gtot,
+        st.V, st.refrac, integ.spiked, integ.spike_count, integ.stimuli, ia, ga,
         integ.syns, m, integ.dt, integ.n, _step_time(integ), _aux_col(st, m), offset;
         ndrange = len,
     )
@@ -164,9 +178,7 @@ end
 # ordering keeps the next step's deliver correct; the host only reads at flush / solve-end.
 @inline _propagate_nosync!(syn::AbstractSynapseState, integ) =
     (scatter!(syn.buf, syn.conn, integ.spiked, integ.n; sync = false); nothing)
-@inline _propagate_all_nosync!(::Tuple{}, integ) = nothing
-@inline _propagate_all_nosync!(s::Tuple, integ) =
-    (_propagate_nosync!(first(s), integ); _propagate_all_nosync!(Base.tail(s), integ))
+@inline _propagate_all_nosync!(s::Tuple, integ) = _foreach_tuple!(_propagate_nosync!, s, integ)
 
 # One fused device step: dense megakernel → sparse scatter → monitors (the count is already in
 # the megakernel, so `:record` here is just the monitors).
@@ -178,7 +190,7 @@ function _fused_step!(integ::DewdropIntegrator)
     return nothing
 end
 
-# CPU tight step (backend = Fused): the SAME `_fused_unit!` body as the megakernel, driven by a
+# CPU tight step (backend = Fused): the same `_fused_unit!` body as the megakernel, driven by a
 # plain Julia loop instead of KA; it drops the per-workitem KA machinery (measured ~2× over the
 # KA.CPU megakernel and the multi-pass broadcast). Threaded when >1 thread; each neuron writes only
 # its own state, so the dense loop is bit-identical regardless of thread count (only the existing
@@ -200,7 +212,7 @@ end
     return _tight_grouped!(Base.tail(models), Base.tail(ranges), integ, st)
 end
 # Thread the dense loop only with enough work per thread to amortise the per-step `@threads` dispatch
-# (~tens of µs/step of task spawn+sync). Below this, the dispatch dominates and a small net runs FASTER
+# (~tens of µs/step of task spawn+sync). Below this, the dispatch dominates and a small net runs faster
 # single-threaded: the small-N "floor" (e.g. ~0.16 s flat for N ≤ 4000 at 16 threads). Heuristic:
 # ≥ `_TIGHT_MIN_PER_THREAD` neurons per thread. Bit-identical either way (the dense update is
 # per-neuron-independent), so this only changes speed, never results.
@@ -209,7 +221,7 @@ const _TIGHT_MIN_PER_THREAD = 256
 function _tight_range!(m, integ::DewdropIntegrator, st, lo::Int, hi::Int)
     V, refrac, spiked, spike_count = st.V, st.refrac, integ.spiked, integ.spike_count
     stimuli, syns, dt, n = integ.stimuli, integ.syns, integ.dt, integ.n
-    itotarr, gtotarr = integ.itot, integ.gtot
+    itotarr, gtotarr = _accum_sinks(integ)
     t, aux = _step_time(integ), _aux_col(st, m)
     if Threads.nthreads() > 1 && (hi - lo + 1) ≥ Threads.nthreads() * _TIGHT_MIN_PER_THREAD
         Threads.@threads for i in lo:hi
@@ -224,7 +236,7 @@ function _tight_range!(m, integ::DewdropIntegrator, st, lo::Int, hi::Int)
 end
 
 # `backend = Turbo`: the deliver / accumulate / decay / scatter / monitor work stays scalar (it is not
-# vectorisable: ring buffers, the projection tuple, the sparse scatter), and ONLY the dense
+# vectorisable: ring buffers, the projection tuple, the sparse scatter), and only the dense
 # membrane + threshold + reset + count phase is replaced by a SIMD `@turbo` kernel chosen per model
 # (`turbo_kernel`, registered by the LoopVectorization extension). So this orchestration lives in the
 # core; the vectorised kernels live in the extension. `_check_backend` (init) guarantees a supported
@@ -252,7 +264,7 @@ _run_step!(::Schedule{DEFAULT_PHASES}, integ::DewdropIntegrator) =
 @inline _step_backend!(::Turbo, ::_KA.CPU, integ::DewdropIntegrator) = _turbo_step!(integ)
 
 # Periodic device synchronisation (safety valve for long runs)
-# The fused/batched device steps pipeline on one stream with NO per-step host sync, so a long
+# The fused/batched device steps pipeline on one stream with no per-step host sync, so a long
 # run with no monitor flush (which would otherwise drain the stream every window) can deep-queue
 # kernels and pressure the driver's command buffer. Draining every `sync_every` steps bounds the
 # queue at negligible cost (one round-trip per ~1000 steps). `sync_every = 0` disables it; on the

@@ -1,5 +1,7 @@
 using Dewdrop
 using Test
+using Adapt
+using JLArrays
 
 # Hierarchical `show` (src/Show.jl): every Dewdrop object renders cleanly in the REPL, reflecting
 # the structure it actually has: a leaf model as a flat parameter sheet, a composite model or a
@@ -190,6 +192,19 @@ _lif5() = LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 100.0, tref 
         @test occursin("BatchedSolution", sbatch)
         @test occursin("4", sbatch)            # batch size
     end
+
+    # The rate summary is host-only: on a device-resident solution it would launch a reduction per
+    # subpopulation and block an otherwise pipelined run. The sub-solution path missed the guard.
+    @testset "a device-resident solution skips the rate summary" begin
+        net = DewdropNetwork(_lif5(), 10; input = 0.3, tspan = (0.0, 50.0), subpops = (E = 1:6, I = 7:10))
+        ig = adapt(JLArray, Dewdrop.init(net, FixedStep(0.1)))
+        Dewdrop.solve!(ig)
+        dsol = Dewdrop.DewdropSolution(ig)
+        @test !Dewdrop._onhost(dsol.spike_count)          # the premise: counts really are on the device
+        @test occursin("device-resident", rich(dsol))
+        @test occursin("device-resident", rich(dsol[:E]))
+        @test !occursin("Hz", rich(dsol[:E]))
+    end
 end
 
 _lifS() = LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 100.0, tref = 2.0)
@@ -220,4 +235,15 @@ _lifS() = LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 100.0, tref 
         @test occursin("2 member", ss) && occursin("mode", ss) && occursin("Hz", ss)
         @test !occursin('\n', flat(bs)) && occursin("BatchSolution", flat(bs))
     end
+end
+
+# An empty named subpopulation has no rate; the banner should say 0 Hz rather than print a NaN.
+@testset "an empty subpopulation reports 0 Hz" begin
+    m = LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 100.0, tref = 2.0)
+    prob = DewdropNetwork(m, 8; input = 0.5, tspan = (0.0, 50.0), subpops = (E = 1:8, I = 9:8))
+    sol = solve(prob, FixedStep(0.1))
+    s = sprint((io, x) -> show(IOContext(io, :color => false), MIME"text/plain"(), x), sol)
+    @test !occursin("NaN", s)
+    @test occursin("I 0.0 Hz", s)
+    @test Dewdrop._rate_hz(Int[], 0, 100.0) == 0.0
 end

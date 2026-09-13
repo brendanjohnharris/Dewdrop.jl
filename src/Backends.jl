@@ -1,7 +1,7 @@
-# * Execution backends: HOW the per-step engine runs, orthogonal to the CPU/GPU architecture
-# (`arch`). The architecture chooses WHERE the arrays live; the backend chooses how the dense
+# * Execution backends: how the per-step engine runs, orthogonal to the CPU/GPU architecture
+# (`arch`). The architecture chooses where the arrays live; the backend chooses how the dense
 # per-neuron phases of a step are executed. Pick one with `solve(prob, alg; backend = …)`; the
-# default `Auto()` lets the advisor choose. All backends are numerically equivalent EXCEPT `Turbo`,
+# default `Auto()` lets the advisor choose. All backends are numerically equivalent except `Turbo`,
 # which trades the exp ULP for SIMD speed (spike-identical, not bit-identical).
 
 """
@@ -45,7 +45,7 @@ struct Fused <: SimBackend end
 """
     Turbo()
 
-A SIMD-vectorised fused loop (via LoopVectorization). The **fastest CPU backend**: it vectorises
+A SIMD-vectorised fused loop (via LoopVectorization). The fastest CPU backend: it vectorises
 the membrane `exp`. CPU-only; requires `using LoopVectorization`
 and a model that provides a Turbo specialization (see the model-support table in the docs). **Not
 bit-identical**: SIMD `exp` differs from scalar `libm` at the ULP level, so results are
@@ -66,18 +66,30 @@ it with any AD tool: `ForwardDiff` for a few parameters, `Enzyme` reverse-mode f
 `β` is the surrogate steepness (larger → closer to the true Heaviside, but stiffer gradients). The
 gradients are *approximate* gradients of the true discrete dynamics (standard surrogate-gradient
 training), so this is a distinct numerical path you opt into; every other backend is unaffected and
-stays bit-identical. **Connected networks are supported**: a surrogate-weighted scatter deposits
-`weight·s_pre`, so gradients flow to both the synaptic weights (build the connectome with a `Dual`/`Active`
-weight eltype) and the presynaptic voltages. CPU-only; a GPU surrogate-AD path is the documented next step.
+stays bit-identical.
+
+The substitution is made in the forward pass, not only the backward one: `spiked` carries the
+real-valued `s ∈ (0, 1)`, `spike_count` accumulates it, and the scatter deposits `weight·s` on every
+edge every step. So this backend simulates a smoothed, rate-like network rather than the spiking one
+the other backends run, and it converges on that network as `β → ∞`. Fit with it, then verify the
+fitted parameters under `Serial` or `Fused`. (A straight-through estimator, hard forward with the
+surrogate derivative behind it, would keep the forward dynamics exact; it is not what this does.)
+
+**Connected networks are supported**: a surrogate-weighted scatter deposits `weight·s_pre`, so gradients
+flow to both the synaptic weights (build the connectome with a `Dual`/`Active` weight eltype) and the
+presynaptic voltages. CPU-only.
 """
 struct Differentiable{T <: Real} <: SimBackend
     β::T
 end
 Differentiable(; β::Real = 10) = Differentiable(float(β))
 
-export SimBackend, Auto, Serial, Fused, Turbo, Differentiable
+# `Auto` is not exported: Makie exports a layout `Auto` too, and `using Dewdrop, CairoMakie` is the
+# package's own documented plotting setup, which would make the bare name ambiguous. It is the default
+# backend, so it rarely needs naming; write `Dewdrop.Auto()` when it does.
+export SimBackend, Serial, Fused, Turbo, Differentiable
 
-# The differentiable backend accumulates a REAL-valued surrogate spike, so `spiked` / `spike_count`
+# The differentiable backend accumulates a real-valued surrogate spike, so `spiked` / `spike_count`
 # take the state float type instead of `Bool` / `Int`. Every other backend keeps `Bool` / `Int`.
 @inline _spiked_eltype(::SimBackend, ::Type{T}) where {T} = Bool
 @inline _spiked_eltype(::Differentiable, ::Type{T}) where {T} = T
@@ -90,7 +102,7 @@ function _resolve_backend(::Auto, prob)
     prob.arch isa GPU && return Fused()                       # the GPU path is the megakernel
     _is_hetero(prob.model) && return Fused()                  # Heterogeneous/MultiModel need the fused per-neuron path
     # Canonical CPU → the single-pass fused tight loop: bit-identical to Serial but ~2× the multi-pass
-    # broadcast, AND work-aware; it gates its own threading on neurons-per-thread, so it runs
+    # broadcast, and work-aware; it gates its own threading on neurons-per-thread, so it runs
     # single-threaded for small nets (no `@threads`-dispatch floor) and threads only once the work pays
     # for it. So it is the right pick at every size; Serial stays available for non-canonical schedules
     # (and explicitly, as the allocation-free reproducible baseline).
@@ -98,7 +110,7 @@ function _resolve_backend(::Auto, prob)
     return Serial()
 end
 
-# back-compat: the old `step::Symbol` kwarg maps onto a backend.
+# The deprecated `step::Symbol` kwarg maps onto a backend.
 _step_to_backend(::Nothing) = nothing
 function _step_to_backend(step::Symbol)
     step === :auto && return Auto()
@@ -138,7 +150,7 @@ function _check_backend(b::SimBackend, prob)
         prob.arch isa GPU && throw(ArgumentError("backend = Turbo() is CPU-only; use Fused() on the GPU"))
         prob.schedule == default_schedule() ||
             throw(ArgumentError("backend = Turbo() requires the canonical schedule"))
-        # Test the application POINT, not the `noise` field: any stimulus applied at `:noise` is
+        # Test the application point, not the `noise` field: any stimulus applied at `:noise` is
         # dropped by `_turbo_step!` (which has no `_apply_noises!`) and by the SIMD kernels, so a
         # field-only check lets one through silently.
         _has_noise_stim(prob) &&
@@ -150,7 +162,7 @@ function _check_backend(b::SimBackend, prob)
 end
 
 # The dense membrane accumulators `:gtot`/`:itot` are materialised into `integ.gtot`/`integ.itot` by the
-# Serial/Turbo paths (`_accum_all!`), the fused tight loop / GPU megakernel (`_fused_unit!`), AND the
+# Serial/Turbo paths (`_accum_all!`), the fused tight loop / GPU megakernel (`_fused_unit!`), and the
 # ensemble-batched megakernel (`_batched_fused_kernel!` writes them per column). The `Differentiable`
 # surrogate step is the exception (it does not materialise them). Reject recording `:gtot`/`:itot` on a
 # backend that would leave them zero, with a clear pointer, rather than return wrong data. Synaptic state
@@ -159,11 +171,15 @@ end
 function _check_accum_record(bk::SimBackend, record)
     (record === nothing || _populates_accum(bk)) && return nothing
     for spec in values(record)
-        if spec isa Trace && spec.projection === nothing && spec.var in (:gtot, :itot)
+        # An `Aggregate` is determined by its inner spec (`_check_inner` admits only Trace/Spikes), so it is
+        # caught exactly. A `Probe` is not: its `f` is opaque, and refusing every probe here would reject the
+        # many that never touch these, so a probe that does read them still records zeros on such a backend.
+        inner = spec isa Aggregate ? spec.inner : spec
+        if inner isa Trace && inner.projection === nothing && inner.var in (:gtot, :itot)
             throw(
                 ArgumentError(
-                    "Trace(:$(spec.var)) is not materialised by backend = $(nameof(typeof(bk)))(): that step " *
-                        "keeps the $(spec.var) accumulator per-lane and never writes it back, so recording it " *
+                    "recording :$(inner.var) is not materialised by backend = $(nameof(typeof(bk)))(): that step " *
+                        "keeps the $(inner.var) accumulator per-lane and never writes it back, so recording it " *
                         "here would silently return zeros. Use backend = Serial()/Fused(), or record a synaptic " *
                         "variable instead, e.g. `Trace(:g_decay; projection = i)`."
                 )
@@ -175,7 +191,7 @@ end
 
 function _check_backend(b::Differentiable, prob)
     prob.arch isa GPU &&
-        throw(ArgumentError("backend = Differentiable() is CPU-only for now (a GPU surrogate-AD path is the documented next step); run the forward pass on the GPU with Fused()"))
+        throw(ArgumentError("backend = Differentiable() is CPU-only; run the forward pass on the GPU with Fused()"))
     prob.schedule == default_schedule() ||
         throw(ArgumentError("backend = Differentiable() requires the canonical schedule"))
     any(p -> p.plasticity !== nothing, prob.projections) &&

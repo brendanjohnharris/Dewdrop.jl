@@ -20,6 +20,8 @@ _lif() = LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 100.0, tref =
         projections = (
             Projection(
                 PoissonSource(DeltaSynapse(), extconn; rate = rate, seed = seed),
+                # a signed seed is accepted (it is coerced, not dispatched on)
+
                 Dewdrop._empty_csr(arch, N)
             ),
         )
@@ -99,4 +101,13 @@ end
     )
     @test init(mk(nsteps), FixedStep(0.1)) isa Dewdrop.DewdropIntegrator
     @test_throws ArgumentError init(mk(nsteps - 1), FixedStep(0.1))
+end
+
+# `domain_seed` narrowed the seed type at one point, turning a signed seed into a MethodError on a
+# public constructor; every other seeded entry point coerces rather than dispatches.
+@testset "PoissonSource accepts a signed seed" begin
+    ec = fixed_prob(Dewdrop.CPU(), 4, 4, 0.5; weight = 0.5, delay = steps(1), seed = UInt64(1))
+    @test PoissonSource(DeltaSynapse(), ec; rate = 20.0, seed = 3) isa PoissonSource
+    @test PoissonSource(DeltaSynapse(), ec; rate = 20.0, seed = 3).seed ==
+        PoissonSource(DeltaSynapse(), ec; rate = 20.0, seed = UInt64(3)).seed
 end

@@ -69,3 +69,12 @@ through here so the architecture controls the memory space.
 function allocate(arch::AbstractArchitecture, ::Type{T}, dims::Integer...) where {T}
     return array_type(arch){T}(undef, dims...)
 end
+
+# Compile-time walk over a tuple, applying `f!` to each element. Every per-step phase hook is this
+# same unrolled recursion over the projection or monitor tuple; `::F where {F}` keeps the function
+# argument specialised, so each call site still unrolls to straight-line code with no dispatch left.
+@inline _foreach_tuple!(f!::F, ::Tuple{}, args...) where {F} = nothing
+@inline function _foreach_tuple!(f!::F, t::Tuple, args...) where {F}
+    f!(first(t), args...)
+    return _foreach_tuple!(f!, Base.tail(t), args...)
+end

@@ -14,6 +14,22 @@ abstract type AbstractSynapseModel end
 Base.Broadcast.broadcastable(s::AbstractSynapseModel) = Ref(s)
 
 """
+    is_source_synapse(model) -> Bool
+
+Whether `model` generates its own events from internal, member-local wiring (an `extconn` over virtual
+sources) rather than from the network's spikes: [`PoissonSource`](@ref) and [`SpikeSourceArray`](@ref)
+do, every ordinary synapse does not.
+
+Every path that has to treat the two differently derives from this one method, so a new source model
+declares the fact once. Plasticity refuses to wrap one (the wrapper would hide the event generator from
+the pre-step, silently killing the drive), and block-diagonal batching refuses to share one across
+members (its wiring targets member-local indices, so members 2..B would be left undriven). The wiring
+offset itself cannot be derived and needs a per-type `_offset_synapse`; test/blockbatch.jl checks that
+every source model has one.
+"""
+is_source_synapse(::AbstractSynapseModel) = false
+
+"""
     CurrentSynapse(; τ)
 
 Current-based (CUBA) exponential synapse: a delivered spike of weight `w` adds `w` to the
@@ -95,7 +111,7 @@ export DualExpSynapse
 
 Frozen-current variant of [`DualExpSynapse`](@ref): identical dual-exponential conductance kinetics
 `g(t) = a·(g_decay − g_rise)`, but the synaptic current `g·(Erev − V)` is evaluated with `V` FROZEN at
-its pre-update value and injected as an ordinary current; it does NOT enter the effective leak, so it
+its pre-update value and injected as an ordinary current; it does not enter the effective leak, so it
 does not shunt the membrane time constant. This reproduces the BrainPy `sum_current_inputs`/`COBA`
 integration. Exact COBA ([`DualExpSynapse`](@ref)) is the more accurate scheme (the conductance shunts);
 use this only to reproduce frozen-current dynamics. A drop-in for `DualExpSynapse`. Requires `τr ≠ τd`.
@@ -140,7 +156,7 @@ _syn_couple(::Type{DeltaSynapse}) = Val(:jump)
 _syn_couple(::Type{<:DualExpSynapse}) = Val(:conductance)
 _syn_couple(::Type{<:FrozenDualExpSynapse}) = Val(:current)   # frozen current g·(Erev−V), no shunt
 
-# Per-step derived coefficients, wrapped to EXACTLY the current stored eltype (byte-identity).
+# Per-step derived coefficients, wrapped to exactly the current stored eltype (byte-identity).
 _syn_coeffs(s::CurrentSynapse, dt, ::Type{T}) where {T} = (; decay = synapse_decay(s, dt))
 _syn_coeffs(s::ConductanceSynapse, dt, ::Type{T}) where {T} = (; decay = synapse_decay(s, dt), Erev = T(s.Erev))
 _syn_coeffs(::DeltaSynapse, dt, ::Type{T}) where {T} = (;)
@@ -149,7 +165,7 @@ _syn_coeffs(s::DualExpSynapse, dt, ::Type{T}) where {T} =
 _syn_coeffs(s::FrozenDualExpSynapse, dt, ::Type{T}) where {T} =
     (; decay_r = T(exp(-dt / s.τr)), decay_d = T(exp(-dt / s.τd)), a = T(_dualexp_a(s.τr, s.τd)), Erev = T(s.Erev))
 
-# Membrane coupling: the (Δgtot, Δitot) this synapse contributes given its CURRENT accumulator values
+# Membrane coupling: the (Δgtot, Δitot) this synapse contributes given its current accumulator values
 # `acc` (a tuple), coefficients `c`, and the (frozen) membrane potential `v`. `v` is threaded so a
 # V-dependent current (frozen COBA today; NMDA later) needs no new seam. The frozen-vs-exact dual split
 # is these two methods; `false` is a strong zero (gtot untouched, bit-identical + type-preserving).

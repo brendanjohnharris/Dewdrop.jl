@@ -1,6 +1,6 @@
-# * Batching: run B network "members" together. The GENERAL execution is block-diagonal: stack the B
-# networks into ONE (ΣN)-neuron network whose connectome is block-diagonal (member b offset by ΣN_{<b}, no
-# cross-member edges), solved by the EXISTING scalar engine (no new kernels). This handles distinct
+# * Batching: run B network "members" together. The general execution is block-diagonal: stack the B
+# networks into one (ΣN)-neuron network whose connectome is block-diagonal (member b offset by ΣN_{<b}, no
+# cross-member edges), solved by the existing scalar engine (no new kernels). This handles distinct
 # models / weights / delays / topology across members; each member's block runs independently (so with no
 # drive it is bit-identical to that member solved alone). The memory-optimal shared-CSR ensemble (`batch=B`)
 # is the special case for input/v0/seed-only variation; routing to it automatically is a follow-on.
@@ -59,16 +59,16 @@ function _setparams(x, nt::NamedTuple)
 end
 
 # apply one member's sweep values. A neuron model varies its own params; on a network a pure `input` sweep
-# keeps the SAME model + connectome (→ the fused Mode-0 ensemble), while a model-param sweep varies the
+# keeps the same model + connectome (→ the fused Mode-0 ensemble), while a model-param sweep varies the
 # model but shares the connectome (→ multi-run / block).
 _apply_sweep(base::AbstractNeuronModel, nt::NamedTuple) = _setparams(base, nt)
 function _apply_sweep(net::DewdropNetwork, nt::NamedTuple)
     keys(nt) == (:input,) && return _swap_input(net, nt.input)
     return _setparams(net, (; model = _setparams(net.model, nt)))
 end
-# Rebuild a network with named fields replaced, carrying every other field through. The ONE place that
+# Rebuild a network with named fields replaced, carrying every other field through. The one place that
 # knows `DewdropNetwork`'s field list, so a new field cannot be silently dropped by a mode's rebuild
-# (`stimuli` was, leaving `:multirun` and input-swept members running with no stimulus at all).
+# every mode's rebuild.
 function _respec(net::DewdropNetwork; kw...)
     over = NamedTuple(kw)
     keep(f) = haskey(over, f) ? over[f] : getfield(net, f)
@@ -80,7 +80,7 @@ function _respec(net::DewdropNetwork; kw...)
     )
 end
 
-# a fresh network with `input` swapped but the SAME model + projections objects (`===`), so a pure-input
+# a fresh network with `input` swapped but the same model + projections objects (`===`), so a pure-input
 # sweep is detected as a shared-connectivity batch and runs as the fused Mode-0 ensemble.
 _swap_input(net::DewdropNetwork, input) = _respec(net; input = input)
 
@@ -116,26 +116,28 @@ end
 # `allowscalar(false)`, and ruinous otherwise). A no-op on CPU.
 _host_edges(conn::SparseCSR) = (Array(conn.src), Array(conn.post), Array(conn.weight), Array(conn.delay))
 
-# per-member stateful-synapse offset (so block-stacking carries EVERY member's drive)
-# A synapse is block-MERGEABLE when its behaviour is fully captured by its edge list + shared scalar params,
-# so the B members' projections share ONE synapse over a concatenated, offset connectome (the default:
-# FrozenDualExpSynapse, DualExpSynapse, CUBA/COBA, delta). A synapse that carries its OWN internal per-member
-# wiring is NOT mergeable: a streaming `PoissonSource` drive holds an `extconn` targeting member-local indices
-# `1:N`, so reusing member 1's would leave members 2..B undriven. Those get one projection PER MEMBER, each
-# offset into its block (see `_block_diagonal`).
-_block_mergeable(::AbstractSynapseModel) = true
-_block_mergeable(::PoissonSource) = false
+# per-member stateful-synapse offset (so block-stacking carries every member's drive)
+# A synapse is block-mergeable when its behaviour is fully captured by its edge list + shared scalar params,
+# so the B members' projections share one synapse over a concatenated, offset connectome (the default:
+# FrozenDualExpSynapse, DualExpSynapse, CUBA/COBA, delta). A synapse that carries its own internal per-member
+# wiring is not mergeable: a streaming `PoissonSource` or replayed `SpikeSourceArray` drive holds an
+# `extconn` targeting member-local indices `1:N`, so reusing member 1's would leave members 2..B undriven.
+# Those get one projection per member, each offset into its block (see `_block_diagonal`).
+_block_mergeable(s::AbstractSynapseModel) = !is_source_synapse(s)
 
-# Shift a synapse's INTERNAL wiring into member b's block: targets += `off`, post-dimension grows to `Ntot`.
-# Edge-defined synapses carry none → identity. A `PoissonSource` offsets its `extconn`'s POST (targets) only;
+# Shift a synapse's internal wiring into member b's block: targets += `off`, post-dimension grows to `Ntot`.
+# Edge-defined synapses carry none → identity. A `PoissonSource` offsets its `extconn`'s post (targets) only;
 # sources, weights, delays and `seed` are untouched, so the member's per-source Poisson draw is
 # bit-identical to its standalone solve; only the deposit lands in the member's block.
 _offset_synapse(syn::AbstractSynapseModel, off::Int, Ntot::Int, arch) = syn
 _offset_synapse(p::PoissonSource, off::Int, Ntot::Int, arch) =
     PoissonSource(p.synapse, _shift_post(p.extconn, off, Ntot, arch), p.rate, p.seed)
+# the replay pattern is shared verbatim; only the fan-out moves into the member's block
+_offset_synapse(s::SpikeSourceArray, off::Int, Ntot::Int, arch) =
+    SpikeSourceArray(s.synapse, _shift_post(s.extconn, off, Ntot, arch), s.spikes)
 
 # A CSR with every post index shifted by `off` and the post dimension grown to `Ntot` (sources / weights /
-# delays unchanged), rebuilt on `arch`. Mirrors `_offset_edges` but shifts ONLY the target index.
+# delays unchanged), rebuilt on `arch`. Mirrors `_offset_edges` but shifts only the target index.
 function _shift_post(conn::SparseCSR, off::Int, Ntot::Int, arch)
     src, post, w, d = _host_edges(conn)
     edges = [(Int(src[e]), Int(post[e]) + off, w[e], d[e]) for e in 1:nedges(conn)]
@@ -147,7 +149,7 @@ end
 
 Stack networks `nets` into one block-diagonal network: member `b` occupies a contiguous block (no
 cross-member edges), so the scalar engine runs the B members independently. Members must share projection
-STRUCTURE (same count + synapse types per index). Per-member ranges are recorded as `memberK` subpops.
+structure (same count + synapse types per index). Per-member ranges are recorded as `memberK` subpops.
 """
 function _block_diagonal(nets::AbstractVector{<:DewdropNetwork})
     isempty(nets) && error("batch needs at least one member")
@@ -163,16 +165,16 @@ function _block_diagonal(nets::AbstractVector{<:DewdropNetwork})
     Ntot = sum(Ns)
     model = B == 1 ? first(nets).model : MultiModel([net.model for net in nets], Ns)
     input = reduce(vcat, [_expand_input(net.input, net.n) for net in nets])
-    # Stacked projections: a block-mergeable synapse shares ONE projection over the members' concatenated,
-    # offset edges; a non-mergeable one (a streaming drive) gets ONE projection per member, offset into its
-    # block, so every member is driven by ITS OWN source rather than member 1's (otherwise members 2..B are
+    # Stacked projections: a block-mergeable synapse shares one projection over the members' concatenated,
+    # offset edges; a non-mergeable one (a streaming drive) gets one projection per member, offset into its
+    # block, so every member is driven by its own source rather than member 1's (otherwise members 2..B are
     # silently undriven; their `extconn` would still point at member 1's block).
     projlist = Projection[]
     for j in 1:nproj
         syns = [net.projections[j].synapse for net in nets]
         plas = [net.projections[j].plasticity for net in nets]
         syn, rule = first(syns), first(plas)
-        # Merge only when the members really SHARE the projection's synapse and learning rule: the merged
+        # Merge only when the members really share the projection's synapse and learning rule: the merged
         # projection carries one of each, so members differing in a synaptic constant (τ, τr/τd, Erev) would
         # all silently run member 1's. When they differ, each member gets its own projection over its own
         # offset edges, which is the same branch a non-mergeable (self-wired) synapse already takes.
@@ -194,7 +196,7 @@ function _block_diagonal(nets::AbstractVector{<:DewdropNetwork})
     subpops = NamedTuple(Symbol("member", b) => (offs[b] + 1):(offs[b] + Ns[b]) for b in 1:B)
     # Carry the network `drive` field and the SDE `noise` term onto the stacked network. Both are keyed by
     # global neuron index, so a uniform member drive/noise applies correctly across every block; per-member
-    # DIFFERING drive/noise fields are not block-expressible (attach a per-member drive as a projection via
+    # differing drive/noise fields are not block-expressible (attach a per-member drive as a projection via
     # `drive!` / `PoissonSource`, which offsets per member).
     return DewdropNetwork(
         model, Ntot; input = input, tspan = first(nets).tspan, arch = arch,
@@ -230,7 +232,7 @@ _materialize_member(spec::AbstractNetworkSpec, alg, tspan) = materialize(spec, a
 
 # Every execution mode keys these off member 1, and none of them is expressible per member, so a
 # member that differs is refused rather than silently replaced. Per-member external input belongs in
-# `input` (which IS per member), or in a per-member projection via `drive!` / `PoissonSource`.
+# `input` (which is per member), or in a per-member projection via `drive!` / `PoissonSource`.
 function _check_uniform_members(nets)
     length(nets) <= 1 && return nothing
     for (field, what) in ((:drive, "drive"), (:noise, "noise"), (:stimuli, "stimuli"), (:schedule, "schedule"))
@@ -248,19 +250,19 @@ function _choose_mode(nets)
     shared = all(n -> n.projections === nets[1].projections && n.n == nets[1].n, nets)
     shared || return :block                                   # distinct topology → block-diagonal
     all(n -> n.model === nets[1].model, nets) && return :shared   # same model too → fused Mode-0 ensemble
-    # shared connectome, per-member model: prefer fused Mode A (one launch, O(edges)) if the model TYPE is
+    # shared connectome, per-member model: prefer fused Mode A (one launch, O(edges)) if the model type is
     # uniform; else the shared-connectome multi-run.
     M = typeof(nets[1].model)
     return (all(n -> typeof(n.model) === M, nets) && _fusable_model(M)) ? :fused : :multirun
 end
 
-# `:fused` diffs the model's OWN fields, while `_resolve_member` (src/Batch.jl) matches those override keys
-# against the underlying scalar model's fields. The two agree only for a model that IS its own leaf; a
+# `:fused` diffs the model's own fields, while `_resolve_member` (src/Batch.jl) matches those override keys
+# against the underlying scalar model's fields. The two agree only for a model that is its own leaf; a
 # wrapper (`Heterogeneous`) would contribute keys like `:base`/`:params` that match nothing, leaving every
 # member silently running member 1's parameters. Those go to the multi-run instead.
 _fusable_model(::Type{M}) where {M} = _leaf_model(M) === M
 
-# Mode 0, fused shared-CSR ensemble: ONE network broadcast over B `(N,B)` state columns; per-column input.
+# Mode 0, fused shared-CSR ensemble: one network broadcast over B `(N,B)` state columns; per-column input.
 function _solve_shared(nets, alg; kwargs...)
     B = length(nets)
     inputmat = reduce(hcat, [_expand_input(net.input, net.n) for net in nets])
@@ -268,8 +270,8 @@ function _solve_shared(nets, alg; kwargs...)
     return BatchSolution([collect(view(bsol.spike_count, :, b)) for b in 1:B], bsol.nsteps * bsol.dt, :shared, bsol)
 end
 
-# Mode A-lite (shared-connectivity multi-run): resolve the connectome ONCE and SHARE the array across B
-# separate scalar solves (each with its own model): Mode-A memory (O(edges)) with NO kernel changes.
+# Mode A-lite (shared-connectivity multi-run): resolve the connectome once and share the array across B
+# separate scalar solves (each with its own model): Mode-A memory (O(edges)) with no kernel changes.
 # The B solves are independent and the shared connectome is read-only, so `threads` runs them in parallel
 # (outer over members; each inner solve forced single-threaded via `Serial`, bit-identical, to avoid
 # nesting the per-neuron threading). `threads = :auto` threads when there are ≥2 members and >1 thread.
@@ -277,7 +279,7 @@ function _solve_multirun(nets, alg; threads = :auto, kwargs...)
     rprojs = Tuple(
         Projection(p.synapse, _resolve_delays(p.conn, alg.dt); plasticity = p.plasticity)
             for p in first(nets).projections
-    )          # resolve delays once → ONE shared connectome
+    )          # resolve delays once → one shared connectome
     _net(net) = _respec(net; projections = rprojs)
     dothread = threads === true || (threads === :auto && length(nets) ≥ 2 && Threads.nthreads() > 1)
     sols = Vector{Any}(undef, length(nets))
@@ -298,7 +300,7 @@ function _solve_multirun(nets, alg; threads = :auto, kwargs...)
     return BatchSolution([collect(s.spike_count) for s in sols], duration(first(sols)), :multirun, sols)
 end
 
-# Fused Mode A, per-member params in the (N,B) megakernel: ONE shared connectome, a `BatchedModel` with
+# Fused Mode A, per-member params in the (N,B) megakernel: one shared connectome, a `BatchedModel` with
 # per-member override arrays, one fused launch. Best of both (fused throughput + O(edges) memory); needs a
 # uniform model type across members.
 function _solve_fused(nets, alg; kwargs...)

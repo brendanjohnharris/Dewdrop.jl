@@ -215,7 +215,7 @@ BatchSolution
 Host-side spatial-network analysis; see [analysis & observables](guide/analysis.md).
 
 ```@docs
-coarsegrain
+Dewdrop.coarsegrain
 susceptibility
 mua
 temporal_average

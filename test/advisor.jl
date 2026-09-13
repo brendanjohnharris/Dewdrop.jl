@@ -66,7 +66,7 @@ end
 
         dense = _gpuprob(; N = 4000, p = 0.16)               # mean degree ≈ 640 (> 500)
         Dewdrop.reset_advice!()
-        @test_logs (:info, r"gather/SpMV") Dewdrop._advise_runtime(dense, 0.1)               # dense + high firing
+        @test_logs (:info, r"contention-bound") Dewdrop._advise_runtime(dense, 0.1)          # dense + high firing
 
         small = _gpuprob(; N = 2000, p = 0.1)                # n < 5000, nedges < 1M
         Dewdrop.reset_advice!()
@@ -82,5 +82,5 @@ end
         Dewdrop.set_advice!(true)
     end
 
-    Dewdrop.set_advice!(false)   # restore the suite-wide default (set in runtests.jl)
+    Dewdrop.set_advice!(false)   # restore the package default
 end

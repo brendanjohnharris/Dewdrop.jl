@@ -1,6 +1,6 @@
 # * Streaming temporal reducers (M-stream).
-# Consume ONE (n_out × B) sample per step and accumulate a reduced temporal statistic on-device, so a
-# long per-(neuron, member) trace is NEVER materialised: not on the host, not on the device. This is
+# Consume one (n_out × B) sample per step and accumulate a reduced temporal statistic on-device, so a
+# long per-(neuron, member) trace is never materialised: not on the host, not on the device. This is
 # the streaming analogue of running a windowed/lag estimator over a fully recorded trace; the only memory
 # that scales with the run is a fixed ring/segment buffer (O(max lag) or O(nfft)), not O(nsteps). The
 # `update!`/`result` pair is backend-generic (KernelAbstractions + AbstractFFTs), so the same code runs on
@@ -8,6 +8,7 @@
 
 using KernelAbstractions: @kernel, @index, @Const, get_backend
 using FFTW: rfft, plan_rfft
+using LinearAlgebra: mul!
 
 # StreamingMADev: p=1 mean absolute displacement at integer lags
 # The streaming form of `TimeseriesTools.madev(x, lags; p = 1)` = `mean_t |x(t) − x(t+k)|` over the `n−k`
@@ -68,21 +69,23 @@ end
 # StreamingWelch: averaged Welch periodogram (power spectrum)
 # The streaming form of `TimeseriesTools.spectrum(x .- mean(x), f_min)` (a Hann-windowed, 50%-overlap Welch
 # periodogram, Parseval-normalised). Segments complete at the same step for every (neuron, member), so each
-# completed segment is transformed with ONE batched `rfft` along the time axis (FFTW on CPU, CUFFT on GPU).
+# completed segment is transformed with one batched `rfft` along the time axis (FFTW on CPU, CUFFT on GPU).
 #
-# Global mean removal is NOT one-pass directly, but the rFFT is linear: with raw segment `r` and window `h`,
-# `rfft((r − μ)·h) = rfft(r·h) − μ·rfft(h) = Yr − μ·H`. So we accumulate the RAW windowed-segment transforms
+# Global mean removal is not one-pass directly, but the rFFT is linear: with raw segment `r` and window `h`,
+# `rfft((r − μ)·h) = rfft(r·h) − μ·rfft(h) = Yr − μ·H`. So we accumulate the raw windowed-segment transforms
 # (`ΣYr` complex and `Σ|Yr|²` real) plus the raw moments `Σr, Σr²`, and apply the exact mean (μ = Σr/n) and
 # Parseval normalisation analytically in `result`. This keeps the pass single and the result bit-equal to the
 # batch reference (to FFT round-off). nfft / overlap / window / normalisation mirror `_periodogram` (padding 0).
-mutable struct StreamingWelch{BUF, AP2, AP1, SX, HW, HV, PL, T}
+mutable struct StreamingWelch{BUF, YS, AP2, AP1, SX, HW, HV, PL, T}
     const buf::BUF       # (nfft, n_out, B) sliding raw segment buffer (no mean removal)
+    const seg::BUF       # (nfft, n_out, B) scratch: `buf` windowed; reused, so a segment allocates nothing
+    const Yr::YS         # (nfreq, n_out, B) scratch: the segment transform, likewise reused
     const accP2::AP2     # (nfreq, n_out, B) real:    Σ_seg |Yr|²  (Yr = rfft(raw_seg .* hann))
     const accP1::AP1     # (nfreq, n_out, B) complex: Σ_seg  Yr
     const sumr::SX       # (n_out, B): Σ_t r(t)
     const sumr2::SX      # (n_out, B): Σ_t r(t)²
     const hann::HW       # (nfft,) device window
-    const H::HV          # (nfreq,) HOST complex = rfft(hann); used for the mean correction in `result`
+    const H::HV          # (nfreq,) host complex = rfft(hann); used for the mean correction in `result`
     const plan::PL       # batched rfft plan along dim 1 of an (nfft, n_out, B) array
     const nfft::Int
     const overlap::Int
@@ -113,7 +116,7 @@ function StreamingWelch(arch, ::Type{T}, n_out::Integer, B::Integer, fs::Real, f
     H = rfft(hann_h)                                                            # (nfreq,) host complex
     buf = fill!(allocate(arch, T, nfft, Int(n_out), Int(B)), zero(T))
     # The accumulators are Float64 whatever the state type: removing the mean analytically means
-    # differencing operands that both scale with the RAW signal, and for a membrane trace they agree to
+    # differencing operands that both scale with the raw signal, and for a membrane trace they agree to
     # ~8 significant digits. In Float32 that difference is round-off, which turns the variance negative
     # and leaves the removed mean as a DC peak bigger than the signal. `buf` (much the largest array
     # here) keeps the state type; only these reductions widen.
@@ -123,11 +126,13 @@ function StreamingWelch(arch, ::Type{T}, n_out::Integer, B::Integer, fs::Real, f
     sumr2 = fill!(allocate(arch, Float64, Int(n_out), Int(B)), 0.0)
     hann = on_architecture(arch, hann_h)
     plan = plan_rfft(buf, 1)
+    seg = fill!(allocate(arch, T, nfft, Int(n_out), Int(B)), zero(T))
+    Yr = fill!(allocate(arch, Complex{T}, nfreq, Int(n_out), Int(B)), zero(Complex{T}))
     return StreamingWelch{
-        typeof(buf), typeof(accP2), typeof(accP1), typeof(sumr), typeof(hann),
+        typeof(buf), typeof(Yr), typeof(accP2), typeof(accP1), typeof(sumr), typeof(hann),
         typeof(H), typeof(plan), T,
     }(
-        buf, accP2, accP1, sumr, sumr2, hann, H, plan, nfft, overlap, nfreq, T(A), T(fs), 0, 0
+        buf, seg, Yr, accP2, accP1, sumr, sumr2, hann, H, plan, nfft, overlap, nfreq, T(A), T(fs), 0, 0
     )
 end
 
@@ -139,10 +144,10 @@ function update!(m::StreamingWelch, xt::AbstractMatrix, ::Integer = 0)
     m.fill += 1
     @inbounds @views m.buf[m.fill, :, :] .= xt
     if m.fill == m.nfft
-        seg = m.buf .* reshape(m.hann, m.nfft, 1, 1)     # Hann-windowed raw segment
-        Yr = m.plan * seg                                # (nfreq, n_out, B) complex
-        m.accP2 .+= abs2.(Yr)
-        m.accP1 .+= Yr
+        m.seg .= m.buf .* reshape(m.hann, m.nfft, 1, 1)  # Hann-windowed raw segment (into scratch)
+        mul!(m.Yr, m.plan, m.seg)                        # (nfreq, n_out, B) complex, in place
+        m.accP2 .+= abs2.(m.Yr)
+        m.accP1 .+= m.Yr
         m.nseg += 1
         ov = m.overlap
         @inbounds @views m.buf[1:ov, :, :] .= m.buf[(m.nfft - ov + 1):m.nfft, :, :]   # slide: keep last `overlap`
@@ -174,6 +179,12 @@ function result(m::StreamingWelch, nseen::Integer)
             meanS[f] = (P2[f, i, b] - 2μ * real(P1[f, i, b] * conj(H[f])) + μ^2 * abs2(H[f])) / norm
         end
         scalar1 = (sum(meanS) - 0.5 * meanS[1]) * df
+        # a channel that never moves (a silent neuron clamped at rest) has no variance and no spectrum,
+        # so the variance-matching factor is 0/0; write the zero spectrum rather than propagate NaN
+        if sumx2 ≤ 0 || scalar1 ≤ 0
+            @views out[:, i, b] .= zero(Tout)
+            continue
+        end
         fac = 0.5 * (sumx2 / fs) / (scalar1 * duration)
         for f in 1:nfreq
             # The mean is removed analytically (`|Yr|² − 2μRe(Yr H̄) + μ²|H|²`), so a bin whose true power
@@ -203,7 +214,7 @@ result(m::StreamingRate, nseen::Integer) = Array(m.count) ./ (nseen * m.dt)   # 
 
 # StreamingFano: per-(neuron, member) Fano factor curve over count windows
 # The streaming form of `TimeseriesTools.fano_factor(spikes, τs)` = `var(counts; mean=m)/m` (Bessel-corrected)
-# of spike counts in width-`τ` windows, per timescale `τ`. Windows are a FIXED grid aligned to the recording
+# of spike counts in width-`τ` windows, per timescale `τ`. Windows are a fixed grid aligned to the recording
 # start (origin 0): window j of τ is `[jτ, (j+1)τ)`. We keep a cumulative per-neuron count `cum`; when a
 # sample's time crosses into a new window for τ (`floor(t/τ)` increments, ≤ 1 crossing/step since τ ≥ dt), the
 # just-completed window's count `cum − cum_last` folds into Σcount / Σcount², and `cum_last ← cum`. Only
@@ -217,7 +228,7 @@ struct StreamingFano{CU, AC, TV, KV, T}
     sumc2::AC    # (n_out, B, ntau): Σ window counts²
     taus::TV     # device vector of timescales (same time units as dt); used only by `result`
     close_k::KV  # device Int32 vector: the closing-τ indices for every recorded step, concatenated
-    close_off::Vector{Int}  # HOST offsets (nrec+1): step s closes `close_k[close_off[s]+1 : close_off[s+1]]`
+    close_off::Vector{Int}  # host offsets (nrec+1): step s closes `close_k[close_off[s]+1 : close_off[s+1]]`
     dt::T
 end
 # Device arrays follow the run architecture; `close_off` stays a host Vector (it sizes each step's launch).
@@ -227,8 +238,8 @@ Adapt.adapt_structure(to, m::StreamingFano) = StreamingFano(
 )
 
 # `nrec` upper-bounds the number of recorded samples (the `update!` step index `s ∈ 1:nrec`). The window-close
-# test `floor(t/τ) > floor((t−dt)/τ)` depends ONLY on `(τ, s)`, not on the neuron or member, so we precompute,
-# per step, exactly which timescales close a window (in the SAME Float32 arithmetic the kernel used). Each step
+# test `floor(t/τ) > floor((t−dt)/τ)` depends only on `(τ, s)`, not on the neuron or member, so we precompute,
+# per step, exactly which timescales close a window (in the same Float32 arithmetic the kernel used). Each step
 # then folds only its few closing τ's instead of launching a thread per (i,b,τ) that re-derives the identical
 # test and mostly exits. Byte-identical result; the per-(i,b) redundancy and the idle threads are removed.
 function StreamingFano(arch, ::Type{T}, n_out::Integer, B::Integer, taus, dt::Real, nrec::Integer) where {T}
@@ -255,7 +266,7 @@ function StreamingFano(arch, ::Type{T}, n_out::Integer, B::Integer, taus, dt::Re
     )
 end
 
-# Fold the windows that close THIS step: one thread per (neuron, member, closing-τ). The closing set is
+# Fold the windows that close this step: one thread per (neuron, member, closing-τ). The closing set is
 # precomputed, so there is no per-thread boundary test and no idle threads. `off` indexes this step's slice
 # of `close_k`. A τ closes at most once per step ⇒ threads write disjoint (i,b,k) cells (no races), and each
 # (i,b,k) is folded in step order, so the result does not depend on the launch geometry.
@@ -282,7 +293,7 @@ function update!(m::StreamingFano, xt::AbstractMatrix, s::Integer)
             )
         end
     end
-    m.cum .+= xt                                            # add step s AFTER the flush (cum was through s−1)
+    m.cum .+= xt                                            # add step s after the flush (cum was through s−1)
     return m
 end
 
@@ -303,9 +314,9 @@ function result(m::StreamingFano, nseen::Integer)
     return out
 end
 
-# User-facing temporal-monitor specs (materialised into batched monitors; BATCHED solve path only)
+# User-facing temporal-monitor specs (materialised into batched monitors; batched solve path only)
 # These hook the per-step recording loop and fold each sample into a streaming reducer, so the long trace is
-# never stored. Parameters are in RECORDED-SAMPLE units (lags, transient = step counts; the caller converts
+# never stored. Parameters are in recorded-sample units (lags, transient = step counts; the caller converts
 # physical time → steps), except `Welch.f_min`, a frequency resolved against the recorded rate fs = 1/(every·dt).
 """
     MADev(var; of=:all, lags, transient=0, every=1)
@@ -370,3 +381,15 @@ Fano(; of = :all, taus, transient::Integer = 0, every::Integer = 1) =
     Fano(of, collect(Float64, taus), Int(transient), Int(every))
 
 export MADev, Welch, SpikeRate, Fano
+
+# These four fold an (n_out × B) sample per step, so they are materialised only on the batched path
+# (`_bmaterialize`, Batch.jl). Without this method a scalar `solve` reports a `MethodError` on an
+# internal function, listing the monitor types it does support but not why these are missing.
+const StreamingReducer = Union{MADev, Welch, SpikeRate, Fano}
+_materialize(spec::StreamingReducer, arch, ::Type{T}, N, nsteps, subpops) where {T} =
+    throw(
+    ArgumentError(
+        "$(nameof(typeof(spec))) is a streaming reducer for batched runs: pass `batch = B` to `solve`. " *
+            "A scalar run records with `Trace`, `Spikes` or `Aggregate`."
+    )
+)

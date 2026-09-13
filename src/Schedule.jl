@@ -1,6 +1,6 @@
 # * Within-step schedule
-# The phase order is carried in the Schedule's TYPE PARAMETER, so the engine dispatches
-# phases at COMPILE TIME: the generated `run_phases!` (in Engine.jl) unrolls to a
+# The phase order is carried in the Schedule's type parameter, so the engine dispatches
+# phases at compile time: the generated `run_phases!` (in Engine.jl) unrolls to a
 # straight-line sequence of `run_phase!(Val(:phase), integ)` calls with no runtime Symbol
 # comparison and no dynamic dispatch. The pinned default order remains the inspectable,
 # equality-comparable default. Borrowed from Brian2's named-slot scheduler.

@@ -1,17 +1,17 @@
 # * Multi-type populations: `MultiModel` holds an ordered tuple of (model, range)
-# groups over one flat concatenated SoA, so a network can mix neuron model TYPES (e.g. AdEx
+# groups over one flat concatenated SoA, so a network can mix neuron model types (e.g. AdEx
 # excitatory + LIF inhibitory) in one engine. The groups partition `1:N` contiguously in
 # declaration order.
 #
-# State is a UNION SoA: the SoA carries the union of every group's `statevars` (length `N` each), and
+# State is a union SoA: the SoA carries the union of every group's `statevars` (length `N` each), and
 # a group's kernel touches only the columns its own model declares (e.g. `w` is allocated for all `N`
 # but read only by the adaptation groups; the `_aux_col` seam returns `nothing` for a V-only group,
 # so it keeps its byte-identical fast path). The waste is bounded; groups are few and overlap
 # heavily on `:V`/`:refrac`.
 #
 # A `MultiModel` is `_is_hetero` (like `Heterogeneous`), so `init` routes it through the fused
-# megakernel. The launch (Fused.jl) loops the groups, launching the SAME per-neuron kernel once per
-# group over its range with that group's CONCRETE model and an index `offset`. Each launch is
+# megakernel. The launch (Fused.jl) loops the groups, launching the same per-neuron kernel once per
+# group over its range with that group's concrete model and an index `offset`. Each launch is
 # monomorphic, so it specialises exactly like the single-model kernel; and the homogeneous path
 # (a bare model, or one group spanning `1:N`) costs nothing extra.
 
@@ -19,7 +19,7 @@
     MultiModel(models, sizes)
 
 A heterogeneous population: `models[g]` governs the `g`-th group of `sizes[g]` neurons, laid out
-contiguously over `1:sum(sizes)` in order. Groups may use different neuron model TYPES (sharing one
+contiguously over `1:sum(sizes)` in order. Groups may use different neuron model types (sharing one
 float type). Built automatically by the [`network`](@ref) builder when populations of distinct
 model types are added; addressable via the subpop registry (`sol[:E]`).
 """
@@ -67,7 +67,7 @@ function _check_hetero(mm::MultiModel, N::Integer)
         expected = last(r) + 1
     end
     expected - 1 == N || error("MultiModel ranges cover $(expected - 1) neurons but N = $N")
-    # A group's model is resolved at the GLOBAL neuron index, so a `Heterogeneous` group's override
+    # A group's model is resolved at the global neuron index, so a `Heterogeneous` group's override
     # arrays span the whole population; unchecked, the kernel reads past a group-length array under
     # `@inbounds` and runs that group on garbage parameters.
     foreach(m -> _check_hetero(m, N), mm.models)

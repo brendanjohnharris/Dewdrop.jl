@@ -2,7 +2,7 @@
 #
 # `backend = Differentiable()` makes a CPU forward pass automatically differentiable so a scalar loss
 # can be back-propagated to the model parameters through the whole time loop (gradient-based fitting and
-# surrogate-gradient training). It is a SEPARATE step path, so the default `_fused_unit!` / `_tight_step!`
+# surrogate-gradient training). It is a separate step path, so the default `_fused_unit!` / `_tight_step!`
 # carry none of its cost.
 #
 # Only two things differ from the ordinary step:
@@ -14,11 +14,9 @@
 # column via `Population`/`allocate`, so a `Dual`-typed model gives a `Dual`-typed run with no further
 # change. Pair with `ForwardDiff` (few parameters) or `Enzyme` reverse-mode (many; the scalable path).
 #
-# The surrogate-WEIGHTED scatter (`slots += weight·s_pre`, `_surrogate_scatter!` below) makes synaptic
-# weights trainable in CONNECTED / recurrent nets: build the connectome with a `Dual`/`Active` weight eltype
-# and the gradient flows to the weights (and, through `s_pre`, back to the presynaptic voltages). NEXT STEPS
-# (designed, not yet built): an Enzyme weak-dep extension for scalable reverse-mode (many weights); and the
-# GPU path (Enzyme through the KA megakernel; the open hardware question).
+# The surrogate-weighted scatter (`slots += weight·s_pre`, `_surrogate_scatter!` below) makes synaptic
+# weights trainable in connected / recurrent nets: build the connectome with a `Dual`/`Active` weight eltype
+# and the gradient flows to the weights (and, through `s_pre`, back to the presynaptic voltages).
 
 # the surrogate: a smooth, in-[0,1] replacement for the Heaviside threshold at the model's Vθ
 """
@@ -65,7 +63,7 @@ stand-in for the spike indicator, with steepness `β`. As `β → ∞` it approa
         v_adv, w_adv = _advance_unit(m_i, v, w0, gtot, itot, dt)
         v = ifelse(r > z, reset_value(m_i), v_adv + _stim_noise(stimuli, stim_ctx(m_i, v_adv, i, 1, n, t, dt, 0)))
         r = max(r - dt, z)
-        # surrogate spike block (the ONLY difference from `_fused_unit!`)
+        # surrogate spike block (the only difference from `_fused_unit!`)
         s = oftype(v, r ≤ z) * surrogate_spike(m_i, v, β)            # refractory-gated smooth spike ∈ [0,1)
         v = v - s * (v - reset_value(m_i))                           # soft reset (→ hard reset as s → 1)
         w_new = _diff_spike_aux(m_i, w_adv, s)                       # soft adaptation increment
@@ -79,19 +77,28 @@ stand-in for the spike indicator, with steepness `β`. As `β → ∞` it approa
     return nothing
 end
 
-# Surrogate-weighted scatter: the connected-training seam. Deposit `weight·s_pre` into the delay ring,
-# UNGATED: a serial per-edge walk (the differentiable path is CPU-only and single-threaded, so no atomics,
-# AD-safe). The regular `scatter!` gates on `spiked[pre] || continue`, which a real-valued / `Dual` surrogate
-# spike cannot take; here `iszero(s)` short-circuits only the EXACT zeros, which for a logistic surrogate
-# means the refractory-gated rows (and the far-subthreshold ones that underflow). A quiescent neuron just
-# below threshold still has a tiny non-zero `s`, so this walks most rows most steps: the cost is O(edges)
-# per step, not O(spikes·degree). Acceptable for the small networks this backend targets; a magnitude
-# threshold would recover the sparsity at the price of dropping small gradient contributions.
-# Differentiable through BOTH `weight[e]` (→ trainable
-# synapses, when the connectome weight is a `Dual`/`Active` eltype) AND the presynaptic surrogate spike
-# `s_pre` (→ gradients flow back to V_pre); the scatter's adjoint is a gather, handled implicitly by the AD.
+"""
+    _surrogate_scatter!(buf, conn, spiked, now)
+
+Deposit `weight·s_pre` into the delay ring, ungated: the seam that makes synaptic weights trainable
+in a connected network.
+
+The regular `scatter!` gates on `spiked[pre] || continue`, a branch a real-valued or `Dual`
+surrogate spike cannot take. Here `iszero(s)` short-circuits only the exact zeros, which for a
+logistic surrogate means the refractory-gated rows and the far-subthreshold ones that underflow. A
+quiescent neuron just below threshold still carries a tiny non-zero `s`, so this walks most rows on
+most steps: the cost is O(edges) per step rather than O(spikes·degree). That is acceptable for the
+small networks this backend targets, and a magnitude threshold would recover the sparsity at the
+price of dropping small gradient contributions.
+
+The walk is serial per edge, so it needs no atomics and stays AD-safe (the differentiable path is
+CPU-only and single-threaded). It differentiates through both `weight[e]`, giving trainable synapses
+when the connectome weight has a `Dual`/`Active` eltype, and the presynaptic surrogate spike `s_pre`,
+so gradients reach the presynaptic voltages; the scatter's adjoint is a gather, which the AD handles
+implicitly.
+"""
 @inline function _surrogate_scatter!(buf::DelayBuffer, conn::SparseCSR, spiked, now::Integer)
-    # A `Dual`/`Active` run gets a VALUE ring (`_ring_eltype`), so `_fp_quantise` is the identity here
+    # A `Dual`/`Active` run gets a value ring (`_ring_eltype`), so `_fp_quantise` is the identity here
     # and the gradient flows through untouched; rounding to fixed point would kill it. This path is
     # CPU-serial anyway, so it is already order-deterministic and gains nothing from quantisation.
     slots, L, scale = buf.slots, buf.L, buf.scale
@@ -107,8 +114,7 @@ end
     return nothing
 end
 @inline _surrogate_propagate!(syn::AbstractSynapseState, integ) = (_surrogate_scatter!(syn.buf, syn.conn, integ.spiked, integ.n); nothing)
-@inline _surrogate_propagate_all!(::Tuple{}, integ) = nothing
-@inline _surrogate_propagate_all!(s::Tuple, integ) = (_surrogate_propagate!(first(s), integ); _surrogate_propagate_all!(Base.tail(s), integ))
+@inline _surrogate_propagate_all!(s::Tuple, integ) = _foreach_tuple!(_surrogate_propagate!, s, integ)
 
 # Surrogate dense pass: single-threaded (clean for AD; the differentiable nets are small), then the
 # surrogate-weighted scatter (a no-op for an unconnected population; the trainable-synapse seam for a

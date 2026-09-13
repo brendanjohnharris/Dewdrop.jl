@@ -17,6 +17,10 @@ solve(prob, FixedStep(0.1); backend = Fused())
 All backends compute the **same dynamics**; they differ in speed and in whether the result is
 bit-reproducible. The default, `Auto`, picks a good one for you.
 
+`Auto` is the one backend that is not exported, because Makie exports a layout type of the same name
+and `using Dewdrop, CairoMakie` is the documented plotting setup. Write `Dewdrop.Auto()` on the rare
+occasion you need to name it; being the default, you usually do not.
+
 ## The backends at a glance
 
 | backend | what it does | bit-reproducible? | needs | use when |
@@ -85,8 +89,8 @@ CPU the scatter already walks only spiking rows, so `:auto` is always `:edge` th
 ## Guidance (the advisor)
 
 The performance advisor emits a one-off `@info` hint when a run could use a faster backend (e.g. a
-large CPU network that would benefit from `Turbo`). Silence it with `Dewdrop.set_advice!(false)` or
-`solve(...; advise = false)`.
+large CPU network that would benefit from `Turbo`). It is off by default; enable it with
+`Dewdrop.set_advice!(true)`, and suppress a single call with `solve(...; advise = false)`.
 
 ## Deprecated `step` keyword
 

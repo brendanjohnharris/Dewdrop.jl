@@ -1,6 +1,6 @@
 # * Unified stimulus seam. Every external input (constant current, Poisson voltage drive, OU membrane
 # noise, and the time-varying / functional / inhomogeneous families) is an `AbstractStimulus` applied
-# at ONE point in the per-neuron step: `:current`/`:conductance` fold into `itot`/`gtot` at accumulate,
+# at one point in the per-neuron step: `:current`/`:conductance` fold into `itot`/`gtot` at accumulate,
 # `:kick` into `v` after the synaptic fold, `:noise` into `v` at the membrane step. A compile-time
 # `stim_point` trait plus point-filtered tuple unrolls generate the Serial / fused / GPU / batched paths
 # from one source, mirroring the synapse descriptor. The `input=` / `drive=` / `noise=` kwargs are the
@@ -9,10 +9,10 @@
 abstract type AbstractStimulus end
 Base.Broadcast.broadcastable(s::AbstractStimulus) = Ref(s)
 
-# The application point, a TYPE trait (isbits + JET-stable; never a runtime field).
+# The application point, a type trait (isbits + JET-stable; never a runtime field).
 stim_point(::Type{S}) where {S <: AbstractStimulus} = error("$(nameof(S)) must define stim_point (one of :current/:conductance/:kick/:noise)")
 
-# Per-(neuron, step) context, isbits, rebuilt inside every kernel. The ONLY scalar-vs-batched delta is
+# Per-(neuron, step) context, isbits, rebuilt inside every kernel. The only scalar-vs-batched delta is
 # `b`/`stream` (scalar: b=1, stream=0, matching the 4-arg RNG; batched: b, streams[b]). `m` is the
 # resolved per-neuron model (`:noise` needs `_tau`); `v` the membrane; `t = muladd(n,dt,t0)` the current time.
 @inline stim_ctx(m, v, i, b, n, t, dt, stream) = (; m, v, i, b, n, t, dt, stream)
@@ -34,20 +34,20 @@ stim_point(::Type{S}) where {S <: AbstractStimulus} = error("$(nameof(S)) must d
 
 # :kick → added to v at deliver
 @inline _stim_kick(::Tuple{}, x) = false
-@inline _stim_kick(t::Tuple, x) = _kick1(stim_point(typeof(first(t))), first(t), Base.tail(t), x)
+@inline _stim_kick(rest::Tuple, x) = _kick1(stim_point(typeof(first(rest))), first(rest), Base.tail(rest), x)
 @inline _kick1(::Val, s, r, x) = _stim_kick(r, x)
 @inline _kick1(::Val{:kick}, s, r, x) = stim_kick(s, x) + _stim_kick(r, x)
 
 # :noise → added to v_adv under the refractory gate
 @inline _stim_noise(::Tuple{}, x) = false
-@inline _stim_noise(t::Tuple, x) = _noise1(stim_point(typeof(first(t))), first(t), Base.tail(t), x)
+@inline _stim_noise(rest::Tuple, x) = _noise1(stim_point(typeof(first(rest))), first(rest), Base.tail(rest), x)
 @inline _noise1(::Val, s, r, x) = _stim_noise(r, x)
 @inline _noise1(::Val{:noise}, s, r, x) = stim_noise(s, x) + _stim_noise(r, x)
 
-# :current → the itot base. The FIRST :current stimulus ASSIGNS (byte-preserving, incl. signed zero), the rest
-# ADD; with no :current stimulus the base is `z`, the gtot-typed zero.
+# :current → the itot base. The first :current stimulus assigns (byte-preserving, incl. signed zero), the rest
+# add; with no :current stimulus the base is `z`, the gtot-typed zero.
 @inline _stim_itot(::Tuple{}, z, x) = z
-@inline _stim_itot(t::Tuple, z, x) = _cur0(stim_point(typeof(first(t))), first(t), Base.tail(t), z, x)
+@inline _stim_itot(rest::Tuple, z, x) = _cur0(stim_point(typeof(first(rest))), first(rest), Base.tail(rest), z, x)
 @inline _cur0(::Val, s, r, z, x) = _stim_itot(r, z, x)
 @inline _cur0(::Val{:current}, s, r, z, x) = _curΣ(stim_current(s, x), r, x)
 @inline _curΣ(acc, ::Tuple{}, x) = acc
@@ -56,7 +56,7 @@ stim_point(::Type{S}) where {S <: AbstractStimulus} = error("$(nameof(S)) must d
 @inline _cur1(::Val{:current}, acc, s, r, x) = _curΣ(acc + stim_current(s, x), r, x)
 
 # Fold a conductance (Δg or Δi) into an accumulator. The strong-zero `false` (an all-non-conductance unroll)
-# is the IDENTITY: returns the accumulator UNTOUCHED, preserving a signed zero; unlike `x + false`, which
+# is the identity: returns the accumulator untouched, preserving a signed zero; unlike `x + false`, which
 # flips -0.0 → +0.0. Keeps the conductance append a byte-identical no-op when no :conductance stimulus exists.
 @inline _addcond(x, ::Bool) = x
 @inline _addcond(x, Δ) = x + Δ
@@ -64,7 +64,7 @@ stim_point(::Type{S}) where {S <: AbstractStimulus} = error("$(nameof(S)) must d
 # :conductance → (Δg, Δi), COBA-shaped, appended after synapse accumulation (prescribed g(t) only; Poisson
 # conductance is a synapse/projection). Summed with the `(false, false)` strong-zero identity.
 @inline _stim_gtot(::Tuple{}, x) = (false, false)
-@inline _stim_gtot(t::Tuple, x) = _cond1(stim_point(typeof(first(t))), first(t), Base.tail(t), x)
+@inline _stim_gtot(rest::Tuple, x) = _cond1(stim_point(typeof(first(rest))), first(rest), Base.tail(rest), x)
 @inline _cond1(::Val, s, r, x) = _stim_gtot(r, x)
 @inline function _cond1(::Val{:conductance}, s, r, x)
     (g, i) = stim_conductance(s, x)
@@ -97,7 +97,7 @@ end
     # `V`, not `itot`, in the ctx's membrane slot: the fused kernel builds its ctx from the frozen
     # start-of-step V, so passing the accumulator here would make a V-dependent :current stimulus
     # compute something different on this path.
-    itot .= _cur_bc.(Ref(s), Ref(m), V, idx, n, t, dt)                         # first :current ASSIGNS
+    itot .= _cur_bc.(Ref(s), Ref(m), V, idx, n, t, dt)                         # first :current assigns
     _sitot_add!(itot, r, V, m, n, t, dt)                                       # subsequent :current add
     return true
 end
@@ -144,7 +144,7 @@ end
 end
 
 # :noise broadcast into V at the membrane step (refractory-gated), per :noise stimulus. Reproduces
-# `_apply_noise!`: the increment is added only to non-refractory neurons; the draw itself is UNCONDITIONAL
+# `_apply_noise!`: the increment is added only to non-refractory neurons; the draw itself is unconditional
 # (evaluated for every neuron every step) so the counter-RNG never desyncs.
 function _apply_noises!(stimuli, V, refrac, z, m, n, t, dt)
     _anoises!(stimuli, V, refrac, z, m, n, t, dt)
@@ -184,18 +184,18 @@ stim_point(::Type{<:WhiteNoise}) = Val(:noise)
 end
 
 # * init-time hooks: device upload + shape validation
-# Two OPTIONAL per-stimulus hooks the engine applies once (upload at network construction, validate at init),
+# Two optional per-stimulus hooks the engine applies once (upload at network construction, validate at init),
 # defaulting to no-ops (`input`/`drive`/`noise` and any isbits stimulus need neither): `stim_upload` moves a
 # stimulus's backing arrays to the run architecture (mirrors `on_architecture(arch, input)`); `stim_validate`
 # checks its shapes against the run's `(N, nsteps, dt)`. Applied across the extras tuple by the `_*_stimuli`.
 stim_upload(s, arch) = s
 stim_validate(s, N, nsteps, dt) = nothing
-@inline _upload_stimuli(t::Tuple, arch) = map(s -> stim_upload(_check_stimulus(s), arch), t)
-_validate_stimuli(t::Tuple, N, nsteps, dt) = foreach(s -> stim_validate(s, N, nsteps, dt), t)
+@inline _upload_stimuli(stimuli::Tuple, arch) = map(s -> stim_upload(_check_stimulus(s), arch), stimuli)
+_validate_stimuli(stimuli::Tuple, N, nsteps, dt) = foreach(s -> stim_validate(s, N, nsteps, dt), stimuli)
 
 # Membership is `stim_point`, not the abstract type: `WhiteNoise` and `PoissonDrive` are defined before
 # `AbstractStimulus` and take part through the trait alone, so hooks keyed on the abstract type would
-# miss them (and did: passing either through `stimuli =` was a MethodError at construction). Checked
+# miss them. Checked
 # once, where the tuple is built, so a wrong object says so there rather than deep inside a kernel.
 function _check_stimulus(s)
     applicable(stim_point, typeof(s)) || throw(
@@ -211,7 +211,7 @@ end
 
 # * FunctionalCurrent / FunctionalKick / FunctionalConductance (live f)
 # Normalise a user input function to the canonical (i, t) call form: a 2-arg `f(i, t)` passes through, a 1-arg
-# `f(t)` is wrapped uniform over neurons. Arity is resolved ONCE (host-side, at construction), so the per-neuron
+# `f(t)` is wrapped uniform over neurons. Arity is resolved once (host-side, at construction), so the per-neuron
 # call is a plain static dispatch; GPU-safe when the wrapped `f` is isbits (a bare function or a closure over
 # isbits data). `_Uniform` is a struct (not a closure) so `Adapt` moves it cleanly onto the device.
 struct _Uniform{F}
@@ -331,7 +331,7 @@ struct InhomogeneousPoisson{R, W} <: AbstractStimulus
 end
 function InhomogeneousPoisson(rate; weight, seed = 0)
     r = rate isa Union{Number, AbstractArray} ? rate : _lift_it(rate)   # lift a function rate to (i,t)
-    return InhomogeneousPoisson{typeof(r), typeof(weight)}(r, weight, UInt64(seed))
+    return InhomogeneousPoisson{typeof(r), typeof(weight)}(r, weight, domain_seed(seed, DOMAIN_INHOMPOISSON))
 end
 Adapt.@adapt_structure InhomogeneousPoisson
 stim_point(::Type{<:InhomogeneousPoisson}) = Val(:kick)
@@ -392,8 +392,8 @@ function pulses(; amplitude, period, width, t0 = 0.0, base = 0.0)
 end
 export ramp, step_input, sinusoid, pulses
 
-# Assemble the integrator's ordered stimulus tuple from the legacy `input`/`drive`/`noise` fields plus any
-# `stimuli =` extras. The `ConstantCurrent` base comes first (the itot seed), so it ASSIGNS; drive/noise and
+# Assemble the integrator's ordered stimulus tuple from the `input`/`drive`/`noise` fields plus any
+# `stimuli =` extras. The `ConstantCurrent` base comes first (the itot seed), so it assigns; drive/noise and
 # extras follow. Absent drive/noise contribute nothing (`nothing → ()`).
 @inline _opt_stim(::Nothing) = ()
 @inline _opt_stim(s) = (s,)

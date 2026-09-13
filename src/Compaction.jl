@@ -2,23 +2,23 @@
 #
 # The edge-parallel scatter (Scatter.jl) launches one thread per synapse and lets the idle ones
 # (whose source did not spike) exit early. At realistic firing (rate*dt ≈ 0.1-1% of neurons per
-# step) that is mostly wasted threads. The compacted scatter instead processes ONLY active
+# step) that is mostly wasted threads. The compacted scatter instead processes only active
 # synapses, in two phases:
 #   1. compactify: build a dense list `active` of the spiking neurons (atomic-append), with the
 #      count in `na`. One pass over N; cheap at sparse firing.
-#   2. a 2-LEVEL scatter: launch (maxdeg × na) threads, thread (j, a) handling the j-th edge of
+#   2. a 2-level scatter: launch (maxdeg × na) threads, thread (j, a) handling the j-th edge of
 #      active neuron `active[a]` (rows shorter than maxdeg early-exit). Every launched group maps
-#      to a real spiking neuron, so the device does work proportional to ACTIVE synapses, not all
+#      to a real spiking neuron, so the device does work proportional to active synapses, not all
 #      synapses: measured up to ~30× over edge-parallel at high degree + sparse firing.
 #
-# Cost: the launch needs the active count `na` on the HOST (to size the 2-level grid), i.e. one
+# Cost: the launch needs the active count `na` on the host (to size the 2-level grid), i.e. one
 # device→host read per step. That reintroduces a per-step sync (which the fused device step removed):
 # negligible when the step is scatter-bound (the regime where compaction is used), but a net
-# loss in the launch-bound small-N regime, so this path is OPT-IN (`solve(...; scatter = :compacted)`)
+# loss in the launch-bound small-N regime, so this path is opt-in (`solve(...; scatter = :compacted)`)
 # and the performance advisor only suggests it when the regime fits.
 
 # Per-projection compaction is shared across a population's projections (they scatter the same
-# spike mask), so the scratch lives on the integrator and `active`/`na` are filled ONCE per step.
+# spike mask), so the scratch lives on the integrator and `active`/`na` are filled once per step.
 struct CompactionScratch{AV, NV}
     active::AV    # (npre,) device Int32: compacted spiking-neuron indices (only 1:na are valid)
     na::NV        # (1,) device Int: number of spiking neurons this step
@@ -57,7 +57,7 @@ end
     end
 end
 
-# Read the active count to the host WITHOUT scalar indexing (a 1-element bulk DtoH, then host index
+# Read the active count to the host without scalar indexing (a 1-element bulk DtoH, then host index
 # (`na[1]` directly would scalar-index, forbidden under CUDA / JLArrays allowscalar(false)).
 @inline _read_na(na) = @inbounds Array(na)[1]
 
@@ -75,9 +75,8 @@ end
 
 @inline _compacted_propagate!(syn::AbstractSynapseState, active, na, now) =
     (compacted_scatter!(syn.buf, syn.conn, active, na, now; sync = false); nothing)
-@inline _compacted_propagate_all!(::Tuple{}, active, na, now) = nothing
 @inline _compacted_propagate_all!(s::Tuple, active, na, now) =
-    (_compacted_propagate!(first(s), active, na, now); _compacted_propagate_all!(Base.tail(s), active, na, now))
+    _foreach_tuple!(_compacted_propagate!, s, active, na, now)
 
 # The propagate step, dispatched on the integrator's compaction scratch: `nothing` → the
 # edge-parallel scatter (no per-step sync); a `CompactionScratch` → compactify once, read `na`

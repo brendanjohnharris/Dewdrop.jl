@@ -2,11 +2,11 @@
 # Heuristic `@info` guidance toward the specialised GPU scatter/precision paths when a run's
 # regime suggests one would help. It inspects the problem (architecture, float type, connectivity
 # index width, mean degree) and the solution (firing fraction per step), and emits at most one
-# message per distinct suggestion per session (so a parameter sweep is not spammed). Silenceable
-# globally (`Dewdrop.set_advice!(false)`) or per call (`solve(...; advise = false)`). The advice is
-# hedged: these are rules of thumb, not guarantees.
+# message per distinct suggestion per session (so a parameter sweep is not spammed). Off by default:
+# opt in with `Dewdrop.set_advice!(true)`, and suppress one call with `solve(...; advise = false)`.
+# The advice is hedged: these are rules of thumb, not guarantees.
 
-const _ADVISE = Ref(true)
+const _ADVISE = Ref(false)
 const _ADVISED = Set{Symbol}()
 const _ADVISED_LOCK = ReentrantLock()      # `solve` may be called from several threads at once
 const _RUNTIME_DONE = Ref(false)   # runtime advice needs a device reduction; do it once per session
@@ -14,8 +14,8 @@ const _RUNTIME_DONE = Ref(false)   # runtime advice needs a device reduction; do
 """
     set_advice!(on::Bool)
 
-Enable or disable the performance advisor globally (default `true`). Disabling also skips the
-device reduction the runtime advice needs, so it is free in the inner loop. Per-call override:
+Enable or disable the performance advisor (default `false`). When off it skips the device reduction
+the runtime advice needs, so it costs nothing. Once enabled, suppress a single call with
 `solve(prob, alg; advise = false)`.
 """
 set_advice!(on::Bool) = (_ADVISE[] = on; on)
@@ -88,7 +88,7 @@ function _advise_static(prob::DewdropNetwork)
     return nothing
 end
 
-# Runtime suggestions (regime-dependent): need the measured firing fraction. `scatter` is the run's REQUESTED
+# Runtime suggestions (regime-dependent): need the measured firing fraction. `scatter` is the run's requested
 # scatter (`:auto` if unset), resolved to the actual choice; so we don't re-suggest compaction to a run
 # that already opted into it.
 function _advise_runtime(prob::DewdropNetwork, frac::Real, scatter::Symbol = :auto)
@@ -96,7 +96,7 @@ function _advise_runtime(prob::DewdropNetwork, frac::Real, scatter::Symbol = :au
     ne = _total_edges(prob)
     md = ne == 0 ? 0.0 : ne / prob.n   # reuse ne; avoids a second edge-count walk
     pct = round(frac * 100; digits = 2)
-    # only suggest compaction if this run's ACTUAL scatter is the edge scatter (not when it already resolved
+    # only suggest compaction if this run's actual scatter is the edge scatter (not when it already resolved
     # to compacted: whether via `:auto` past the L2-spill crossover, or an explicit `scatter = :compacted`).
     if ne > 1_000_000 && frac < 0.02 && _resolve_scatter(scatter, prob.arch, prob.projections) === :edge
         _emit(
@@ -110,23 +110,21 @@ function _advise_runtime(prob::DewdropNetwork, frac::Real, scatter::Symbol = :au
         _emit(
             :gather,
             "dense connectivity (mean degree ≈ $(round(Int, md))) at high firing ($(pct)%/step): " *
-                "the atomic edge-parallel scatter is contention-bound here. A gather/SpMV backend " *
-                "(atomic-free, target-parallel) is the structural fit: not yet implemented."
+                "the atomic edge-parallel scatter is contention-bound here."
         )
     elseif prob.n < 5000 && frac < 0.01
         _emit(
             :graphs,
             "a small, quiet network: the step is launch-bound, not compute-bound, so scatter " *
-                "tuning will not help. CUDA-graph capture of the per-step launch sequence is the " *
-                "lever here (not yet implemented); for parameter sweeps, batching (`solve(...; " *
-                "batch = B)`) amortises launches across instances."
+                "tuning will not help. For parameter sweeps, batching (`solve(...; batch = B)`) " *
+                "amortises launches across instances."
         )
     end
     return nothing
 end
 
 # CPU suggestion (static, free): at large N the dense per-neuron phases dominate the step. The default
-# `Auto` backend now routes EVERY canonical CPU network through the `Fused` step (the single-pass tight
+# `Auto` backend routes every canonical CPU network through the `Fused` step (the single-pass tight
 # loop: bit-identical, ~2× the per-phase `Serial` baseline; it gates its own threading on
 # work-per-thread, so small nets run single-threaded and large ones thread), so nothing is needed there.
 # The remaining lever is SIMD: `backend = Turbo()` (LoopVectorization) vectorises the membrane `exp` for

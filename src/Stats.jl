@@ -2,13 +2,29 @@
 # operating on the recorded traces of a `DewdropSolution`. Two layers: matrix-core functions over a
 # Neuron×Time raster `S` (Dewdrop's recording orientation), and
 # `sol`-based wrappers that pull the `Spikes`/`Trace` data, the time step, positions, and the
-# named-subpopulation registry (`of = :E`) from the solution. Spectral measures use the internal FFT
-# (FFT.jl). These are host-side analysis, not engine work: pure functions of recorded output.
+# named-subpopulation registry (`of = :E`) from the solution. These are host-side analysis, not engine
+# work: pure functions of recorded output.
+
+using FFTW: fft, ifft
 
 # population mean / variance without a Statistics dependency (population variance, ÷N, the
 # `mean(x²) − mean(x)²` form used by the susceptibility measure).
 @inline _mean(x) = sum(x) / length(x)
 @inline _popvar(x) = (μ = _mean(x); _mean(abs2.(x .- μ)))
+
+# numpy `fftfreq(n, d)`: [0, 1, …, ⌈n/2⌉-1, -⌊n/2⌋, …, -1] / (n·d). Not `AbstractFFTs.fftfreq`, whose
+# second argument is a sampling rate rather than a spacing.
+function _fftfreq(n::Integer, d::Real = 1.0)
+    f = Vector{Float64}(undef, n)
+    half = (n - 1) ÷ 2 + 1                       # number of non-negative frequencies
+    @inbounds for k in 0:(half - 1)
+        f[k + 1] = k / (n * d)
+    end
+    @inbounds for (i, k) in enumerate(-(n ÷ 2):-1)
+        f[half + i] = k / (n * d)
+    end
+    return f
+end
 
 # extract a Neuron×Time spike raster (Bool) from the solution's Spikes monitor, restricted to subpop
 # `of`. Requires a full `Spikes()` recording (idx = Colon) when slicing a named subpop.
@@ -56,7 +72,9 @@ function coarsegrain(S::AbstractMatrix, binsize::Integer; dims::Integer = 2)
     end
     throw(ArgumentError("dims must be 1 or 2 (got $dims)"))
 end
-export coarsegrain
+# Not exported: TimeseriesBase exports a `coarsegrain` that means something else (take every second
+# element and stack them into a new dimension), so exporting this would make the bare name ambiguous
+# for anyone using both. Call it as `Dewdrop.coarsegrain`.
 
 """
     susceptibility(S) -> χ
@@ -169,7 +187,7 @@ end
 function cv_isi(sol::DewdropSolution; of = :all, name = nothing)
     t, id = raster(sol; of = of, name = name)
     isempty(id) && return NaN
-    # Group by neuron in ONE pass. `t[id .== n]` inside a loop over neurons rescans the whole spike
+    # Group by neuron in one pass. `t[id .== n]` inside a loop over neurons rescans the whole spike
     # list for every neuron, i.e. O(neurons × spikes); `unique` keeps the visiting order, so the mean
     # is taken over the same sequence as before.
     order = unique(id)
@@ -204,7 +222,7 @@ function power_spectrum(S::AbstractMatrix; n_segments::Integer = 1, dt::Real = 1
     seg ≥ 1 || throw(ArgumentError("n_segments = $n_segments too large for $Tn time steps"))
     psd = zeros(Float64, seg)
     @inbounds for i in 1:nN, s in 1:n_segments
-        F = _fft(Float64.(@view S[i, ((s - 1) * seg + 1):(s * seg)]))
+        F = fft(Float64.(@view S[i, ((s - 1) * seg + 1):(s * seg)]))
         for k in 1:seg
             psd[k] += abs2(F[k]) / seg
         end
@@ -310,8 +328,8 @@ function radial_autocorrelation(S::AbstractMatrix, positions; dr::Real = 0.05)
         f0 = grid .- _mean(grid)
         var = _mean(abs2.(f0))
         var > 0 || continue                                         # skip empty / variance-zero frames
-        F = _fft2(f0)
-        C = real.(_ifft2(abs2.(F))) ./ (X * Y)
+        F = fft(f0)
+        C = real.(ifft(abs2.(F)))
         Cn = C ./ C[1, 1]                                           # normalise C(0) = 1
         flatC = vec(Cn)
         sums = zeros(Float64, length(r_bins))

@@ -15,7 +15,7 @@ import TimeseriesMakie: SpikeRaster, PSTH, RateMap, traces, traces!, trajectory,
 # A solution feeds the base recipes as plain arrays: `raster` (times, ids), `_spike_raster` (the
 # Neuron × Time mask) and the recorded-column time axis. No TimeseriesBase needed.
 
-# spikeraster: a solution IS a raster. Force concrete eltypes: with no spikes `raster` yields an empty
+# spikeraster: a solution is a raster. Force concrete eltypes: with no spikes `raster` yields an empty
 # `Vector{Any}`, which Makie's argument conversion cannot reduce over.
 _typed_raster(sol; kw...) = (r = Dewdrop.raster(sol; kw...); (Float64.(r[1]), Int.(r[2])))
 Makie.convert_arguments(::Type{<:SpikeRaster}, sol::DewdropSolution) = _typed_raster(sol)
@@ -129,7 +129,7 @@ function _weight_matrix(net::DewdropNetwork)
     isempty(net.projections) && error("network has no projections to show")
     Ms = [_dense_csr(p.conn) for p in net.projections]   # each binned onto the same grid
     shp = size(first(Ms))
-    # Returning `first(Ms)` here would draw ONE projection while looking like the whole network: a plot
+    # Returning `first(Ms)` here would draw one projection while looking like the whole network: a plot
     # that silently omits connections is worse than no plot.
     all(size(M) == shp for M in Ms) || error(
         "connectivity(network): the projections bin to different shapes $(unique(size.(Ms))), so they " *
@@ -140,7 +140,7 @@ function _weight_matrix(net::DewdropNetwork)
 end
 
 # Densify a CSR into a `post × pre` weight matrix, block-mean binned so neither dimension exceeds
-# `maxdim`. Binning happens while walking the EDGES, so the full `npost × npre` dense form is never
+# `maxdim`. Binning happens while walking the edges, so the full `npost × npre` dense form is never
 # allocated (it is 8 GB at N = 32k). The trailing partial block is kept and divided by its true size,
 # so no neuron is dropped from the edge of the plot.
 function _dense_csr(csr::SparseCSR; maxdim::Integer = 2048)
@@ -154,7 +154,7 @@ function _dense_csr(csr::SparseCSR; maxdim::Integer = 2048)
     end
     if r > 1 || c > 1
         @warn "connectivity: binning a $(csr.npost)×$(csr.npre) weight matrix to $(nr)×$(nc)" maxlog = 1
-        for j in 1:nc, i in 1:nr        # divide by the block's TRUE size (the last one is partial)
+        for j in 1:nc, i in 1:nr        # divide by the block's true size (the last one is partial)
             @inbounds M[i, j] /= (min(i * r, csr.npost) - (i - 1) * r) * (min(j * c, csr.npre) - (j - 1) * c)
         end
     end

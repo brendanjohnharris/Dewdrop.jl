@@ -42,7 +42,6 @@ include("Builder.jl")
 include("PoissonSource.jl")     # generic streaming Poisson drive: PoissonSource{Synapse} over any synapse
 include("NetworkSpec.jl")       # deferred network spec: specify a network without building the connectome
 include("BlockBatch.jl")        # batching: run B members together (block-diagonal general path; batch(...) forms)
-include("FFT.jl")               # self-contained DFT/FFT for the spectral observables
 include("Stats.jl")             # statistical observables (host-side spatial-network analysis)
 include("Plotting.jl")          # plotting front-end stubs; methods in the weak-dep TimeseriesMakie ext
 include("Show.jl")              # hierarchical REPL rendering (Base.show); included last, so it renders every type above

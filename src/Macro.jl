@@ -4,8 +4,8 @@
 # the macro rewrites every parameter symbol to a field access `m.<param>` (no equation parsing,
 # so it is robust to how the expressions are written) and emits the parameter struct plus all
 # the model hooks (`statevars`, `float_type`, `asymptote`, `membrane_step`, `threshold`,
-# `reset_value`, `refractory`). The membrane must be LINEAR (the exact propagator applies);
-# nonlinear models (Izhikevich/AdEx) and full `dV/dt` equation parsing are a later front-end.
+# `reset_value`, `refractory`). The membrane must be linear (the exact propagator applies);
+# nonlinear models (Izhikevich/AdEx) need full `dV/dt` equation parsing, which this macro does not do.
 #
 #   @neuron MyLIF begin
 #       @parameters  τ=20.0 EL=-60.0 Vθ=-50.0 Vr=-60.0 R=1.0 tref=5.0
@@ -21,7 +21,7 @@
 # Generic linear, COBA-capable subthreshold step shared by every @neuron-generated model: a
 # conductance `gtot` sets an effective leak `denom`, scaling both the fixed point and the decay
 # rate. `V∞I` is the current-driven asymptote `asymptote(m, itot)`; with `gtot = 0` this is the
-# plain exact propagator. (LIF predates the macro and keeps its own equivalent `_coba_step`.)
+# plain exact propagator. (LIF defines its own equivalent `_coba_step` rather than routing through this.)
 @inline function _linear_membrane_step(V∞I, R, τ, V, gtot, dt)
     denom = 1 + R * gtot
     V∞ = V∞I / denom
@@ -89,32 +89,40 @@ macro neuron(name, block)
     end
     any(isnothing, (asym, Rparam, τparam, thr, rst, refr)) &&
         error("@neuron $name: needs @asymptote, @resistance, @timeconstant, @threshold, @reset and @refractory")
+    # `_subparams` rewrites every parameter symbol to `m.<param>`, which would silently replace the
+    # reserved hook arguments in the membrane expressions with a constant field.
+    clash = intersect(params, (:V, :I))
+    isempty(clash) ||
+        error("@neuron $name: parameter name(s) $(join(clash, ", ")) shadow the reserved `V` (membrane) and `I` (total input current)")
 
     fields = [:($p::T) for p in params]
     statetuple = Expr(:tuple, QuoteNode.(states)...)
     sa, st, sr, sf = _subparams(asym, params), _subparams(thr, params),
         _subparams(rst, params), _subparams(refr, params)
 
+    # Interpolate the module itself rather than the name `Dewdrop`: the whole quote is escaped into the
+    # caller's scope, where `using Dewdrop: @neuron` leaves no binding for that name.
+    D = @__MODULE__
     return esc(
         quote
-            struct $name{T} <: Dewdrop.AbstractNeuronModel
+            struct $name{T} <: $D.AbstractNeuronModel
                 $(fields...)
             end
             # `float` first: all-integer defaults would otherwise give a `{Int}` model, hence integer
             # state columns, hence an InexactError on the first membrane store.
             $name(; $(kwargs...)) = $name(Base.promote(Base.map(Base.float, ($(params...),))...)...)
-            Dewdrop.statevars(::Type{<:$name}) = $statetuple
-            Dewdrop.float_type(::$name{T}) where {T} = T
-            @inline Dewdrop.asymptote(m::$name, I) = $sa
+            $D.statevars(::Type{<:$name}) = $statetuple
+            $D.float_type(::$name{T}) where {T} = T
+            @inline $D.asymptote(m::$name, I) = $sa
             # The default initial V. The generic `_resting` reads a field named `EL`, which a model is
-            # free not to have; the asymptote at zero input IS the resting potential, whatever it is called.
-            @inline Dewdrop._resting(m::$name) = Dewdrop.asymptote(m, 0)
-            @inline Dewdrop.membrane_step(m::$name, V, gtot, itot, dt) =
-                Dewdrop._linear_membrane_step(Dewdrop.asymptote(m, itot), m.$Rparam, m.$τparam, V, gtot, dt)
-            @inline Dewdrop._tau(m::$name) = m.$τparam           # SDE noise needs the membrane time constant
-            @inline Dewdrop.threshold(m::$name, V) = $st
-            @inline Dewdrop.reset_value(m::$name) = $sr
-            @inline Dewdrop.refractory(m::$name) = $sf
+            # free not to have; the asymptote at zero input is the resting potential, whatever it is called.
+            @inline $D._resting(m::$name) = $D.asymptote(m, 0)
+            @inline $D.membrane_step(m::$name, V, gtot, itot, dt) =
+                $D._linear_membrane_step($D.asymptote(m, itot), m.$Rparam, m.$τparam, V, gtot, dt)
+            @inline $D._tau(m::$name) = m.$τparam           # SDE noise needs the membrane time constant
+            @inline $D.threshold(m::$name, V) = $st
+            @inline $D.reset_value(m::$name) = $sr
+            @inline $D.refractory(m::$name) = $sf
             $name
         end
     )

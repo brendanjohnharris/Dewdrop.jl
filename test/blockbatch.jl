@@ -1,5 +1,6 @@
 using Dewdrop
 using Test
+using InteractiveUtils: subtypes
 
 # Batching (src/BlockBatch.jl): run B network members together via `batch(...)` → `solve` → `BatchSolution`.
 # Three execution modes, auto-routed by what varies (and forceable via `mode=`):
@@ -206,4 +207,69 @@ _solve(net) = solve(net, FixedStep(0.1); progress = false)
             @test bs.spike_counts isa Vector{Vector{Int}}
         end
     end
+end
+
+# A drive carrying its own member-local wiring cannot be shared across the block: reusing member 1\'s
+# `extconn` would leave members 2..B undriven, silently and with no error.
+@testset "a replayed spike source is offset per member, not shared" begin
+    arch = Dewdrop.CPU()
+    ec = fixed_prob(arch, 3, 6, 1.0; weight = 1.0, delay = steps(1), seed = UInt64(1))
+    ssa = SpikeSourceArray(DeltaSynapse(), ec, trues(3, 20))
+    @test !Dewdrop._block_mergeable(ssa)                  # matches its PoissonSource sibling
+    @test !Dewdrop._block_mergeable(PoissonSource(DeltaSynapse(), ec; rate = 50.0, seed = UInt64(1)))
+    off = Dewdrop._offset_synapse(ssa, 6, 12, arch)
+    @test off !== ssa                                     # wiring shifted into the member\'s block
+    @test off.spikes === ssa.spikes                       # replay pattern shared verbatim
+    @test Dewdrop.npost(off.extconn) == 12
+    @test Array(off.extconn.post) == Array(ec.post) .+ 6
+end
+
+@testset "every member of a block batch keeps its own replayed drive" begin
+    arch = Dewdrop.CPU()
+    N, n_ext, dt, tspan = 4, 2, 0.1, (0.0, 40.0)
+    nsteps = round(Int, (tspan[2] - tspan[1]) / dt)
+    pat = trues(n_ext, nsteps)                            # both virtual sources fire every step
+    function mk()
+        ec = fixed_prob(arch, n_ext, N, 1.0; weight = 40.0, delay = steps(1), seed = UInt64(3))
+        return DewdropNetwork(
+            LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 100.0, tref = 2.0), N;
+            input = 0.0, tspan = tspan,
+            projections = (Projection(SpikeSourceArray(DeltaSynapse(), ec, pat), Dewdrop._empty_csr(arch, N)),)
+        )
+    end
+    bs = solve(batch([mk(), mk()]), FixedStep(dt); mode = :block, progress = false)
+    @test nmembers(bs) == 2
+    @test all(b -> sum(bs[b]) > 0, 1:2)                   # member 2 must not be silently undriven
+    @test sum(bs[1]) == sum(bs[2])                        # identical members, identical drive
+end
+
+# A source synapse carries its own member-local wiring, so plasticity must refuse to wrap it and
+# block-stacking must refuse to share it. Both follow from `is_source_synapse`; the wiring offset
+# cannot be derived and needs a method per type. This fails if a new model misses either.
+@testset "every synapse model is classified, and every source model can be offset" begin
+    arch = Dewdrop.CPU()
+    ec = fixed_prob(arch, 3, 6, 1.0; weight = 1.0, delay = steps(1), seed = UInt64(1))
+    sources = (
+        PoissonSource(DeltaSynapse(), ec; rate = 10.0, seed = UInt64(1)),
+        SpikeSourceArray(DeltaSynapse(), ec, trues(3, 8)),
+    )
+    ordinary = (
+        CurrentSynapse(τ = 5.0), DeltaSynapse(), ConductanceSynapse(τ = 5.0, Erev = 0.0),
+        DualExpSynapse(τr = 1.0, τd = 5.0, Erev = 0.0),
+        FrozenDualExpSynapse(τr = 1.0, τd = 5.0, Erev = 0.0),
+    )
+    for s in sources
+        @test Dewdrop.is_source_synapse(s)
+        @test !Dewdrop._plastic_wrappable(s)                  # derived
+        @test !Dewdrop._block_mergeable(s)                    # derived
+        @test Dewdrop._offset_synapse(s, 6, 12, arch) !== s   # defined per type, so check it exists
+    end
+    for s in ordinary
+        @test !Dewdrop.is_source_synapse(s)
+        @test Dewdrop._plastic_wrappable(s) && Dewdrop._block_mergeable(s)
+        @test Dewdrop._offset_synapse(s, 6, 12, arch) === s   # nothing internal to shift
+    end
+    # a newly added synapse model has to be classified above, or this fails
+    covered = union(Set(nameof(typeof(s)) for s in sources), Set(nameof(typeof(s)) for s in ordinary))
+    @test Set(nameof.(subtypes(Dewdrop.AbstractSynapseModel))) == covered
 end

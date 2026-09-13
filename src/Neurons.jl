@@ -1,7 +1,7 @@
 # * Neuron models, "model as code": a small isbits parameter struct plus pure,
 # scalar, allocation-free functions for its dynamics, threshold and reset.
 #
-# The subthreshold update is deliberately structured as the EXACT linear propagator
+# The subthreshold update is deliberately structured as the exact linear propagator
 # (Rotter-Diesmann) for the linear part of the dynamics, kept distinct from the
 # discontinuous reset. For models with nonlinear coupling (e.g. AdEx's adaptation
 # variable) the extension point is a symplectic-Euler coupling step layered on top of
@@ -22,7 +22,7 @@ Base.Broadcast.broadcastable(m::AbstractNeuronModel) = Ref(m)
     statevars(model) -> NTuple{K,Symbol}
 
 The per-unit state variable names (the SoA column names) the model needs. Defined per
-model TYPE so the names are available at compile time for type-stable state allocation;
+model type so the names are available at compile time for type-stable state allocation;
 the instance form delegates to the type form.
 """
 function statevars end
@@ -83,7 +83,7 @@ function convertfloat(::Type{T}, x) where {T <: AbstractFloat}
 end
 export convertfloat
 
-# Linear subsystem: the EXACT propagator (exact for LIF over dt at constant input)
+# Linear subsystem: the exact propagator (exact for LIF over dt at constant input)
 """
     asymptote(model, I) -> V∞
 
@@ -141,7 +141,7 @@ The absolute refractory duration for `model`. Part of the neuron-model interface
 @inline refractory(m::LIF) = m.tref
 
 # Type-stable state allocation: a SoA `Population` with one zero-initialised column per
-# `statevars(model)`. The names are carried in a `Val` so they reach the constructor as a TYPE
+# `statevars(model)`. The names are carried in a `Val` so they reach the constructor as a type
 # parameter (a concrete StructArray, not `Population{S} where S`); constant propagation folds
 # `statevars(M)` for a concrete `M` at the call site. Unlike a `@generated` body (whose
 # generator runs in this module's world and so cannot see a `@neuron`-defined model's

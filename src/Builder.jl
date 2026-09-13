@@ -5,12 +5,12 @@
 # declaration order, their ranges recorded in a subpop registry (`:E`, `:I`, …), and the per-group
 # models merged. Same-type groups that differ only in parameter values collapse to one
 # `Heterogeneous` model (block per-neuron arrays); a single shared model stays a bare model (the
-# homogeneous fast path, byte-identical to a hand-built `DewdropNetwork`). Different model TYPES per
-# group need the MultiModel engine and currently error.
+# homogeneous fast path, byte-identical to a hand-built `DewdropNetwork`). Different model types per
+# group are merged into a `MultiModel`.
 #
 # The accumulated populations/projections are heterogeneous (any model, any CUBA/COBA/delta
 # synapse), so `build` is the single dynamic boundary: it materialises everything into concretely
-# typed tuples via a function barrier, keeping the simulation hot loop fully type-stable.
+# typed tuples via a function barrier, keeping the simulation step loop fully type-stable.
 
 # a deferred projection: `src => dst` over a synapse, with the connectivity built at `build` time
 # (when the final registry + positions are known). Either `fixed_prob` (`p`), `distance_prob`
@@ -167,14 +167,14 @@ export project!
     drive!(nb, target, drive) -> nb
 
 Set the external [`PoissonDrive`](@ref) for the network. The 3-argument form names a `target`
-subpopulation (currently only `:all`, the whole network).
+subpopulation; only `:all` (the whole network) is accepted.
 """
 function drive!(nb::NetworkBuilder, drive)
     nb.drive = drive
     return nb
 end
 function drive!(nb::NetworkBuilder, target::Symbol, drive)
-    target === :all || error("targeted drive (:$target) is not yet supported; use :all (the whole network)")
+    target === :all || error("targeted drive (:$target) is not supported; use :all (the whole network)")
     nb.drive = drive
     return nb
 end
@@ -194,8 +194,8 @@ function drive!(
         fire_seed = nothing, adjust = nothing, index_type::Type = Int
     )
     # `seed` keys the wiring (source→target connectome). `fire_seed` keys the per-step Poisson firing; default
-    # `nothing` → reuse `seed`, which is what a lone drive wants. Give two drives the SAME `fire_seed` with
-    # DIFFERENT `seed` to make them a shared common-mode source (the same external spikes, independent fan-out).
+    # `nothing` → reuse `seed`, which is what a lone drive wants. Give two drives the same `fire_seed` with
+    # different `seed` to make them a shared common-mode source (the same external spikes, independent fan-out).
     push!(
         nb.projspecs, _ProjSpec(
             :__poisson__, target, synapse,
@@ -229,10 +229,10 @@ export stimulate!
 # Merge the per-group models into one engine model. A single group, or several groups with the
 # identical model, stays a bare model (homogeneous fast path). Same-type groups that differ in some
 # field values collapse to a `Heterogeneous` whose overridden fields are block per-neuron arrays.
-# Different model TYPES become a `MultiModel` (per-group launches over the union SoA).
+# Different model types become a `MultiModel` (per-group launches over the union SoA).
 function _combine_models(models::Vector, sizes::Vector{Int}, arch::AbstractArchitecture)
     M = typeof(first(models))
-    all(m -> typeof(m) === M, models) || return on_architecture(arch, MultiModel(models, sizes))   # different TYPES → MultiModel
+    all(m -> typeof(m) === M, models) || return on_architecture(arch, MultiModel(models, sizes))   # different types → MultiModel
     length(models) == 1 && return first(models)
     overrides = Pair{Symbol, Any}[]
     for f in fieldnames(M)
@@ -276,7 +276,7 @@ function _build_projection(spec::_ProjSpec, reg::NamedTuple, positions, arch, N:
     targets = _subrange(reg, spec.dst)
     kw = spec.kw
     it = get(kw, :index_type, Int)   # opt-in narrow connectome indices (e.g. Int32 halves the scatter bandwidth)
-    # Build the connectome on the HOST (the top-k heap is host-side regardless of `arch`), run any `adjust`
+    # Build the connectome on the host (the top-k heap is host-side regardless of `arch`), run any `adjust`
     # weight hook host-side, then move the finished CSR onto `arch` at the end (the Projection below); so
     # adjusters like `correlate_weights` never touch a device array, with no host↔device round-trip.
     conn = if haskey(kw, :connectivity) && kw.connectivity !== nothing

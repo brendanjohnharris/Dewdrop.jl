@@ -10,10 +10,10 @@
 # column: a host loop here, a single Atomix.@atomic kernel on the device.
 
 # * Fixed-point accumulation.
-# The ring accumulates FIXED-POINT COUNTS, not floats. Deposits land through `Atomix.@atomic`, and
+# The ring accumulates fixed-point counts, not floats. Deposits land through `Atomix.@atomic`, and
 # several presynaptic spikes may hit the same (target, slot) in one step, so the order in which they
 # are summed varies with thread count, backend and scatter strategy. Float addition is not
-# associative, so a float ring gives a different last bit run to run; INTEGER addition is, so an
+# associative, so a float ring gives a different last bit run to run; integer addition is, so an
 # integer ring is bit-identical no matter how the deposits are interleaved.
 #
 # That matters far more than the last bit suggests: a spiking network is chaotic, so a one-ulp
@@ -23,7 +23,7 @@
 #
 # The weights are quantised in the kernel (`w * scale`, one multiply) rather than stored twice. The
 # weights are already `Float32`, so quantising at `Float32` relative precision is no worse than how
-# they are held today, while the SUM becomes exact; strictly better than float accumulation, which
+# they are held today, while the sum becomes exact; strictly better than float accumulation, which
 # rounds at every add.
 const FPCount = Int64
 
@@ -35,7 +35,7 @@ const _FP_SAFETY = 1024
 const _FP_DEFAULT_SCALE = 2.0^30
 
 # Fixed point applies to plain IEEE floats. Anything else (a `Dual`/`Active` from the
-# differentiable backend) keeps a VALUE ring: rounding is not differentiable, and those paths are
+# differentiable backend) keeps a value ring: rounding is not differentiable, and those paths are
 # CPU-serial, so they are already order-deterministic and gain nothing from quantisation.
 _ring_eltype(::Type{<:Base.IEEEFloat}) = FPCount
 _ring_eltype(::Type{T}) where {T} = T
@@ -114,7 +114,7 @@ end
 """
     slotvalues(buf)
 
-The pending increments in PHYSICAL units, as a plain array; the ring itself holds fixed-point
+The pending increments in physical units, as a plain array; the ring itself holds fixed-point
 counts, so read it through this rather than touching `buf.slots` directly.
 """
 slotvalues(buf::DelayBuffer) = Array(buf.slots) .* inv(buf.scale)
@@ -184,7 +184,7 @@ end
 """
     deliver_due_dual!(a, b, buf, now)
 
-Add the increments due at step `now` into BOTH `a` and `b` in place, then clear that slot; the
+Add the increments due at step `now` into both `a` and `b` in place, then clear that slot; the
 deliver for a dual-state synapse (e.g. the dual-exponential's `g_rise`/`g_decay`, which receive the
 same kick). Reads the due column once.
 """

@@ -37,7 +37,7 @@ sol = solve(prob, FixedStep(0.1); record = (spikes = Spikes(), V = Trace(:V)))
 
 | observable | computes | inputs → output |
 |---|---|---|
-| [`coarsegrain`](@ref) | sums a matrix into non-overlapping bins of width `binsize` along `dims` (default the time axis); trailing remainder discarded | `(S, binsize; dims=2)` → `Matrix` |
+| [`coarsegrain`](@ref) (`Dewdrop.coarsegrain`) | sums a matrix into non-overlapping bins of width `binsize` along `dims` (default the time axis); trailing remainder discarded | `(S, binsize; dims=2)` → `Matrix` |
 | [`susceptibility`](@ref) | population susceptibility `χ = ⟨ρ²⟩_t − ⟨ρ⟩_t²` of the active fraction `ρ(t)` (large when synchronous, small when asynchronous) | `(sol; bin, of)` → scalar |
 | [`mua`](@ref) | multi-unit activity: population spike count per time bin (sum over neurons) | `(sol; bin, of)` → `Vector` |
 | [`temporal_average`](@ref) | per-unit time average of a trace (e.g. mean membrane potential) | `(sol, var=:V; of)` → `Vector` |
@@ -57,9 +57,9 @@ m   = mua(sol; bin = 1.0)                        # population count per 1.0-unit
 psd, f = power_spectrum(sol; n_segments = 8)     # Bartlett over 8 segments
 ```
 
-The spectral measures ([`power_spectrum`](@ref), [`radial_autocorrelation`](@ref)) use Dewdrop's
-self-contained FFT (an internal module, not part of the public API), so they carry no FFTW
-dependency.
+The spectral measures ([`power_spectrum`](@ref), [`radial_autocorrelation`](@ref)) transform through
+FFTW, the same dependency the streaming [`Welch`](@ref) reducer uses. They run on the host at analysis
+time, so nothing about them reaches the step loop.
 
 Several observables are plain functions of arrays, callable directly:
 

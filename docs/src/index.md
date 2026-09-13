@@ -32,7 +32,7 @@ Dewdrop is a fixed-step, clock-driven, struct-of-arrays spiking neural network e
 around two orthogonal choices:
 
 - **Architecture** (`arch = CPU()` / `GPU()`): *where* the state lives.
-- **[Backend](guide/backends.md)** (`backend = Auto()` / `Serial()` / `Fused()` / `Turbo()`): *how*
+- **[Backend](guide/backends.md)** (`backend = Serial()` / `Fused()` / `Turbo()`, default `Auto`): *how*
   each step executes.
 
 ```julia
@@ -40,7 +40,7 @@ using Dewdrop
 
 m = LIF(; τ = 20.0, EL = -65.0, Vθ = -50.0, Vr = -65.0, R = 1.0, tref = 2.0)
 prob = DewdropNetwork(m, 10_000; input = 1.5, tspan = (0.0, 1000.0))
-sol = solve(prob, FixedStep(0.1))            # backend = Auto() picks the best execution path
+sol = solve(prob, FixedStep(0.1))            # the default Auto backend picks the execution path
 ```
 
 `solve` shows a **live progress bar** by default (`progress = :auto`): it appears once a run has

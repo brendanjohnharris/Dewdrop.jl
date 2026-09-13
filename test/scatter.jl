@@ -37,3 +37,36 @@ using JLArrays
     Dewdrop.scatter!(gbuf, gconn, gspiked, 0)
     @test sum(Dewdrop.slotvalues(gbuf)) == 0.5f0 + 0.25f0 + 2.0f0
 end
+
+# The CPU scatter picks a serial or a threaded walk by how many edges this step deposits: threading
+# costs a fixed `@threads` dispatch that only pays on enough work. The ring holds fixed-point counts,
+# so integer addition is associative and both branches must leave exactly the same slots.
+@testset "the scatter's work gate changes speed, not results" begin
+    N, L = 300, 8
+    conn = Dewdrop._resolve_delays(
+        fixed_prob(Dewdrop.CPU(), N, N, 0.2; weight = 0.5f0, delay = steps(3), seed = UInt64(1)), 0.1f0
+    )
+    deg = Dewdrop.nedges(conn) ÷ N
+    scale = Dewdrop.fixedpoint_scale(Int[], Float32[], 2)
+    # the work estimate itself: no spikes is no work, all spiking is every edge
+    @test Dewdrop._scatter_work(conn, falses(N)) == 0
+    @test Dewdrop._scatter_work(conn, trues(N)) == N * deg
+    # a sparse step and a fully spiking one, so both sides of the threshold are covered at any
+    # thread count (the sparse case is below it even on one thread)
+    for frac in (0.01, 1.0)
+        spiked = falses(N)
+        spiked[1:round(Int, frac * N)] .= true
+        got = Dewdrop.DelayBuffer(Dewdrop.CPU(), Float32, N, L - 1; scale = scale)
+        Dewdrop.scatter!(got, conn, spiked, 1)
+        # the serial branch, forced, as the reference
+        ref = Dewdrop.DelayBuffer(Dewdrop.CPU(), Float32, N, L - 1; scale = scale)
+        @inbounds for pre in eachindex(spiked)
+            spiked[pre] || continue
+            for e in conn.rowptr[pre]:(conn.rowptr[pre + 1] - 1)
+                ref.slots[conn.post[e], mod(1 + conn.delay[e], ref.L) + 1] +=
+                    Dewdrop._fp_quantise(eltype(ref.slots), conn.weight[e], scale)
+            end
+        end
+        @test got.slots == ref.slots                      # bit-identical either side of the gate
+    end
+end

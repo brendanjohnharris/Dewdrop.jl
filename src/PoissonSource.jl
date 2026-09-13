@@ -1,12 +1,12 @@
-# * Generic streaming Poisson drive: `PoissonSource{S}` wraps ANY synapse model `S` and turns it into an
+# * Generic streaming Poisson drive: `PoissonSource{S}` wraps any synapse model `S` and turns it into an
 # external drive of virtual Poisson sources (rate `rate` Hz), wired to post-neurons by `extconn`. Each step
-# it generates the sources' Poisson spikes and scatters them (through the SAME `scatter!` + delay-buffer +
+# it generates the sources' Poisson spikes and scatters them (through the same `scatter!` + delay-buffer +
 # `_deliver!` pipeline the network uses for real spikes) into the wrapped synapse's state. So the
 # postsynaptic kinetics are exactly `S`'s (delta / CUBA / COBA / dual-exp / …): the source is the input
 # statistics + wiring, the synapse is the response. Streaming (O(N) state, no precomputed conductance
 # matrix), and (because it routes through `scatter!`) CPU and device alike.
 #
-# The state DELEGATES `_deliver!`/`_accumulate!`/`_decay!`/`_syn_one` to the wrapped synapse's state
+# The state delegates `_deliver!`/`_accumulate!`/`_decay!`/`_syn_one` to the wrapped synapse's state
 # (`inner`); only `_synprestep!` is new (generate + scatter the Poisson events). The outer `conn` is an empty
 # CSR, so the per-state network scatter (`scatter!(syn.buf, syn.conn, …)`) is a no-op; the real wiring
 # lives in `extconn`, used only by the once-per-step generator.
@@ -33,13 +33,14 @@ struct PoissonSource{S <: AbstractSynapseModel, C, T} <: AbstractSynapseModel
     rate::T          # Poisson rate (Hz) per source
     seed::UInt64
 end
+# the firing stream is separated from the wiring builders, so `seed` may be reused across both
 PoissonSource(synapse::AbstractSynapseModel, extconn; rate, seed = 0x9e3779b97f4a7c15) =
-    PoissonSource(synapse, extconn, Float64(rate), seed % UInt64)
+    PoissonSource(synapse, extconn, Float64(rate), domain_seed(seed, DOMAIN_POISSON))
 export PoissonSource
 
 # A plastic wrapper (PlasticState/BatchedSTDState) would hide the event generator from
 # `_synprestep!` and wrap the empty outer CSR, silently killing the drive (src/Plasticity.jl).
-_plastic_wrappable(::PoissonSource) = false
+is_source_synapse(::PoissonSource) = true
 
 # Per-step firing probability. Above 1 the uniform draw always succeeds and the source degenerates to
 # a deterministic every-step spike train with no Poisson statistics, so refuse it. (`PoissonDrive` has
@@ -75,7 +76,7 @@ end
 
 # Batched (N,B) drive state (see `BatchedPoissonSourceState` in src/Batch.jl): build the batched inner synapse
 # (its (N,B,L) ring receives the deposits), the (n_ext, B) firing mask, and the (n_ext,) source-row index.
-# Keying the draw on the source alone makes it SHARED across the B columns: the same drive realization per
+# Keying the draw on the source alone makes it shared across the B columns: the same drive realization per
 # member, the right default for a parameter sweep at a fixed connectome.
 function _make_batched_synstate(arch, syn::PoissonSource, conn, ::Type{T}, N, B, dt, over) where {T}
     ext = _resolve_delays(syn.extconn, dt)
@@ -87,7 +88,7 @@ function _make_batched_synstate(arch, syn::PoissonSource, conn, ::Type{T}, N, B,
 end
 
 # Once-per-step: which virtual sources fire (counter RNG keyed by (seed, step, source)), then scatter their
-# events through `extconn` into the wrapped synapse's buffer: the SAME `scatter!` that delivers network
+# events through `extconn` into the wrapped synapse's buffer: the same `scatter!` that delivers network
 # spikes (so the CPU/device paths and per-edge delays are shared, not re-implemented).
 @inline function _synprestep!(s::PoissonSourceState, integ)
     n = integ.n
@@ -108,15 +109,15 @@ end
 @inline _decay!(s::PoissonSourceState) = _decay!(s.inner)
 @inline _syn_one(s::PoissonSourceState, i, n, v0, vj, gtot, itot) = _syn_one(s.inner, i, n, v0, vj, gtot, itot)
 
-# * SpikeSourceArray: the DETERMINISTIC sibling of `PoissonSource`. Instead of drawing Poisson spikes each
-# step, it REPLAYS a precomputed pattern `spikes` (n_ext × nsteps, source × step) through the identical
+# * SpikeSourceArray: the deterministic sibling of `PoissonSource`. Instead of drawing Poisson spikes each
+# step, it replays a precomputed pattern `spikes` (n_ext × nsteps, source × step) through the identical
 # scatter → delay-buffer → deliver pipeline, delegating the postsynaptic response to the wrapped synapse. Only
 # `_synprestep!` differs (a table read replaces the RNG draw); everything else is shared with PoissonSource.
 
 """
     SpikeSourceArray(synapse, extconn, spikes)
 
-An external drive that REPLAYS a fixed spike pattern (rather than drawing them): `spikes` is an `n_ext × nsteps`
+An external drive that replays a fixed spike pattern (rather than drawing them): `spikes` is an `n_ext × nsteps`
 boolean matrix (virtual source × step), scattered each step through `extconn` (an `n_ext × N` CSR of per-edge
 weights + delays) into the wrapped `synapse`'s state. Deterministic (no RNG); the postsynaptic kinetics are
 exactly `synapse`'s, so it composes with any synapse family + per-edge delays. Add to a network as
@@ -129,7 +130,7 @@ struct SpikeSourceArray{S <: AbstractSynapseModel, C, SP} <: AbstractSynapseMode
 end
 export SpikeSourceArray
 
-_plastic_wrappable(::SpikeSourceArray) = false   # same generator-hiding hazard as PoissonSource
+is_source_synapse(::SpikeSourceArray) = true
 
 # `_synprestep!` reads column `n + 1` every step, so a pattern shorter than the run is a BoundsError
 # deep in the loop. Say so at init instead, as `stim_validate` does for TimedArray.
@@ -171,7 +172,7 @@ function _make_batched_synstate(arch, syn::SpikeSourceArray, conn, ::Type{T}, N,
 end
 
 # Once per step: copy this step's precomputed firing column (`n` 0-based → column n+1) into the scratch mask
-# and scatter it through `extconn` into the wrapped synapse's buffer (the SAME scatter path as real spikes;
+# and scatter it through `extconn` into the wrapped synapse's buffer (the same scatter path as real spikes;
 # copying into the scratch, rather than passing a device view to `scatter!`, keeps the device path allocation-
 # and scalar-index-free; `sync = false` pipelines it on the device stream, like the Poisson source).
 @inline function _synprestep!(s::SpikeSourceArrayState, integ)

@@ -1,7 +1,7 @@
 # * Adaptation neurons: models that carry a spike-triggered adaptation current `w`
 # alongside the membrane potential `V`. `AdaptLIF` is fully linear; `AdEx` adds the exponential
 # spike-initiation term. Both advance `(V, w)` by the "w-first" symplectic split: `w` from the
-# OLD `V` (exact exponential relaxation), then `V` from the OLD V and the NEW `w` (the exact
+# old `V` (exact exponential relaxation), then `V` from the old V and the new `w` (the exact
 # COBA propagator, with `-w` and AdEx's `Iexp` folded into the current). This split makes the
 # broadcast path (two `@.` passes) and the per-neuron fused/batched kernels bit-identical, and
 # it needs no refractory special-case for `w` (a refractory unit's old V is already clamped to Vr).
@@ -78,7 +78,7 @@ float_type(::AdEx{T}) where {T} = T
 @inline spike_increment(m::AdEx) = m.b
 
 # Shared adaptation-current relaxation (AdaptLIF & AdEx): exact exponential decay of `w` toward its
-# fixpoint a·(V−EL) over τw, at the OLD V (the w-first split). FNSNeuron's gK uses its own `_step_w`.
+# fixpoint a·(V−EL) over τw, at the old V (the w-first split). FNSNeuron's gK uses its own `_step_w`.
 @inline function _step_w(m::Union{AdaptLIF, AdEx}, V, w, dt)
     w∞ = m.a * (V - m.EL)
     return w∞ + (w - w∞) * exp(-dt / m.τw)
@@ -95,7 +95,7 @@ end
 
 Conductance-adaptation LIF: `C dV/dt = -gL(V - VL) - gK(V - VK) + I`, `τK dgK/dt = -gK`; spike when
 `V ≥ Vθ`, reset `V ← Vr` and increment the adaptation conductance `gK ← gK + ΔgK`. Unlike `AdaptLIF`
-(whose `w` is a current), the adaptation here is a CONDUCTANCE with reversal `VK`, folded into the
+(whose `w` is a current), the adaptation here is a conductance with reversal `VK`, folded into the
 exact COBA propagator as an extra leak `gK` plus reversal drive `gK·VK`. `ΔgK = 0` gives a plain
 conductance-LIF (the inhibitory population). State: `V`, `refrac`, `w` (the generic aux column holds
 `gK`). Defaults follow the Treves-style FNS neuron.
@@ -138,7 +138,7 @@ float_type(::FNSNeuron{T}) where {T} = T
 end
 
 # The aux-state seam: route on whether the model carries a `w` column
-# `_has_w` is a compile-time bool from the model's statevars; the `st.w` accesses below appear ONLY
+# `_has_w` is a compile-time bool from the model's statevars; the `st.w` accesses below appear only
 # in the carries-`w` methods, so a V-only model (LIF / @neuron) never instantiates them. The
 # carries-`w` value is `nothing` for V-only, a scalar otherwise.
 @inline _has_w(::Type{M}) where {M} = (:w in statevars(M))

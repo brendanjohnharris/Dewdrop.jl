@@ -1,15 +1,13 @@
 # * Monitor (recording) framework.
 # A network is recorded by a NamedTuple of monitors, materialised from a `record = (...)` spec
 # and held in the integrator. The `:record` phase unrolls them (tuple-recursion, dispatch-free,
-# like the projection tuple). Each monitor stages into an arch-resident WINDOW buffer that
+# like the projection tuple). Each monitor stages into an arch-resident window buffer that
 # flushes to a host store in windows: O(1) host transfers per window, the GPU-resident
-# recording mechanism. Four axes: WHAT (state/synaptic/accumulator var, spikes,
-# or a Probe fn) × WHERE (`:all` or an index subset) × HOW (per-unit, or a scalar Aggregate) ×
-# WHEN (stride). The `:record` slot runs after `:reset`, so traces are the post-reset state.
+# recording mechanism. Four axes: what (state/synaptic/accumulator var, spikes,
+# or a Probe fn) × where (`:all` or an index subset) × how (per-unit, or a scalar Aggregate) ×
+# when (stride). The `:record` slot runs after `:reset`, so traces are the post-reset state.
 
-using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
-
-# Source descriptors: WHAT to read (type-stable; the field/projection is a type parameter)
+# Source descriptors: what to read (type-stable; the field/projection is a type parameter)
 struct StateSrc{V} end                      # state.state.<V> (a model statevar column)
 struct SynSrc{P, V} end                     # syns[P].acc.<V> (accumulator var of projection P)
 struct AccumSrc{V} end                      # integ.<V>       (:gtot / :itot)
@@ -38,9 +36,9 @@ mutable struct WindowBuffer{W <: AbstractMatrix, H <: AbstractMatrix}
     const Wcols::Int
     filled::Int          # columns staged in the current window
     flushed::Int         # columns already copied to the store
-    host::Union{Nothing, H}   # reusable landing buffer for a DEVICE window; allocated on first flush
+    host::Union{Nothing, H}   # reusable landing buffer for a device window; allocated on first flush
 end
-# Adapt ONLY the staging window onto the target architecture; the `store` is the host-resident
+# Adapt only the staging window onto the target architecture; the `store` is the host-resident
 # result and must stay a host `Array` (else the flush writes into a device store via scalar
 # `setindex!`). This is the device-window/host-store split.
 Adapt.adapt_structure(to, wb::WindowBuffer) =
@@ -55,13 +53,13 @@ end
 @inline _wcol(wb::WindowBuffer) = wb.filled + 1     # next free column in the window
 
 # Flush the staged window columns to the host store (O(1) host transfers per window). The device
-# window is moved host-side in BULK: a `copyto!` between a host view and a device VIEW (or
+# window is moved host-side in bulk: a `copyto!` between a host view and a device view (or
 # `Array` of a view) falls back to element-wise scalar indexing (forbidden on CUDA; broken under
-# JLArrays' `allowscalar(false)`), so transfer the WHOLE contiguous window with a single
+# JLArrays' `allowscalar(false)`), so transfer the whole contiguous window with a single
 # `copyto!(::Array, ::GPUArray)` and slice host-side.
 @inline _windowslice(wb::WindowBuffer{<:Array}) = @inbounds view(wb.window, :, 1:wb.filled)
 function _windowslice(wb::WindowBuffer)                     # device → host
-    # one landing buffer per window, reused: allocating a window-sized host array on EVERY flush is
+    # one landing buffer per window, reused: allocating a window-sized host array on every flush is
     # steady GC pressure for a long run
     wb.host === nothing && (wb.host = similar(wb.store, size(wb.window)))
     copyto!(wb.host, wb.window)                             # one bulk DtoH of the full window
@@ -90,28 +88,41 @@ struct PerUnitMonitor{S, I, B <: WindowBuffer}
     idx::I               # `:` (all) or an index vector
     buf::B
     every::Int
-    bin::Int             # >1: each column REDUCES `bin` steps (see `record!`)
+    bin::Int             # >1: each column reduces `bin` steps (see `record!`)
 end
 Adapt.@adapt_structure PerUnitMonitor
 # Aggregate: reduce the selected source values to a scalar per step (R = :sum | :mean).
-struct AggMonitor{S, I, B <: WindowBuffer, R}
+struct AggMonitor{S, I, B <: WindowBuffer, R, A}
     src::S
     idx::I
     buf::B
     every::Int
     n::Int               # number of selected units (for :mean)
     bin::Int
+    acc::A               # 1-element arch-resident scratch: the device reduction's destination
 end
 # custom (the reducer `R` is a phantom type param @adapt_structure cannot reconstruct)
 function Adapt.adapt_structure(to, m::AggMonitor{S, I, B, R}) where {S, I, B, R}
-    src, idx, buf = adapt(to, m.src), adapt(to, m.idx), adapt(to, m.buf)
-    return AggMonitor{typeof(src), typeof(idx), typeof(buf), R}(src, idx, buf, m.every, m.n, m.bin)
+    src, idx, buf, acc = adapt(to, m.src), adapt(to, m.idx), adapt(to, m.buf), adapt(to, m.acc)
+    return AggMonitor{typeof(src), typeof(idx), typeof(buf), R, typeof(acc)}(
+        src, idx, buf, m.every, m.n, m.bin, acc
+    )
 end
+
+# Does any monitor read `integ.itot` / `integ.gtot`? A pure function of the monitor NamedTuple's type,
+# so it folds to a constant and lets the fused step skip materialising the accumulators when nothing
+# records them (see `_accum_sinks`, Fused.jl).
+@inline _reads_accum(::Type{<:PerUnitMonitor{<:AccumSrc}}) = true
+@inline _reads_accum(::Type{<:AggMonitor{<:AccumSrc}}) = true
+@inline _reads_accum(::Type{<:PerUnitMonitor{<:ProbeSrc}}) = true   # `f` is opaque: assume it reads them
+@inline _reads_accum(::Type) = false
+@inline _any_reads_accum(::Type{NT}) where {NT <: NamedTuple} = any(_reads_accum, fieldtypes(NT))
+# the batched monitor types are declared later (Batch.jl) and add their own `_reads_accum` methods
 
 @inline _due(m, integ) = (integ.n % m.every == 0) && _room(m)
 @inline _room(m) = m.buf.flushed + m.buf.filled < size(m.buf.store, 2)
 
-# Closing a bin: events SUM (the column already holds the count), signals AVERAGE (a box filter).
+# Closing a bin: events sum (the column already holds the count), signals average (a box filter).
 # Dispatched on the source, so a count buffer never meets a division.
 @inline _closebin!(w, ::SpikeSrc, bin) = nothing
 @inline _closebin!(w, src, bin) = (w ./= bin; nothing)
@@ -124,7 +135,7 @@ end
     return nothing
 end
 
-# Binned: accumulate EVERY step into the open column and close it on the bin's last step, so no
+# Binned: accumulate every step into the open column and close it on the bin's last step, so no
 # sample is skipped. `integ.n` is 0-based, so a bin spans `n % bin ∈ 0:(bin-1)`.
 @inline function _record_binned!(m::PerUnitMonitor, integ)
     _room(m) || return nothing
@@ -176,35 +187,38 @@ function _aggregate!(buf::WindowBuffer{<:Array}, vals, m::AggMonitor, col, accum
     return nothing
 end
 
-# GPU path: a single-thread in-kernel reduction writing the device window slot directly (no
-# host round-trip: the GPU-resident aggregate). A parallel reduction is a possible refinement.
-@kernel function _agg_kernel!(window, col, @Const(vals), n, mean::Bool, accum::Bool)
-    acc = zero(eltype(window))
-    @inbounds for k in eachindex(vals)
-        acc += vals[k]
-    end
-    v = mean ? acc / n : acc
-    @inbounds window[1, col] = accum ? window[1, col] + v : v
-end
+# Device path: `sum!` is the backend's own tree reduction, so the spatial fold is parallel rather than
+# the O(n) walk a single thread would do (an `Aggregate` over `of = :all` reduces the whole population
+# every step). It lands in the monitor's one-element scratch, and a second, one-element broadcast scales
+# by `:mean` and folds into the open column. The scratch is what makes this safe: `sum!(slot; init =
+# false)` would accumulate the destination once per block, so the reduction can never read the running
+# slot directly. Both launches are queued on the stream, so there is still no per-step host round-trip;
+# the slot is read only at the windowed flush (a DtoH copy that synchronises).
 function _aggregate!(buf::WindowBuffer, vals, m::AggMonitor{S, I, B, R}, col, accum::Bool = false) where {S, I, B, R}
-    backend = get_backend(buf.window)
-    _agg_kernel!(backend)(buf.window, col, vals, m.n, R === :mean, accum; ndrange = 1)
-    # No per-step synchronisation: the window slot is read only at the windowed flush (a DtoH
-    # copy that synchronises the stream), so steps pipeline on the device.
+    T = eltype(buf.window)
+    sum!(m.acc, vals)                                       # init = true: the only shape `sum!` gets right here
+    slot = @inbounds view(buf.window, 1:1, col)
+    # Divide rather than scale by the reciprocal: `x * inv(n)` differs from `x / n` in the last ulp for
+    # about a third of all `x`, and the CPU `_finalize` above divides. It is one element, so the
+    # division is free, and the two paths then differ only by the reduction order.
+    if R === :mean
+        d = T(m.n)
+        accum ? (slot .+= m.acc ./ d) : (slot .= m.acc ./ d)
+    else
+        accum ? (slot .+= m.acc) : (slot .= m.acc)
+    end
     return nothing
 end
 
 # Compile-time unroll over the monitors (dispatch-free + allocation-free, like the projection
-# tuple). Recurse on the VALUES TUPLE, not the NamedTuple: `Base.tail` on a NamedTuple of
+# tuple). Recurse on the values tuple, not the NamedTuple: `Base.tail` on a NamedTuple of
 # non-isbits monitors materialises intermediate NamedTuples (heap); on the backing tuple the
 # compiler elides them when inlined.
 @inline _record_all!(ms::NamedTuple, integ) = _rec_tuple!(values(ms), integ)
-@inline _rec_tuple!(::Tuple{}, integ) = nothing
-@inline _rec_tuple!(ms::Tuple, integ) = (record!(first(ms), integ); _rec_tuple!(Base.tail(ms), integ))
+@inline _rec_tuple!(ms::Tuple, integ) = _foreach_tuple!(record!, ms, integ)
 
 @inline _finalize_all!(ms::NamedTuple) = _fin_tuple!(values(ms))
-@inline _fin_tuple!(::Tuple{}) = nothing
-@inline _fin_tuple!(ms::Tuple) = (_finalize!(first(ms)); _fin_tuple!(Base.tail(ms)))
+@inline _fin_tuple!(ms::Tuple) = _foreach_tuple!(_finalize!, ms)
 # Default finalize: flush the monitor's windowed store. Streaming reducers (no window) override to a no-op.
 @inline _finalize!(m) = (flush!(m.buf); nothing)
 
@@ -224,8 +238,22 @@ function _check_reduction(every::Int, bin::Int, isevent::Bool, what::AbstractStr
             "Use `bin = $every` instead: same memory, every spike counted."))
     return nothing
 end
-_check_inner(inner, what) = (inner.every == 1 && inner.bin == 1) || throw(ArgumentError(
-    "$what: set `every`/`bin` on the $what, not on its inner spec (the inner one is ignored)"))
+# The inner spec must be a per-unit source to reduce over. `Probe` carries `every`/`bin` too, so a
+# stride check alone admitted it, and it then died on `inner.of` inside `_materialize`.
+function _check_inner(inner, what)
+    inner isa Union{Trace, Spikes} || throw(
+        ArgumentError(
+            "$what takes a `Trace` or `Spikes` as its inner spec; got $(nameof(typeof(inner))). " *
+                "A `Probe` reduces for itself: return the scalar you want from its `f`."
+        )
+    )
+    (inner.every == 1 && inner.bin == 1) || throw(
+        ArgumentError(
+            "$what: set `every`/`bin` on the $what, not on its inner spec (the inner one is ignored)"
+        )
+    )
+    return nothing
+end
 
 """
     Trace(var; of=:all, projection=nothing, every=1, bin=1)
@@ -234,7 +262,7 @@ Record the per-unit values of a state variable (`:V`, `:refrac`, …), a synapti
 (`:Isyn`/`:g` with `projection=i`), or an accumulator (`:gtot`/`:itot`), for the selected units.
 
 `every = k` keeps one step in `k` (a stride: no filtering, so everything above the new Nyquist
-folds into the band). `bin = k` instead AVERAGES each window of `k` steps, which is a box filter
+folds into the band). `bin = k` instead averages each window of `k` steps, which is a box filter
 and the better choice whenever the record will be spectrally analysed. The two are exclusive.
 """
 struct Trace
@@ -253,9 +281,9 @@ end
     Spikes(; of=:all, bin=1)
 
 Record spikes for the selected units: a `Neuron × Time` boolean raster at `bin = 1`, or per-window
-spike COUNTS (`UInt16`) when `bin > 1`, each column summing `bin` steps.
+spike counts (`UInt16`) when `bin > 1`, each column summing `bin` steps.
 
-`every > 1` is refused here; see `bin`. Note that `bin > 1` discards spike TIMES within a window,
+`every > 1` is refused here; see `bin`. A `bin > 1` discards spike times within a window,
 so [`raster`](@ref) and the statistics built on it require an unbinned recording.
 """
 struct Spikes
@@ -276,8 +304,8 @@ Reduce an inner [`Trace`](@ref)/[`Spikes`](@ref) over its selected units to one 
 spike count per step; `Aggregate(Trace(:V), :mean)` the population mean V. Arbitrary reductions go
 through [`Probe`](@ref).
 
-`bin = k` additionally reduces over time: spikes are SUMMED over the window (so the column is the
-population count in the bin, losing nothing), other sources are AVERAGED. `every = k` strides
+`bin = k` additionally reduces over time: spikes are summed over the window (so the column is the
+population count in the bin, losing nothing), other sources are averaged. `every = k` strides
 instead, and is refused over a spike source.
 """
 struct Aggregate{S}
@@ -293,7 +321,7 @@ function Aggregate(inner, reducer; every::Integer = 1, bin::Integer = 1)
 end
 # Validate here: the reducer becomes a type parameter, and the two paths disagree on an unsupported
 # one. The CPU `_finalize` has no method (a MethodError mid-solve); the GPU kernel tests only
-# `R === :mean`, so anything else silently computes a SUM.
+# `R === :mean`, so anything else silently computes a sum.
 _reducer_sym(s::Symbol) = s in (:sum, :mean) ? s : throw(
     ArgumentError(
         "Aggregate reducer must be :sum or :mean (or the function `sum`); got :$s. " *
@@ -342,7 +370,7 @@ end
 _nsel(N, ::Colon) = N
 _nsel(N, idx) = length(idx)
 # Columns of the store. A stride keeps `cld` (the first step is always recorded); a bin keeps only
-# COMPLETE windows, so the trailing remainder is discarded, matching `coarsegrain`.
+# complete windows, so the trailing remainder is discarded, matching `coarsegrain`.
 function _ncols(nsteps, every, bin = 1)
     bin > nsteps && throw(ArgumentError(
         "bin = $bin exceeds the run length ($nsteps steps): no complete window would close, so the record would be empty"))
@@ -358,7 +386,7 @@ function _materialize(spec::Trace, arch, ::Type{T}, N, nsteps, subpops) where {T
     buf = WindowBuffer(arch, T, _nsel(N, idx), _ncols(nsteps, spec.every, spec.bin))
     return PerUnitMonitor(_srcof(spec), idx, buf, spec.every, spec.bin)
 end
-# A binned spike column holds a COUNT, which `Bool` cannot: `UInt16` is one byte more per element
+# A binned spike column holds a count, which `Bool` cannot: `UInt16` is one byte more per element
 # than the raster it replaces and cannot overflow at any usable bin width (refractoriness bounds a
 # neuron's count at bin/t_ref).
 function _materialize(spec::Spikes, arch, ::Type{T}, N, nsteps, subpops) where {T}
@@ -371,8 +399,9 @@ function _materialize(spec::Aggregate, arch, ::Type{T}, N, nsteps, subpops) wher
     idx = _resolve_of(arch, spec.inner.of, subpops)
     buf = WindowBuffer(arch, T, 1, _ncols(nsteps, spec.every, spec.bin))
     src = spec.inner isa Spikes ? SpikeSrc() : _srcof(spec.inner)
-    return AggMonitor{typeof(src), typeof(idx), typeof(buf), spec.reducer}(
-        src, idx, buf, spec.every, _nsel(N, idx), spec.bin)
+    acc = fill!(allocate(arch, T, 1), zero(T))
+    return AggMonitor{typeof(src), typeof(idx), typeof(buf), spec.reducer, typeof(acc)}(
+        src, idx, buf, spec.every, _nsel(N, idx), spec.bin, acc)
 end
 function _materialize(spec::Probe, arch, ::Type{T}, N, nsteps, subpops) where {T}
     buf = WindowBuffer(arch, T, spec.n, _ncols(nsteps, spec.every, spec.bin))
@@ -389,7 +418,7 @@ end
 struct RecordResult{D}
     data::D              # host (n_out × ncols)
     idx::Any             # selected neuron indices (`Colon`/vector), or `nothing` for aggregates/probes
-    every::Int           # STEPS PER COLUMN (the bin width when binned), so `every * dt` is the sample period
+    every::Int           # steps per column (the bin width when binned), so `every * dt` is the sample period
     kind::Symbol         # :trace | :spikes | :aggregate | :probe
     bin::Int             # 1 = one step per column; >1 = each column reduces `bin` steps
     var::Symbol          # the recorded variable (:V, :g, :gtot, …), so a result can be looked up by it
@@ -403,7 +432,7 @@ RecordResult(data, idx, every, kind, bin) = RecordResult(data, idx, every, kind,
 @inline _srcvar(::AccumSrc{V}) where {V} = V
 @inline _srcvar(::SpikeSrc) = :spikes
 @inline _srcvar(::ProbeSrc) = :probe
-# Time of recorded column `j`. Recording runs at the END of the step, so a strided column holds the
+# Time of recorded column `j`. Recording runs at the end of the step, so a strided column holds the
 # state after step `(j-1)*every`, at `t0 + ((j-1)*every + 1)*dt`; a binned column reduces steps
 # `(j-1)*bin` through `j*bin-1` and is stamped at its right edge, `t0 + j*bin*dt`. Both reduce to
 # `t0 + j*dt` unstrided. Every time axis (raster, the TimeseriesBase and Makie extensions) uses this.
@@ -419,7 +448,7 @@ _result(m::PerUnitMonitor{<:ProbeSrc}) = RecordResult(m.buf.store, nothing, max(
 _result(m::PerUnitMonitor) = RecordResult(m.buf.store, m.idx, max(m.every, m.bin), :trace, m.bin, _srcvar(m.src))
 _result(m::AggMonitor) = RecordResult(m.buf.store, nothing, max(m.every, m.bin), :aggregate, m.bin, _srcvar(m.src))
 
-# Spike TIMES do not survive binning, so every statistic that reconstructs them refuses a binned
+# Spike times do not survive binning, so every statistic that reconstructs them refuses a binned
 # record rather than quantising ISIs onto the bin grid.
 function _require_unbinned(res::RecordResult, what::AbstractString)
     res.bin > 1 && error(

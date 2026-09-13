@@ -109,6 +109,10 @@ Both take the same `weight`/`delay` (scalar or per-source function), `sources`/`
 `allow_self` and `index_type` keywords as [`fixed_prob`](@ref); pairs with zero kernel probability
 are never selected.
 
+Since sampling is without replacement, `count` cannot exceed the number of pairs the kernel and the
+source/target sets admit, and a request that does is an error rather than a smaller connectome. Reading
+it as a per-target in-degree, `count = K * length(targets)` needs `K ≤ length(sources)`.
+
 ## Delays: milliseconds versus steps
 
 A delay is a physical time by default (the same units as `dt` and every other quantity), so its

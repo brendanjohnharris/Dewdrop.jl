@@ -8,7 +8,7 @@
 # Two forms per type: the rich `show(io, ::MIME"text/plain", x)` (the REPL result) and the compact
 # `show(io, x)` (one line: inline, array elements, and how a parent renders a child).
 
-# styling: subtle colour, ALWAYS gated on `get(io, :color, false)` (plain when piped/logged)
+# styling: subtle colour, always gated on `get(io, :color, false)` (plain when piped/logged)
 @inline _color(io::IO) = get(io, :color, false)::Bool
 function _styled(io::IO, s, kind::Symbol)
     if _color(io)
@@ -150,7 +150,7 @@ function _print_tree(io::IO, children::AbstractVector; prefix::String = "")
 end
 
 # leaf-parameter expansion for the network / builder / spec tree
-# The tree expands each leaf's parameters by DEFAULT (`:detail => :full`); `IOContext(io, :detail => :compact)`
+# The tree expands each leaf's parameters by default (`:detail => :full`); `IOContext(io, :detail => :compact)`
 # gives the one-line-per-node type-level summary. (`:compact` (the Julia inline hint) still yields the
 # bare one-liner via the 2-arg `show`.)
 @inline _expand(io::IO) = get(io, :detail, :full) !== :compact
@@ -471,9 +471,13 @@ end
 
 # === solutions ===
 # mean firing rate (Hz) over a set of per-unit spike counts and a duration in ms (canonical time).
-_rate_hz(counts, n, dur_ms) = (sum(counts) / n) / dur_ms * 1000
+# An empty selection has no rate: report 0 rather than letting 0/0 print `NaN Hz` in the banner.
+_rate_hz(counts, n, dur_ms) = n == 0 ? 0.0 : (sum(counts) / n) / dur_ms * 1000
 
+# Host-only, like the connectome and index summaries above: device-resident counts would make `show`
+# launch a reduction per subpopulation and block the REPL on a run that is otherwise pipelined.
 function _sol_rate_line(sol::DewdropSolution, dur)
+    _onhost(sol.spike_count) || return "? (device-resident; `collect` the solution to summarise)"
     parts = String[]
     for (name, r) in pairs(sol.subpops)
         name === :all && continue
@@ -507,7 +511,14 @@ function Base.show(io::IO, ::MIME"text/plain", ss::SubSolution)
     print(io, "SubSolution · ", ss.name, " [", first(ss.range), ":", last(ss.range), "] · ", length(ss.range), " neurons")
     print(io, "\n  ")
     _styled(io, "firing rate: ", :section)
-    print(io, round(_rate_hz(ss.spike_count, length(ss.range), duration(ss.parent)); digits = 1), " Hz")
+    # host-only, as in `_sol_rate_line`: a device-resident count would launch a reduction here
+    print(
+        io, if _onhost(ss.spike_count)
+            string(round(_rate_hz(ss.spike_count, length(ss.range), duration(ss.parent)); digits = 1), " Hz")
+        else
+            "? (device-resident; `collect` the solution to summarise)"
+        end
+    )
     return nothing
 end
 Base.show(io::IO, ss::SubSolution) = print(io, "SubSolution(", ss.name, ", ", length(ss.range), " neurons)")
@@ -519,7 +530,16 @@ function Base.show(io::IO, ::MIME"text/plain", bsol::BatchedSolution)
     print(io, "BatchedSolution · N=", N, " × B=", bsol.batch, " · ", bsol.nsteps, " steps × dt=", _fmt(bsol.dt), " ms")
     print(io, "\n  ")
     _styled(io, "firing rate: ", :section)
-    print(io, round(_rate_hz(bsol.spike_count, length(bsol.spike_count), dur); digits = 1), " Hz  (mean over ", bsol.batch, " instances)")
+    print(
+        io, if _onhost(bsol.spike_count)
+            string(
+                round(_rate_hz(bsol.spike_count, length(bsol.spike_count), dur); digits = 1),
+                " Hz  (mean over ", bsol.batch, " instances)"
+            )
+        else
+            "? (device-resident; `collect` the solution to summarise)"
+        end
+    )
     isempty(bsol.record) || (
         print(io, "\n  "); _styled(io, "recorded: ", :section);
         print(io, join([string(k, " (", r.kind, ")") for (k, r) in pairs(bsol.record)], ", "))
@@ -572,6 +592,10 @@ function Base.show(io::IO, ::MIME"text/plain", bs::BatchSolution)
     print(io, " · ", _fmt(bs.duration), " ms")
     print(io, "\n  ")
     _styled(io, "firing rate: ", :section)
+    if B > 0 && !_onhost(bs.spike_counts[1])
+        print(io, "? (device-resident; `collect` the solution to summarise)")   # else: one reduction per member
+        return nothing
+    end
     k = min(B, 6)
     print(io, join([string("m", b, " ", round(_member_rate(bs, b); digits = 1), " Hz") for b in 1:k], " · "))
     B > k && print(io, " · … (", B, " total)")

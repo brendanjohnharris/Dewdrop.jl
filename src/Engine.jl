@@ -1,9 +1,9 @@
 # * Fixed-step engine behind the CommonSolve verb layer.
 #
-# SciML-faithful WITHOUT its container convention: we implement CommonSolve's
-# init/step!/solve!/solve over our OWN concrete types and SoA state, never a flat
+# SciML-faithful without its container convention: we implement CommonSolve's
+# init/step!/solve!/solve over our own concrete types and SoA state, never a flat
 # `u`-vector + `f(du,u,p,t)`. The within-step schedule is compiled to compile-time
-# `Val(::Symbol)` dispatch (no runtime Symbol comparison in the hot loop). The dense
+# `Val(::Symbol)` dispatch (no runtime Symbol comparison in the step loop). The dense
 # per-step phases are written as fused, allocation-free broadcasts over the SoA so the
 # same code is GPU-ready (the sparse synaptic scatter is a separate kernel).
 
@@ -26,7 +26,7 @@ Projection(synapse::AbstractSynapseModel, conn::AbstractConnectivity; plasticity
     Projection(synapse, conn, plasticity)
 export Projection
 
-# Runtime synaptic state, assembled at `init`. ONE generic state for every synapse; the per-synapse
+# Runtime synaptic state, assembled at `init`. one generic state for every synapse; the per-synapse
 # physics lives entirely in the descriptor methods (src/Synapses.jl: `_syn_accumulators`, `_syn_coeffs`,
 # `_syn_membrane`, `_syn_decay`, `_syn_couple`), from which the serial / fused / batched paths are generated.
 abstract type AbstractSynapseState end
@@ -76,7 +76,7 @@ struct PoissonDrive{T}
 end
 function PoissonDrive(; rate, weight, seed = 0)
     r, w = promote(to_rate(rate), to_voltage(weight))   # weight is a voltage kick
-    return PoissonDrive(r, w, UInt64(seed))
+    return PoissonDrive(r, w, domain_seed(seed, DOMAIN_DRIVE))
 end
 export PoissonDrive
 
@@ -183,7 +183,7 @@ Adapt.adapt_structure(to, integ::DewdropIntegrator) = DewdropIntegrator(
     integ.backend, integ.subpops, integ.positions, integ.progress,
 )
 
-# `input` / `streams` / `syn_overrides` / `model_overrides` are per-MEMBER data and only the batched
+# `input` / `streams` / `syn_overrides` / `model_overrides` are per-member data and only the batched
 # path reads them; `backend` / `step` choose a dense-step implementation and only the scalar path reads
 # them (the batched step is always the fused megakernel). Accepting either set on the wrong path and
 # ignoring it is a silent misconfiguration, so name the offender instead.
@@ -225,10 +225,10 @@ function CommonSolve.init(
     )
     # `scatter = :auto` (default): on the GPU pick edge-parallel vs compacted from the connectome size
     # (the L2-spill crossover, see `_resolve_scatter`); CPU / plastic projections → always `:edge`.
-    # Resolved BEFORE the batched dispatch so both the scalar and batched paths receive a concrete mode.
+    # Resolved before the batched dispatch so both the scalar and batched paths receive a concrete mode.
     scatter = _resolve_scatter(scatter, prob.arch, prob.projections)
     # `batch = B` routes to the ensemble (tensor) batched path (src/Batch.jl); `batch = nothing`
-    # (the default) takes the scalar path below. Each path reads a DIFFERENT subset of the keywords, so
+    # (the default) takes the scalar path below. Each path reads a different subset of the keywords, so
     # say which ones do not apply rather than accepting them and quietly doing nothing with them.
     _check_batch_kwargs(batch, input, streams, syn_overrides, model_overrides, backend, step)
     batch === nothing || return _batched_init(
@@ -255,17 +255,17 @@ function CommonSolve.init(
     state = Population(arch, prob.model, N)                 # type-stable (names from model type)
     _init_voltage_model!(state.state.V, prob.model, v0, T, v0_seed)   # refrac stays 0; per-group EL via _resting
     # `spiked`/`spike_count` eltype is Bool/Int for every backend (bit-identical), except the
-    # `Differentiable` backend, which accumulates a REAL-valued surrogate spike (eltype = state float).
+    # `Differentiable` backend, which accumulates a real-valued surrogate spike (eltype = state float).
     ST = _spiked_eltype(bk, T)
     CT = _count_eltype(bk, T)
     spiked = fill!(allocate(arch, ST, N), zero(ST))
     spike_count = fill!(allocate(arch, CT, N), zero(CT))
     # plastic projections (STDP) build a PlasticState (mutable weights + traces); static ones the
-    # base synapse state. The compacted scatter walks active SOURCES only, so it cannot drive STDP's
+    # base synapse state. The compacted scatter walks active sources only, so it cannot drive STDP's
     # postsynaptic-potentiation branch: plastic projections require the edge scatter.
     scatter === :compacted && any(p -> p.plasticity !== nothing, prob.projections) &&
         throw(ArgumentError("STDP (plastic projections) require scatter = :edge; the compacted scatter cannot drive the postsynaptic potentiation branch"))
-    # resolve each projection's delays to integer steps at THIS dt (ms → steps; explicit steps pass through),
+    # resolve each projection's delays to integer steps at this dt (ms → steps; explicit steps pass through),
     # so a physical delay means a fixed latency regardless of dt and the scatter reads an integer connectome.
     syns = map(p -> _make_synstate(arch, p.synapse, _resolve_delays(p.conn, dt), p.plasticity, T, N, dt), prob.projections)
     gtot = fill!(allocate(arch, T, N), zero(T))
@@ -297,17 +297,26 @@ _make_compaction(scatter::Symbol, arch, N) =
 const _DEFAULT_L2_BYTES = 40 * 1024 * 1024
 _l2_cache_bytes(::AbstractArchitecture) = _DEFAULT_L2_BYTES
 
-# Resolve `scatter = :auto`. The fused GPU edge-parallel scatter reads one source index PER EDGE every
-# step (Θ(nedges) memory traffic, independent of how few neurons fire), so once the connectome's index
-# array spills the L2 cache the step becomes bandwidth-bound and scales with edge count; a large GPU
-# network degrades superlinearly. The compacted scatter (Compaction.jl) touches only ACTIVE sources
-# (work ∝ spikes, for the usual sparse firing), winning past that crossover despite its per-step host
-# sync. So: CPU → always `:edge` (the CPU scatter already walks only spiking rows; compaction has no
-# upside and adds a compactify pass); plastic projections → `:edge` (the compacted scatter cannot drive
-# STDP potentiation); GPU → `:compacted` once the index footprint exceeds ~half the L2 (calibrated to the
-# measured ~1.3e7-edge / 96 MB-L2 crossover), else `:edge`. The firing rate is unknown at init, so this
-# assumes the sparse-firing regime typical of SNNs; force a mode (`scatter = :edge` / `:compacted`)
-# for a dense large GPU network.
+"""
+    _resolve_scatter(scatter, arch, projections) -> Symbol
+
+Pick the scatter strategy for `scatter = :auto`.
+
+The edge-parallel scatter reads one source index per edge every step (Θ(nedges) of memory traffic,
+independent of how few neurons fire), so once the connectome's index array spills the L2 cache the
+step turns bandwidth-bound and scales with edge count: a large GPU network then degrades
+superlinearly. The compacted scatter (Compaction.jl) touches only active sources (work ∝ spikes, for
+the usual sparse firing) and wins past that crossover despite its per-step host sync.
+
+So: a CPU run always takes `:edge`, since the CPU scatter already walks only spiking rows and
+compaction would add a compactify pass for nothing; a plastic projection always takes `:edge`, since
+the compacted scatter cannot drive the postsynaptic potentiation branch; a GPU run takes
+`:compacted` once the index footprint exceeds about half the L2 (calibrated to a measured crossover
+near 1.3e7 edges at 96 MB of L2) and `:edge` below it.
+
+The firing rate is unknown at init, so the GPU threshold assumes the sparse firing typical of
+spiking networks. Pass `scatter = :edge` or `:compacted` to override it for a dense large network.
+"""
 function _resolve_scatter(scatter::Symbol, arch::AbstractArchitecture, projections)
     scatter === :auto || return scatter
     (arch isa GPU && !isempty(projections) && all(p -> p.plasticity === nothing, projections)) || return :edge
@@ -342,7 +351,8 @@ _init_voltage!(V, EL, v0::AbstractVector, ::Type{T}, seed) where {T} = (copyto!(
 function _init_voltage!(V, EL, v0::Tuple{<:Real, <:Real}, ::Type{T}, seed) where {T}
     lo, hi = T(v0[1]), T(v0[2])
     idx = eachindex(V)
-    @. V = lo + (hi - lo) * draw_uniform(T, seed, 0, idx)
+    vseed = domain_seed(seed, DOMAIN_INITIALV)   # a `v0_seed` reused from a builder stays independent
+    @. V = lo + (hi - lo) * draw_uniform(T, vseed, 0, idx)
     return V
 end
 
@@ -352,7 +362,7 @@ end
 function _make_synstate(arch, m::AbstractSynapseModel, conn, ::Type{T}, N, dt) where {T}
     names = _syn_accumulators(typeof(m))
     acc = NamedTuple{names}(ntuple(_ -> fill!(allocate(arch, T, N), zero(T)), length(names)))
-    # empty projection → L=1 no-op. The ring's fixed-point scale is sized from THIS projection's
+    # empty projection → L=1 no-op. The ring's fixed-point scale is sized from this projection's
     # weights, so each ring gets the finest resolution its own worst case allows.
     buf = DelayBuffer(
         arch, T, N, maximum(conn.delay; init = 0);
@@ -367,10 +377,10 @@ end
 # population (`syns === ()`) compiles the synapse work away entirely.
 
 # Per-projection serial (broadcast) phases, generated from the descriptor and dispatched on the coupling
-# mode + accumulator arity. Broadcasts stay `@.` (GPU-safe); the membrane math lives ONLY in `_syn_membrane`
+# mode + accumulator arity. Broadcasts stay `@.` (GPU-safe); the membrane math lives only in `_syn_membrane`
 # (broadcast through `_syn_Δgtot` / `_syn_Δitot`), so serial ≡ fused by construction.
 
-# Delivery is split across the step so the accumulate reads the START-of-step V: an accumulator
+# Delivery is split across the step so the accumulate reads the start-of-step V: an accumulator
 # synapse takes its ring value in `:deliver`, a voltage-jump synapse only in `:integrate`, after
 # `_accum_base!` has read V. Matches BrainPy and Brian2, and keeps Serial identical to Fused.
 @inline _deliver!(s::SynState, integ) = _syn_deliver!(_syn_couple(typeof(s.model)), s, integ)
@@ -413,24 +423,19 @@ end
 @inline _decay_each!(a::Tuple{Any, Any}, d) = (@. a[1] *= d[1]; @. a[2] *= d[2]; nothing)
 
 # Compile-time tuple unrolls (dispatch on each element's concrete type → no runtime dispatch).
-@inline _deliver_all!(::Tuple{}, integ) = nothing
-@inline _deliver_all!(s::Tuple, integ) = (_deliver!(first(s), integ); _deliver_all!(Base.tail(s), integ))
-@inline _deliver_jump_all!(::Tuple{}, integ) = nothing
-@inline _deliver_jump_all!(s::Tuple, integ) = (_deliver_jump!(first(s), integ); _deliver_jump_all!(Base.tail(s), integ))
-@inline _accum_all!(::Tuple{}, gtot, itot, V) = nothing
-@inline _accum_all!(s::Tuple, gtot, itot, V) = (_accumulate!(first(s), gtot, itot, V); _accum_all!(Base.tail(s), gtot, itot, V))
-@inline _decay_all!(::Tuple{}) = nothing
-@inline _decay_all!(s::Tuple) = (_decay!(first(s)); _decay_all!(Base.tail(s)))
+@inline _deliver_all!(s::Tuple, integ) = _foreach_tuple!(_deliver!, s, integ)
+@inline _deliver_jump_all!(s::Tuple, integ) = _foreach_tuple!(_deliver_jump!, s, integ)
+@inline _accum_all!(s::Tuple, gtot, itot, V) = _foreach_tuple!(_accumulate!, s, gtot, itot, V)
+@inline _decay_all!(s::Tuple) = _foreach_tuple!(_decay!, s)
 
-# Once-per-step GLOBAL synapse hook, run at the very start of the step in EVERY backend (before any
+# Once-per-step global synapse hook, run at the very start of the step in every backend (before any
 # per-neuron synaptic work). The default is a no-op (compiles away for ordinary synapses, so the step
-# stays bit-identical and dispatch-free); a streaming drive overrides it to GENERATE + SCATTER its own
+# stays bit-identical and dispatch-free); a streaming drive overrides it to generate + scatter its own
 # events each step (the external Poisson population, with no precomputed (N×nsteps) matrix). It is kept
 # distinct from `_deliver!` because the Fused/megakernel path fuses delivery into the per-neuron
 # `_syn_one` and never calls `_deliver!`, yet a global once-per-step generator still needs a home there.
 @inline _synprestep!(::AbstractSynapseState, integ) = nothing
-@inline _synprestep_all!(::Tuple{}, integ) = nothing
-@inline _synprestep_all!(s::Tuple, integ) = (_synprestep!(first(s), integ); _synprestep_all!(Base.tail(s), integ))
+@inline _synprestep_all!(s::Tuple, integ) = _foreach_tuple!(_synprestep!, s, integ)
 
 @inline function run_phase!(::Val{:deliver}, integ::DewdropIntegrator)
     _synprestep_all!(integ.syns, integ)                    # streaming drives generate + scatter their own events
@@ -438,12 +443,12 @@ end
     return nothing
 end
 
-# Propagate through the compaction seam so `scatter = :compacted` is honoured on EVERY backend
+# Propagate through the compaction seam so `scatter = :compacted` is honoured on every backend
 # (the CPU broadcast path included), matching the fused GPU path and the batched path, not a
 # silent no-op. `nothing` → edge-parallel scatter; a CompactionScratch → the compacted scatter.
 @inline run_phase!(::Val{:propagate}, integ::DewdropIntegrator) = _propagate_step!(integ.compaction, integ)
 
-# Per-neuron subthreshold membrane update, DISPATCHED ON THE MODEL: advance V over `dt` given
+# Per-neuron subthreshold membrane update, dispatched on the model: advance V over `dt` given
 # the accumulated conductance `gtot` and current `itot`. The engine calls this rather than
 # inlining any particular model's fields, so a model defined by hand or by `@neuron` plugs in
 # by providing its own method. LIF uses the COBA-capable exact propagator above.
@@ -457,7 +462,7 @@ end
     _stim_itot!(integ.itot, integ.stimuli, V, m, n, t, dt)   # itot base: first :current assigns (reproduces `.= input`)
     fill!(integ.gtot, zero(eltype(integ.gtot)))
     _accum_all!(integ.syns, integ.gtot, integ.itot, V)
-    _stim_gtot!(integ.gtot, integ.itot, integ.stimuli, V, m, n, t, dt)   # prescribed :conductance g(t) (no-op today)
+    _stim_gtot!(integ.gtot, integ.itot, integ.stimuli, V, m, n, t, dt)   # prescribed :conductance g(t)
     return nothing
 end
 
@@ -572,7 +577,7 @@ end
 function DewdropSolution(integ::DewdropIntegrator)
     return DewdropSolution(
         integ.state, integ.spike_count, integ.n, integ.dt,
-        # tspan from the fixed window (tend, nsteps), NOT the accumulated `integ.t`: under a Float32 `t`
+        # tspan from the fixed window (tend, nsteps), not the accumulated `integ.t`: under a Float32 `t`
         # the running sum drifts past `tend`, so `integ.t` would report a spurious nonzero start.
         (integ.tend - integ.nsteps * integ.dt, integ.tend), map(_result, integ.monitors), integ.subpops, integ.positions,
     )

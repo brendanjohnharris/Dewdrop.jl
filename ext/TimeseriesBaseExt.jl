@@ -17,8 +17,8 @@ abstract type NeuronDim{T} <: ToolsDim{T} end
 DimensionalData.@dim Neuron NeuronDim "Neuron"
 abstract type SynapseDim{T} <: ToolsDim{T} end
 DimensionalData.@dim Synapse SynapseDim "Synapse"
-# The `Population` LABELLED-OUTPUT dimension (matching the WRCircuit bpformat convention). Its name
-# clashes with Dewdrop's core SoA `Population` struct, so it is NOT injected into Dewdrop's namespace
+# The `Population` labelled-output dimension (matching the WRCircuit bpformat convention). Its name
+# clashes with Dewdrop's core SoA `Population` struct, so it is not injected into Dewdrop's namespace
 # reference it on a result by its name symbol instead, e.g. `dims(X, :Population)`.
 abstract type PopulationDim{T} <: ToolsDim{T} end
 DimensionalData.@dim Population PopulationDim "Population"
@@ -28,10 +28,10 @@ DimensionalData.@dim Population PopulationDim "Population"
 # module during its precompilation. (`Var`/`Obs`/`𝑡` come from TimeseriesBase itself; `Population` is
 # referenced by symbol, see above.)
 #
-# The `jl_generating_output` guard is load-bearing: when a DOWNSTREAM package that depends on both
+# The `jl_generating_output` guard is load-bearing: when a downstream package that depends on both
 # Dewdrop and TimeseriesBase is precompiled, this ext's `__init__` runs while that package's output is
 # being generated, and evaluating into the (sealed) `Dewdrop` module then throws "Evaluation into the
-# closed module Dewdrop breaks incremental compilation". Skipping the injection during ANY precompile
+# closed module Dewdrop breaks incremental compilation". Skipping the injection during any precompile
 # output generation avoids that; the names are still injected at interactive/runtime load (when they
 # are actually used), and a downstream package that wants the `Neuron`/`Synapse` dims defines its own.
 function __init__()
@@ -86,7 +86,7 @@ function Timeseries(sol::Dewdrop.DewdropSolution, name::Symbol = :V; of = :all, 
     rows, neurons = _sub_rows(sol, res, of)
     data = rows === Colon() ? res.data : (lazy ? view(res.data, rows, :) : res.data[rows, :])
     # per-unit: stored (unit, time); transpose to time-first so it is a proper Timeseries. `lazy = true`
-    # keeps the transpose a `PermutedDimsArray` VIEW (no copy of the whole trace): e.g. for `bpformat`
+    # keeps the transpose a `PermutedDimsArray` view (no copy of the whole trace): e.g. for `bpformat`
     # over a large population × long run, where an eager `permutedims` would double the (already large)
     # recorded data. The default stays an eager copy (a contiguous, standalone array).
     mat = lazy ? PermutedDimsArray(data, (2, 1)) : permutedims(data)

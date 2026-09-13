@@ -8,7 +8,7 @@
 # These functions are the seams the optional `ext/UnitfulExt.jl` overloads: loading `Unitful`
 # activates methods that convert + strip a `Quantity` to the canonical unit for its dimension,
 # so the API accepts physical units (`τ = 20u"ms"`, `g = 6u"nS"`) while the SoA state stays
-# plain isbits floats. Units thus live ONLY at the construction boundary, never in a kernel.
+# plain isbits floats. Units thus live only at the construction boundary, never in a kernel.
 @inline to_time(x) = x
 @inline to_voltage(x) = x
 @inline to_current(x) = x

@@ -80,3 +80,44 @@ end
     w = Dewdrop.StreamingWelch(Dewdrop.CPU(), Float64, 1, 1, 10.0, 2.5)
     @test w.A > 0
 end
+
+# The streaming reducers fold an (n_out x B) sample per step, so they exist only on the batched path.
+# A scalar `solve` should say that rather than report a MethodError on an internal function.
+@testset "streaming reducers report the batched-only requirement" begin
+    m = LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 100.0, tref = 2.0)
+    prob = DewdropNetwork(m, 4; input = 0.5, tspan = (0.0, 50.0))
+    for spec in (Welch(:V; f_min = 20.0), MADev(:V; lags = [1, 2]), SpikeRate(), Fano(; taus = [1.0]))
+        @test_throws ArgumentError solve(prob, FixedStep(0.1); record = (r = spec,))
+    end
+end
+
+@testset "StreamingWelch: segment transform is in place and correct" begin
+    fs, f_min, f0, n = 100.0, 5.0, 20.0, 512
+    w = Dewdrop.StreamingWelch(Dewdrop.CPU(), Float64, 1, 1, fs, f_min)
+    for s in 1:n
+        Dewdrop.update!(w, reshape([100.0 + sin(2π * f0 * (s - 1) / fs)], 1, 1), s)   # big DC + a tone
+    end
+    P = Dewdrop.result(w, n)
+    @test !any(isnan, P)
+    @test (argmax(vec(P[:, 1, 1])) - 1) * (fs / w.nfft) ≈ f0        # the tone survives the rewrite
+
+    # a flat trace has no variance and no spectrum; the normalisation is 0/0 there
+    wf = Dewdrop.StreamingWelch(Dewdrop.CPU(), Float64, 1, 1, fs, f_min)
+    for s in 1:n
+        Dewdrop.update!(wf, reshape([-70.0], 1, 1), s)
+    end
+    Pf = Dewdrop.result(wf, n)
+    @test !any(isnan, Pf)
+    @test all(iszero, Pf)
+
+    # the segment scratch is preallocated, so closing a segment allocates no buffers
+    wa = Dewdrop.StreamingWelch(Dewdrop.CPU(), Float64, 4, 2, fs, f_min)
+    xt = fill(1.0, 4, 2)
+    for s in 1:(2 * wa.nfft)
+        Dewdrop.update!(wa, xt, s)
+    end
+    a = @allocated for s in 1:(wa.nfft)
+        Dewdrop.update!(wa, xt, s)
+    end
+    @test a < 4096
+end

@@ -1,27 +1,30 @@
 using Dewdrop
 using Test
 
-# Statistical observables. The spectral measures rest on the internal
-# FFT (FFT.jl), so the FFT is anchored against a direct DFT reference for arbitrary lengths; the
-# measures themselves are checked on hand-constructed rasters with known values, plus the sol-level
-# wrappers on a small recorded network. (Exact agreement with the reference stats.py/numpy is the
-# separate cross-validation step in test/simulator_comparisons/stats_validation/.)
+# Statistical observables. The spectral measures transform through FFTW, so what is anchored here is
+# Dewdrop's own part: the frequency axis and the way each measure is assembled, the latter against a
+# direct O(N²) DFT. The measures themselves are checked on hand-constructed rasters with known values,
+# plus the sol-level wrappers on a small recorded network. (Exact agreement with the reference
+# stats.py/numpy is the separate cross-validation in test/simulator_comparisons/stats_validation/.)
 
-@testset "internal FFT ≡ direct DFT (radix-2 + Bluestein, any length)" begin
-    for n in (1, 2, 3, 4, 5, 7, 8, 12, 16, 17, 31, 64)
-        x = ComplexF64[cospi(0.3k) + im * sinpi(0.11k + 0.2) for k in 0:(n - 1)]
-        @test Dewdrop._fft(x) ≈ Dewdrop._dft(x, -1)             # forward matches the O(N²) reference
-        @test Dewdrop._ifft(Dewdrop._fft(x)) ≈ x               # round-trip
-    end
-    # real input, power of 2 and not
-    xr = Float64[sinpi(0.25k) for k in 0:9]
-    @test Dewdrop._fft(xr) ≈ Dewdrop._dft(xr, -1)
-    # fftfreq matches the numpy convention
+# the O(N²) definition, as an independent reference for the assembled spectrum
+_dft_ref(x) = [sum(x[j + 1] * cis(-2π * k * j / length(x)) for j in 0:(length(x) - 1)) for k in 0:(length(x) - 1)]
+
+@testset "frequency axis and the assembled spectrum" begin
+    # `_fftfreq` follows numpy: the second argument is a sample spacing, not a sampling rate
     @test Dewdrop._fftfreq(8, 1.0) ≈ [0, 1, 2, 3, -4, -3, -2, -1] ./ 8
     @test Dewdrop._fftfreq(5, 0.5) ≈ [0, 1, 2, -2, -1] ./ (5 * 0.5)
-    # 2-D round trip
-    A = reshape(Float64.(1:12), 3, 4)
-    @test real.(Dewdrop._ifft2(Dewdrop._fft2(A))) ≈ A
+    # the spectrum against a direct DFT of the same rows, at a power-of-two and an awkward length
+    for T in (16, 30)
+        S = [sinpi(0.3k + 0.1i) + 0.2cospi(0.07k) for i in 1:3, k in 0:(T - 1)]
+        psd, freqs = power_spectrum(S; n_segments = 1, dt = 0.5)
+        ref = zeros(Float64, T)
+        for i in 1:3
+            ref .+= abs2.(_dft_ref(Float64.(S[i, :]))) ./ T
+        end
+        @test psd ≈ ref ./ 3
+        @test freqs ≈ Dewdrop._fftfreq(T, 0.5)
+    end
 end
 
 @testset "coarsegrain (time binning)" begin
@@ -29,9 +32,9 @@ end
         1 0 1 1 0 1
         0 0 1 0 1 1
     ]
-    @test coarsegrain(S, 2; dims = 2) == [1 2 1; 0 1 2]          # sum each 2-step bin per neuron
-    @test coarsegrain(S, 3; dims = 2) == [2 2; 1 2]
-    @test size(coarsegrain(S, 4; dims = 2), 2) == 1             # remainder discarded
+    @test Dewdrop.coarsegrain(S, 2; dims = 2) == [1 2 1; 0 1 2]          # sum each 2-step bin per neuron
+    @test Dewdrop.coarsegrain(S, 3; dims = 2) == [2 2; 1 2]
+    @test size(Dewdrop.coarsegrain(S, 4; dims = 2), 2) == 1             # remainder discarded
 end
 
 @testset "susceptibility (population synchrony variance)" begin

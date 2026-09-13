@@ -23,7 +23,7 @@ A uniform draw in `[0, 1)` of float type `T`, a *pure* function of the global `s
 the time `step` (used as the counter), and the `entity` index (mixed into the key).
 Identical for identical arguments regardless of thread or iteration order.
 """
-# Call the FUNCTIONAL Philox directly rather than constructing a `Philox2x` generator: a
+# Call the functional Philox directly rather than constructing a `Philox2x` generator: a
 # freshly-seeded generator does a wasted extra round at counter (0,0) on construction, then
 # `set_counter!` recomputes and the buffered `rand` adds dispatch: ~170× slower for the
 # same bits. `philox((key,), (step, 0), Val(10))[1]` is bit-identical to that generator's
@@ -42,7 +42,7 @@ The ensemble-batched draw: an independent, bit-reproducible stream per `batch`. 
 counter is `(step, batch)`; the high counter word is unused by the 4-arg form (it is a
 hard zero there), so folding `batch` into it yields B collision-free independent streams keyed
 by `(seed, step, entity, batch)` on CPU and GPU. `batch = 0` reproduces the 4-arg bits exactly
-(so `batch = 0` reproduces the scalar draw bit for bit); `batch` must NOT be mixed into `entity`
+(so `batch = 0` reproduces the scalar draw bit for bit); `batch` must not be mixed into `entity`
 (the golden-ratio key mix aliases there).
 """
 @inline function draw_uniform(
@@ -103,7 +103,7 @@ The ensemble-batched Poisson draw: an independent reproducible stream per `batch
     draw_normal(T, seed, step, entity) -> T
 
 A standard-normal `N(0, 1)` draw of float type `T`, a *pure* function of `(seed, step, entity)`
-via the Box-Muller transform. It consumes BOTH 64-bit words of a single Philox evaluation (the
+via the Box-Muller transform. It consumes both 64-bit words of a single Philox evaluation (the
 same call whose second word [`draw_uniform`](@ref) discards), so it costs one Philox eval per
 draw and is allocation-free and GPU-kernel-safe (no Sampler dispatch, same discipline as
 `_uniform`). Keyed identically to `draw_uniform`, so a distinct `seed` yields an independent
@@ -127,9 +127,34 @@ bits exactly.
         ::Type{T}, seed::Unsigned, step::Integer, entity::Integer, batch::Integer
     ) where {T <: AbstractFloat}
     key = _rng_key(seed, entity)
-    x1, x2 = philox((key,), (step % UInt64, batch % UInt64), Val(10))   # BOTH words (x2 unused by draw_uniform)
+    x1, x2 = philox((key,), (step % UInt64, batch % UInt64), Val(10))   # both words (x2 unused by draw_uniform)
     u1 = _uniform(T, x1)
     u2 = _uniform(T, x2)
     u1 = ifelse(iszero(u1), eps(T), u1)                # guard log(0): _uniform ∈ [0, 1) can be exactly 0
     return sqrt(T(-2) * log(u1)) * cos(T(2π) * u2)
 end
+
+# * Domain separation.
+# Each builder keys its draws on a `(step, entity)` pair taken from whatever indices it has to hand:
+# `random_positions` uses `(neuron, dim)`, `distance_prob` uses `(pre, post)`, `fixed_prob` uses
+# `(gap, pre)`, a `PoissonSource` uses `(step, source)`. Those slots overlap, so one `seed` reused
+# across builders hands a neuron's coordinate the same draw as its connection probe against the first
+# few targets: geometry and connectivity come out correlated, with nothing to flag it. Every entry
+# point mixes its own constant into the user's seed, so a single `seed` yields independent streams.
+# The per-step stimuli collide harder still: `WhiteNoise` and `PoissonDrive` both key on `(step, neuron)`
+# and both default to `seed = 0`, and `draw_normal` builds its Box-Muller radius from the very word
+# `draw_uniform` returns, so without separation the noise is smallest exactly where the drive is largest.
+# The tags are literals rather than `hash(::Symbol)`, which is not stable across Julia versions and
+# would silently change every generated network on upgrade.
+@inline domain_seed(seed::Integer, tag::UInt64) = (seed % UInt64) ⊻ tag   # `%` so a signed seed wraps, as before
+
+const DOMAIN_POSITIONS = 0x0d5f83a7c1e94b26
+const DOMAIN_DISTPROB = 0x1a7c4e0b93d6582f
+const DOMAIN_DISTCOUNT = 0x2e91b64a08f7c3d1
+const DOMAIN_FIXEDPROB = 0x3fb20d95e6a418c7
+const DOMAIN_WEIGHTS = 0x4c86af31b25d907e
+const DOMAIN_POISSON = 0x5d1e7c48fa03b692
+const DOMAIN_INITIALV = 0x6a3b95d712ce480f
+const DOMAIN_NOISE = 0x7b48e2c095a1fd36
+const DOMAIN_DRIVE = 0x8f13c7a5e04b29d8
+const DOMAIN_INHOMPOISSON = 0x9c25d81730fae64b

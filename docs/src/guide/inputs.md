@@ -54,7 +54,6 @@ raster (c) and rate (d) tracking the stimulus (a).
 ```@setup inputs
 using Dewdrop, CairoMakie, TimeseriesMakie, Fathom
 set_theme!(fathom())
-Dewdrop.set_advice!(false)
 ```
 
 ```@example inputs

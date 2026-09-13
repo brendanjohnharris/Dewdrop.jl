@@ -29,7 +29,6 @@ and neuron positions.
 ```@setup plotting
 using Dewdrop, CairoMakie, TimeseriesMakie, Fathom
 set_theme!(fathom())
-Dewdrop.set_advice!(false)
 ```
 
 ```@example plotting

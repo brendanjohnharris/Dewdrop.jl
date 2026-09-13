@@ -1,7 +1,7 @@
 using Dewdrop
 using Test
 
-Dewdrop.set_advice!(false)   # silence the perf advisor during the suite; test/advisor.jl re-enables it
+Dewdrop.set_advice!(false)   # the default, restated: test/advisor.jl enables it and restores this
 
 @testset verbose = true "Dewdrop.jl" begin
     include("architecture.jl")

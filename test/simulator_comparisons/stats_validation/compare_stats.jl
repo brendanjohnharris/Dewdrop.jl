@@ -11,13 +11,13 @@ include(joinpath(@__DIR__, "stats_reference_data.jl"))   # defines `const REF`
 S = permutedims(REF.S)                                    # (T,N) → Dewdrop (N,T)
 V = permutedims(REF.V)
 dt = REF.dt
-cg4 = coarsegrain(S, 4; dims = 2)                         # reused (bin = 0.4 ms / 0.1 = 4 steps)
+cg4 = Dewdrop.coarsegrain(S, 4; dims = 2)                         # reused (bin = 0.4 ms / 0.1 = 4 steps)
 
 report(name, err) = println(rpad(name, 26), "max|Δ| = ", err)
 
 @testset "Dewdrop Stats.jl ≡ reference stats.py" begin
     # integer / exact
-    @test coarsegrain(S, 4; dims = 2) == permutedims(REF.coarsegrain)
+    @test Dewdrop.coarsegrain(S, 4; dims = 2) == permutedims(REF.coarsegrain)
     @test mua(S) == REF.mua
     @test mua(cg4) == REF.mua_binned
 

@@ -170,4 +170,4 @@ sol  = solve(prob, FixedStep(0.1))
 ```
 
 Pass a recurrent [`Projection`](@ref) via `projection = …` (or several via `projections = (…,)`). The
-builder is simply the multi-population, named-subpopulation front-end to this same type.
+builder is the multi-population, named-subpopulation front-end to this same type.

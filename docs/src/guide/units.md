@@ -24,7 +24,7 @@ equations are written exactly as the maths. With `R` in GΩ and `I` in pA,
 R·I = GΩ·pA = mV       R·g = GΩ·nS = 1       R·C = GΩ·pF = ms       rate·dt = kHz·ms = 1
 ```
 
-Choosing the units this way is what lets the hot loop stay free of conversion constants; an LIF
+Choosing the units this way lets the step loop stay free of conversion constants; an LIF
 step is `τ dV/dt = -(V - EL) + R·I` with no `1e-3` or `1e9` anywhere.
 
 ## Writing a model in plain floats

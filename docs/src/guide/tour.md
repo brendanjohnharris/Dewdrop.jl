@@ -12,7 +12,6 @@ theme:
 
 ```@setup tour
 using Dewdrop
-Dewdrop.set_advice!(false)   # quieten the performance advisor during the doc build
 ```
 
 ```@example tour

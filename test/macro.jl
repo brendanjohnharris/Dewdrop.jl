@@ -73,3 +73,42 @@ end
     @test init(DewdropNetwork(m2, 4; input = 0.0, tspan = (0.0, 1.0)), FixedStep(0.1)).state.state.V ==
         fill(-55.0, 4)
 end
+
+# The macro is imported as often as it is `using`-ed, so the generated code must not assume the name
+# `Dewdrop` is bound in the caller.
+module MacroHygiene
+    import Dewdrop: @neuron
+    @neuron HygieneLIF begin
+        @parameters τ = 20.0 EL = 0.0 Vθ = 20.0 Vr = 10.0 R = 1.0 tref = 2.0
+        @state V refrac
+        @asymptote EL + R * I
+        @resistance R
+        @timeconstant τ
+        @threshold V ≥ Vθ
+        @reset Vr
+        @refractory tref
+    end
+end
+
+@testset "@neuron expands without `Dewdrop` bound in the caller" begin
+    @test !isdefined(MacroHygiene, :Dewdrop)
+    mm = MacroHygiene.HygieneLIF()
+    @test Dewdrop.threshold(mm, 25.0) && !Dewdrop.threshold(mm, 15.0)
+    sol = solve(DewdropNetwork(mm, 4; input = 30.0, tspan = (0.0, 100.0)), FixedStep(0.1))
+    @test sum(sol.spike_count) > 0
+end
+
+# `_subparams` rewrites every parameter symbol to a field access, so a parameter named `V` or `I`
+# would silently replace the membrane or the input current in the hook expressions.
+@testset "@neuron refuses parameters that shadow the reserved names" begin
+    @test_throws Exception @eval @neuron ShadowsV begin
+        @parameters V = 1.0 τ = 20.0
+        @state V refrac
+        @asymptote V + I
+        @resistance τ
+        @timeconstant τ
+        @threshold V ≥ 0
+        @reset 0.0
+        @refractory 0.0
+    end
+end

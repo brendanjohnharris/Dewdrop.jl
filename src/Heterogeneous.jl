@@ -1,11 +1,11 @@
 # * Per-neuron heterogeneous parameters: `Heterogeneous(base; field = array, …)` wraps a
-# scalar neuron model and overrides chosen parameters with per-neuron arrays. Storage is a FROZEN
-# ARRAY (computed once at construction, read many times), not a procedural in-kernel draw: a per-neuron
+# scalar neuron model and overrides chosen parameters with per-neuron arrays. Storage is a frozen
+# array (computed once at construction, read many times), not a procedural in-kernel draw: a per-neuron
 # parameter is time-constant, so recomputing it every step would be pure waste; an array is general
 # (block E/I, parametric distributions, or loaded data), trivially reproducible, and Adapt-movable.
-# Reproducible distributions are obtained by FILLING the array via the counter-based RNG (`per_neuron`).
+# Reproducible distributions are obtained by filling the array via the counter-based RNG (`per_neuron`).
 #
-# Mechanism: the engine resolves a per-neuron SCALAR base model in the hot loop; `_resolve(h, i)`
+# Mechanism: the engine resolves a per-neuron scalar base model in the step loop; `_resolve(h, i)`
 # rebuilds `base` with the i-th value of each overridden field (ConstructionBase.setproperties, isbits
 # in/out → allocation-free + GPU-safe). The existing model hooks then run unchanged on the resolved
 # model. A heterogeneous model routes through the fused megakernel (which has the per-neuron index),
@@ -20,7 +20,7 @@ Wrap a scalar neuron `base` model, overriding the named parameter `field`s with 
 populations with different parameters, or any per-neuron heterogeneity. Fill arrays reproducibly with
 [`per_neuron`](@ref) + the counter RNG. Requires the canonical schedule (runs via the fused megakernel).
 
-As one group of a [`MultiModel`](@ref) the arrays still span the WHOLE population (length `N`, indexed
+As one group of a [`MultiModel`](@ref) the arrays still span the whole population (length `N`, indexed
 by the flat neuron index), not just the group's range; entries outside the group are never read.
 """
 struct Heterogeneous{M <: AbstractNeuronModel, NT <: NamedTuple} <: AbstractNeuronModel
@@ -57,12 +57,12 @@ float_type(h::Heterogeneous) = float_type(h.base)
     return :($(M)($(args...)))
 end
 
-# Default initial V reads each neuron's RESOLVED model, so an overridden `EL` (or `VL`) sets that
+# Default initial V reads each neuron's resolved model, so an overridden `EL` (or `VL`) sets that
 # neuron's resting potential instead of every neuron starting at the base scalar. One fused broadcast
 # (`_resolve` is the same GPU-safe generated function the fused kernel uses); an explicit `v0` takes
 # the generic path.
 @inline _resting_of(h::Heterogeneous, i) = _resting(_resolve(h, i))
-# `offset` shifts the read into the FLAT population index. As a `MultiModel` group this model's `V`
+# `offset` shifts the read into the flat population index. As a `MultiModel` group this model's `V`
 # slice is a view over the group's range while its override arrays span the whole population (the
 # indexing the fused kernel uses), so the slice must be read at its global position.
 function _init_voltage_model!(V, h::Heterogeneous, ::Nothing, ::Type{T}, seed, offset::Int = 0) where {T}

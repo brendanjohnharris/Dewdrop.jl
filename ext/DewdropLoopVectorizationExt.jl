@@ -3,16 +3,13 @@ module DewdropLoopVectorizationExt
 # The `Turbo` backend's SIMD kernels (Tier 2). `using LoopVectorization` activates this extension,
 # which registers a `@turbo`-vectorised dense membrane+threshold+reset+count kernel for the built-in
 # model families. The orchestration (deliver / accumulate / decay / scatter) stays in the core
-# `_turbo_step!`; only the per-neuron dense update is vectorised here. The kernels REPLICATE the
+# `_turbo_step!`; only the per-neuron dense update is vectorised here. The kernels replicate the
 # engine's scalar math exactly (the w-first split, the exact-propagator `_coba_step`, the AdEx cutoff)
 # so results are spike-identical; they differ only at the `exp` ULP (SLEEF SIMD exp vs scalar
 # `libm`), which is why `Turbo` is opt-in and never an `Auto` default.
 #
-# To give a NEW model a Turbo specialization: define `Dewdrop.turbo_kernel(::Type{MyModel}) =
-# my_turbo_kernel`, where `my_turbo_kernel(integ)` runs `@turbo for i in eachindex(V) … end` over the
-# integrator's SoA (`integ.state.state`), reading the accumulated `integ.itot`/`integ.gtot` and
-# writing `V`/aux/`refrac`/`spiked`/`spike_count`. Keep the body branch-free (`ifelse`, `min`) so it
-# vectorises. See `_turbo_adex!`/`_turbo_lif!` below as templates.
+# `_turbo_adex!` / `_turbo_lif!` below are the templates for a new model's specialisation; the docs
+# guide on Turbo walks through writing one.
 
 using LoopVectorization
 import Dewdrop
@@ -23,7 +20,7 @@ turbo_kernel(::Type{<:AdEx}) = _turbo_adex!
 turbo_kernel(::Type{<:LIF}) = _turbo_lif!
 
 # AdEx (V, w): the w-first split + the exact-propagator membrane with the exponential forcing term.
-# Reads `itot`/`gtot` (so it serves CUBA gtot=0 AND COBA), writes V/w/refrac/spiked/spike_count.
+# Reads `itot`/`gtot` (so it serves CUBA gtot=0 and COBA), writes V/w/refrac/spiked/spike_count.
 function _turbo_adex!(integ)
     st = integ.state.state
     V, w, refrac, spiked, spk = st.V, st.w, st.refrac, integ.spiked, integ.spike_count
@@ -36,7 +33,7 @@ function _turbo_adex!(integ)
     z = zero(eltype(V)); cap = eltype(V)(_ADEX_EXP_CAP)
     @turbo for i in eachindex(V)
         v = V[i]; wi = w[i]; r = refrac[i]; it = itot[i]; gt = gtot[i]
-        # _step_w: w from the OLD V (exact relaxation toward a·(V−EL))
+        # _step_w: w from the old V (exact relaxation toward a·(V−EL))
         w∞ = a * (v - EL)
         w2 = w∞ + (wi - w∞) * exp(-dt / τw)
         # _step_V: exponential forcing term + the COBA exact propagator (with the Vpeak cutoff)

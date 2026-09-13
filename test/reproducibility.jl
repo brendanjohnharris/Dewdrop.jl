@@ -32,6 +32,11 @@ function spatial_ei(;
     ne = round(Int, sqrt(rho) * dx)
     NE = ne^2
     NI = max(1, round(Int, NE / gamma))
+    # Sampling `count` pairs without replacement needs the in-degree to fit the source population.
+    # The biological degrees are set for the full-size network; this fixture runs a reduced one, where
+    # the I population is smaller than K_ie / K_ii and the request would be unsatisfiable.
+    K_ee, K_ei = min(K_ee, NE), min(K_ei, NE)
+    K_ie, K_ii = min(K_ie, NI), min(K_ii, NI)
     period = (Float64(dx), Float64(dx))
     posE = Dewdrop.grid_positions(ne, ne; spacing = dx / ne, centered = true)
     posI = Dewdrop.random_positions(NI, (dx, dx); seed = _subseed(seed, 1))

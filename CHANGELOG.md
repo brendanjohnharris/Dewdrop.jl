@@ -50,6 +50,10 @@ All notable changes to Dewdrop.jl are documented here.
 Almost all of these were silent: the run completed and returned a number computed without the feature
 that had been configured. Each now has a regression test.
 
+- The guard that refuses to record `:gtot`/`:itot` on a backend that never materialises them matched a
+  bare `Trace` only, so `Aggregate(Trace(:itot), :sum)` slipped past it and returned a column of zeros
+  with no warning. It now looks through an `Aggregate` to its inner spec. A `Probe` still cannot be
+  checked (its `f` is opaque, and refusing every probe would reject the many that read neither).
 - `solve(::NetworkBatch, …)` threw a `MethodError` for every `Float32` model, and for any GPU run, after
   the whole simulation had already finished: `BatchSolution` declared `duration::Float64` and
   `spike_counts::Vector{Vector{T}}`, which no member float type other than `Float64` (and no device
@@ -107,6 +111,50 @@ that had been configured. Each now has a regression test.
 - `connectivity(network)` silently plotted only the first projection when the projections binned to
   different shapes.
 - `show` treated a host-resident view or range as device-resident and skipped its extrema summary.
+- A `SpikeSourceArray` drive is now offset per member in a block-diagonal batch. It carries its own
+  member-local `extconn`, like `PoissonSource`, but was treated as shareable, so members 2..B replayed
+  onto member 1's neurons and were themselves left undriven, with no error.
+- The connectivity builders and the per-step stimuli no longer share one counter-RNG key space.
+  `random_positions`, `distance_prob`, `distance_fixed_count`, `fixed_prob`, `correlate_weights`,
+  `PoissonSource` firing, the random initial voltage, `WhiteNoise`, `PoissonDrive` and
+  `InhomogeneousPoisson` each mix a distinct tag into the seed. Reusing one seed across the builders
+  gave a neuron's coordinate along dimension `d` the same draw as its connection probe against target
+  `d`, correlating geometry with connectivity. The stimuli collided harder still: `WhiteNoise` and
+  `PoissonDrive` both key on `(step, neuron)` and both default to `seed = 0`, and `draw_normal` builds
+  its Box-Muller radius from the very word `draw_uniform` returns, so at the defaults the noise
+  magnitude was a deterministic decreasing function of the drive's draw (correlation -0.67) rather than
+  an independent process, and two `InhomogeneousPoisson` stimuli at equal rates emitted identical
+  trains. Networks and noise realisations from a given seed differ from before; reproducibility from a
+  seed is unchanged.
+- `distance_fixed_count` throws when the kernel and the source/target sets admit fewer than `count`
+  pairs, instead of returning a quietly smaller connectome, which contradicted its exact-count promise.
+  Read as a per-target in-degree, `count = K * length(targets)` needs `K ≤ length(sources)`; a request
+  beyond that was silently delivering a fully connected projection. The reference model this mirrors
+  (WRCircuit's `Spatial.py`) already validated the same condition.
+- The batched random initial voltage is drawn on the column's own `streams` entry rather than its raw
+  column index, so an all-zero `streams` reproduces the scalar reference exactly, as documented, and the
+  default `streams = 0:(B-1)` still gives each column an independent initial condition.
+- `StreamingWelch` returns a zero spectrum for a channel with no variance rather than propagating a
+  `NaN` out of the `0/0` variance-matching factor.
+- `Welch`, `MADev`, `SpikeRate` and `Fano` report that they need a batched run when passed to a scalar
+  `solve`, instead of surfacing a `MethodError` on an internal function.
+- `@neuron` no longer requires the name `Dewdrop` to be bound in the calling module, so
+  `import Dewdrop: @neuron` works; and a parameter named `V` or `I` is refused rather than silently
+  shadowing the membrane or the input current in the hook expressions.
+- `show` on a solution reports 0 Hz for an empty named subpopulation instead of `NaN Hz`, and skips the
+  rate summary for a device-resident solution rather than launching a reduction per subpopulation. The
+  residency check covers all four renderings: the solution, a `SubSolution` (`sol[:E]`), a
+  `BatchedSolution`, and a `BatchSolution`, the last of which reduced once per member.
+- The connectivity builders accept an empty `sources`/`targets`. Each probes `first(sources)` to type
+  its weight and delay arguments, so an empty set (a subpopulation a sweep has driven to zero) escaped
+  as a `BoundsError` from inside the builder rather than the empty connectome it describes. `fixed_prob`,
+  `distance_prob` and `distance_fixed_count` now return that connectome without invoking a `weight`/`delay`
+  callback, which has no valid index to take; `correlate_weights!` still reports any edge outside an empty
+  `targets` through its existing range check.
+- `Aggregate` refuses an inner spec that is not a `Trace` or `Spikes`. It reduces over the units of a
+  per-unit source, but validated only that the inner `every`/`bin` were unset, and `Probe` carries those
+  fields too: `Aggregate(Probe(f; n), :mean)` constructed and then died mid-solve on `inner.of`, a field
+  `Probe` does not have. This is the condition `_check_accum_record` already documents itself as relying on.
 
 ### Changed
 
@@ -123,6 +171,38 @@ that had been configured. Each now has a regression test.
   documents that as the deliberate exception it is.
 - `SpikeSourceArray` checks its replay pattern against the run length at `init`, as `TimedArray` already
   did, instead of failing with a `BoundsError` part-way through the loop.
+- `Auto` and `coarsegrain` are no longer exported; both are unchanged and reachable as `Dewdrop.Auto`
+  and `Dewdrop.coarsegrain`. Each collided with a package the documentation tells you to load alongside
+  Dewdrop, and a name exported by two loaded modules resolves to neither: `Auto` with Makie's layout
+  type (so `using Dewdrop, CairoMakie` broke `Auto()`), `coarsegrain` with TimeseriesBase's, which is a
+  different operation (take every second element and stack them into a new dimension) rather than this
+  one (sum into bins of a given width). They were the only two collisions against Statistics, Random,
+  Unitful, TimeseriesBase, Makie, StructArrays, Adapt, CUDA and ForwardDiff.
+- The performance advisor is off by default. Enable it with `Dewdrop.set_advice!(true)`; a single call
+  is still suppressed with `solve(...; advise = false)`. It printed unsolicited `@info` hints on every
+  run before, to the point that five documentation guides opened by silencing it.
+- What makes a synapse a source model is declared once, as `is_source_synapse`; `_plastic_wrappable`
+  and `_block_mergeable` derive from it rather than each restating it per type in a different file.
+  That duplication is what let `SpikeSourceArray` be declared on one path and missed on the other.
+- `STDP` documents where its pairing interval is measured. It is timed at the two somata, with the
+  transmission delay playing no part, which is the midpoint of the two conventions in wide use: NEST
+  assigns the whole delay to the dendrite, Brian2 and BrainPy assign it all to the axon, and those two
+  differ from each other by twice the delay. NEST GPU uses the same convention as this.
+- `Differentiable` documents that the surrogate is substituted in the forward pass as well as the
+  backward one, so it simulates a smoothed, rate-like network rather than the spiking one the other
+  backends run.
+
+### Removed
+
+- `src/FFT.jl`, the hand-written radix-2 / Bluestein transform behind `power_spectrum` and
+  `radial_autocorrelation`. Both now use FFTW, which the package already depended on and already used
+  for the streaming Welch spectrum. The two agree to a few ulp at every length tested (worst case
+  1.5e-15 relative, over lengths 2 to 4096, powers of two, primes and awkward composites), the
+  observables agree to under 1e-15, and FFTW is about 20× faster. The frequency-axis helper `_fftfreq`
+  stays: `AbstractFFTs.fftfreq` takes a sampling rate where this takes a sample spacing.
+- Thirteen hand-written copies of the same tuple recursion (`_deliver_all!`, `_accum_all!`,
+  `_bpropagate_all!`, `_rec_tuple!` and the rest), replaced by one `_foreach_tuple!`. The per-step phase
+  walks still unroll to straight-line code and the step stays allocation-free.
 
 ### Performance
 
@@ -134,3 +214,27 @@ that had been configured. Each now has a regression test.
   window-sized array on every flush.
 - The batched Poisson drive draws once per source rather than once per (source, member); the draw is
   keyed on the source alone, so the repeated work was identical.
+- The CPU scatter threads only once a step deposits enough edges to pay for it. Threading costs a fixed
+  `@threads` dispatch (~13 µs on 16 threads) however little work follows, and the scatter skips every
+  non-spiking row, so at low firing each thread got almost nothing while every step paid the full
+  dispatch; it was unconditional whenever more than one thread was available. Whole-solve on 16 threads:
+  5.6× faster at N=400, 2.7× at N=1000, 1.35× at N=4000, unchanged at N=16000 where threading already
+  paid. The step is allocation-free again below the threshold (it was allocating 6848 bytes per step).
+  The same gate covers the two batched scatters, which thread over the member axis. Both branches leave
+  identical ring contents (fixed-point counts, so integer addition is associative), so results are
+  bit-identical either side of it.
+- The device `Aggregate` monitor uses a parallel reduction instead of a single-threaded in-kernel loop:
+  23× faster at 50k units and 98× at 200k on an L40S, and now independent of population size. Float
+  `:mean` aggregates may differ in the last ulp, since the summation order changed; integer `:sum`
+  aggregates are unchanged.
+- The batched `Aggregate` monitor gets that same parallel reduction; it had kept the in-kernel walk,
+  one thread per batch member. On an L40S at `batch = 32` its whole-run cost falls from 1.5 s to
+  0.11 s at 10k units, making the solve itself 1.95× faster, and from 7.9 s to 0.10 s at 50k. The CPU
+  backend gains 5-16×, a plain reduction being cheaper than a launch. The same last-ulp caveat applies
+  to float `:mean` aggregates.
+- The fused step materialises `itot`/`gtot` only when a monitor records them, keeping them in registers
+  otherwise. That removes two per-neuron global stores per step, measured at 24% of a 10⁶-neuron GPU
+  step. `Serial` and `Turbo` read the arrays and are unaffected.
+- `StreamingWelch` transforms each completed segment in place. It allocated a windowed segment and its
+  transform every segment, on the device as well as the host; both are preallocated scratch now, which
+  adds `LinearAlgebra` (a standard library) as a dependency for `mul!`.

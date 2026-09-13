@@ -176,3 +176,54 @@ end
     @test_throws ArgumentError Aggregate(Trace(:V), :median)
     @test_throws ArgumentError Aggregate(Trace(:V), maximum)
 end
+
+# The device aggregate is a real parallel reduction into a scratch slot, then a one-element fold into
+# the open column. Sizes below and above one workgroup exercise both regimes, binned and not.
+@testset "device aggregate reduction matches the CPU reduction" begin
+    m = LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 100.0, tref = 2.0)
+    rec() = (
+        rate = Aggregate(Spikes(), sum), mv = Aggregate(Trace(:V), :mean),
+        rb = Aggregate(Spikes(), sum; bin = 5), mb = Aggregate(Trace(:V), :mean; bin = 5),
+    )
+    for N in (7, 300, 5000)
+        prob = DewdropNetwork(m, N; input = 0.35, tspan = (0.0, 60.0))
+        ref = solve(prob, FixedStep(0.1); record = rec())
+        got = solve!(adapt(JLArray, init(prob, FixedStep(0.1); record = rec())))
+        @test Array(got.record.rate.data) == Array(ref.record.rate.data)   # integer sums: exact
+        @test Array(got.record.rb.data) == Array(ref.record.rb.data)
+        @test Array(got.record.mv.data) ≈ Array(ref.record.mv.data) rtol = 1.0e-4
+        @test Array(got.record.mb.data) ≈ Array(ref.record.mb.data) rtol = 1.0e-4
+    end
+end
+
+# The fused step keeps the accumulators in registers, so their array stores exist only for the
+# monitors that read them back. Eliding those stores must not change what a recording sees.
+@testset ":itot/:gtot are materialised exactly when recorded" begin
+    m = LIF(; τ = 20.0, EL = -70.0, Vθ = -50.0, Vr = -60.0, R = 100.0, tref = 2.0)
+    prob = DewdropNetwork(m, 64; input = 0.5, tspan = (0.0, 20.0))
+    for bk in (Serial(), Fused(), Dewdrop.Auto())
+        sol = solve(prob, FixedStep(0.1); backend = bk, record = (it = Trace(:itot), gt = Trace(:gtot)))
+        @test all(≈(0.5), sol.record.it.data)     # the constant input, materialised
+        @test all(iszero, sol.record.gt.data)     # no conductance synapses
+    end
+    @test Dewdrop._accum_sinks(init(prob, FixedStep(0.1); backend = Fused())) === (nothing, nothing)
+    rec = init(prob, FixedStep(0.1); backend = Fused(), record = (it = Trace(:itot),))
+    @test Dewdrop._accum_sinks(rec) === (rec.itot, rec.gtot)
+    @test !Dewdrop._any_reads_accum(typeof(NamedTuple()))
+    # a Probe's `f` is opaque, so it counts as reading them: `Probe(integ -> integ.itot)` recorded
+    # zeros under Fused when the stores were elided on the monitor type alone.
+    pr = (p = Probe(integ -> copy(integ.itot); n = 64),)
+    @test Dewdrop._any_reads_accum(typeof(init(prob, FixedStep(0.1); record = pr).monitors))
+    for bk in (Serial(), Fused(), Dewdrop.Auto())
+        sol = solve(prob, FixedStep(0.1); backend = bk, record = pr)
+        @test all(≈(0.5), sol.record.p.data)
+    end
+end
+
+# `Aggregate` reduces over the units of a per-unit source. `Probe` carries `every`/`bin` too, so the
+# stride check alone admitted it and it died later on `inner.of`, a field `Probe` does not have.
+@testset "Aggregate rejects a non-per-unit inner spec" begin
+    @test_throws ArgumentError Aggregate(Probe(integ -> integ.itot; n = 1), :mean)
+    @test Aggregate(Trace(:V), :mean) isa Aggregate          # the supported inners still construct
+    @test Aggregate(Spikes(), :sum) isa Aggregate
+end
