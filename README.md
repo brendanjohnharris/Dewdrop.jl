@@ -9,12 +9,9 @@
 [![Aqua QA](https://raw.githubusercontent.com/JuliaTesting/Aqua.jl/master/badge.svg)](https://github.com/JuliaTesting/Aqua.jl)
 [![](https://img.shields.io/badge/%F0%9F%9B%A9%EF%B8%8F_tested_with-JET.jl-233f9a)](https://github.com/aviatesk/JET.jl)
 
-![Experimental](https://img.shields.io/badge/%F0%9F%A7%AA_status-experimental-orange)
-![AI-driven](https://img.shields.io/badge/%F0%9F%A4%96_development-AI--driven-8957e5)
-
 A spiking neural network simulator for Julia with a focus on speed and GPU compatibility.
 
-Dewdrop ports and consolidates ideas from gold-standard simulators ([Brian2](https://github.com/brian-team/brian2), [NEST](https://github.com/nest/nest-simulator), [BrainPy](https://github.com/brainpy/BrainPy)) into a fast, fixed-step, struct-of-arrays engine that's fully Julia.
+Dewdrop ports and consolidates ideas from gold-standard simulators ([Brian2](https://github.com/brian-team/brian2), [NEST](https://github.com/nest/nest-simulator), [BrainPy](https://github.com/brainpy/BrainPy)) into a fast, fully Julia engine.
 
 ## Quick start
 
