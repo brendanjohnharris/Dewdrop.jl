@@ -102,8 +102,10 @@ using GPUArrays
         @test eltype(b1.record.s.data) === Bool
 
         for k in (2, 5, 20)
-            r = solve(prob, FixedStep(dt);
-                      record = (s = Spikes(bin = k), p = Aggregate(Spikes(), sum; bin = k)))
+            r = solve(
+                prob, FixedStep(dt);
+                record = (s = Spikes(bin = k), p = Aggregate(Spikes(), sum; bin = k))
+            )
             @test eltype(r.record.s.data) === UInt16      # Bool cannot hold a count
             @test size(r.record.s.data, 2) == fld(nsteps, k)      # complete windows only
             @test sum(r.record.s.data) == tot             # every spike survives binning
@@ -112,10 +114,16 @@ using GPUArrays
             @test r.record.s.every == k && r.record.s.bin == k    # `every` = steps per column
         end
 
-        bv = solve(prob, FixedStep(dt); record = (v = Trace(:V; bin = 10),
-                                                  a = Aggregate(Trace(:V), :mean; bin = 10)))
-        want = [mean(ref.record.v.data[i, ((c - 1) * 10 + 1):(c * 10)])
-                for i in 1:size(ref.record.v.data, 1), c in 1:fld(nsteps, 10)]
+        bv = solve(
+            prob, FixedStep(dt); record = (
+                v = Trace(:V; bin = 10),
+                a = Aggregate(Trace(:V), :mean; bin = 10),
+            )
+        )
+        want = [
+            mean(ref.record.v.data[i, ((c - 1) * 10 + 1):(c * 10)])
+                for i in 1:size(ref.record.v.data, 1), c in 1:fld(nsteps, 10)
+        ]
         @test bv.record.v.data ≈ want                     # a binned signal is the window mean
         @test vec(bv.record.a.data) ≈ vec(mean(want; dims = 1))
 
@@ -136,10 +144,14 @@ using GPUArrays
         @test !isempty(first(raster(ref; name = :s)))
 
         B = 3                                             # the batched path mirrors the scalar one
-        ba = solve(prob, FixedStep(dt); batch = B, streams = fill(0, B),
-                   record = (s = Spikes(), p = Aggregate(Spikes(), sum)))
-        bb = solve(prob, FixedStep(dt); batch = B, streams = fill(0, B),
-                   record = (s = Spikes(bin = 5), p = Aggregate(Spikes(), sum; bin = 5)))
+        ba = solve(
+            prob, FixedStep(dt); batch = B, streams = fill(0, B),
+            record = (s = Spikes(), p = Aggregate(Spikes(), sum))
+        )
+        bb = solve(
+            prob, FixedStep(dt); batch = B, streams = fill(0, B),
+            record = (s = Spikes(bin = 5), p = Aggregate(Spikes(), sum; bin = 5))
+        )
         @test eltype(bb.record.s.data) === UInt16
         @test size(bb.record.s.data, 3) == fld(nsteps, 5)
         for col in 1:B

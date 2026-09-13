@@ -237,9 +237,12 @@ function _check_uniform_members(nets)
     length(nets) <= 1 && return nothing
     for (field, what) in ((:drive, "drive"), (:noise, "noise"), (:stimuli, "stimuli"), (:schedule, "schedule"))
         vals = [getfield(n, field) for n in nets]
-        all(v -> v == first(vals), vals) || throw(ArgumentError(
-            "batch members differ in `$what`, which is not expressible per member; give every member the " *
-                "same `$what` and vary `input` (per member) or attach a per-member projection instead"))
+        all(v -> v == first(vals), vals) || throw(
+            ArgumentError(
+                "batch members differ in `$what`, which is not expressible per member; give every member the " *
+                    "same `$what` and vary `input` (per member) or attach a per-member projection instead"
+            )
+        )
     end
     return nothing
 end

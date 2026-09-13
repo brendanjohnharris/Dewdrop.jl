@@ -388,9 +388,9 @@ Adapt.adapt_structure(to, c::BatchedCompactionScratch) =
     BatchedCompactionScratch(adapt(to, c.active), adapt(to, c.na), c.na_host)
 BatchedCompactionScratch(arch, npre::Integer, B::Integer) =
     BatchedCompactionScratch(
-        fill!(allocate(arch, Int32, Int(npre), Int(B)), Int32(0)),
-        fill!(allocate(arch, Int, Int(B)), 0), zeros(Int, Int(B))
-    )
+    fill!(allocate(arch, Int32, Int(npre), Int(B)), Int32(0)),
+    fill!(allocate(arch, Int, Int(B)), 0), zeros(Int, Int(B))
+)
 
 @kernel function _batched_compactify_kernel!(active, na, @Const(spiked))
     I = @index(Global, Cartesian)
@@ -819,8 +819,10 @@ function _bmaterialize(spec::Trace, arch, ::Type{T}, N, B, nsteps, dt, subpops) 
 end
 function _bmaterialize(spec::Spikes, arch, ::Type{T}, N, B, nsteps, dt, subpops) where {T}
     idx = _resolve_of(arch, spec.of, subpops)
-    buf = BatchedWindow(arch, spec.bin > 1 ? UInt16 : Bool, (_nsel(N, idx), Int(B)),
-                        _ncols(nsteps, spec.every, spec.bin))
+    buf = BatchedWindow(
+        arch, spec.bin > 1 ? UInt16 : Bool, (_nsel(N, idx), Int(B)),
+        _ncols(nsteps, spec.every, spec.bin)
+    )
     return BatchedPerUnit(SpikeSrc(), idx, buf, spec.every, spec.bin)
 end
 function _bmaterialize(spec::Aggregate, arch, ::Type{T}, N, B, nsteps, dt, subpops) where {T}
@@ -829,7 +831,8 @@ function _bmaterialize(spec::Aggregate, arch, ::Type{T}, N, B, nsteps, dt, subpo
     src = spec.inner isa Spikes ? SpikeSrc() : _srcof(spec.inner)
     acc = fill!(allocate(arch, T, 1, Int(B)), zero(T))
     return BatchedAgg{typeof(src), typeof(idx), typeof(buf), spec.reducer, typeof(acc)}(
-        src, idx, buf, spec.every, _nsel(N, idx), spec.bin, acc)
+        src, idx, buf, spec.every, _nsel(N, idx), spec.bin, acc
+    )
 end
 _bmaterialize(::Probe, arch, ::Type{T}, N, B, nsteps, dt, subpops) where {T} =
     error("Probe is not supported in batched runs (needs an (n,B) batched layout); use Trace/Spikes/Aggregate")

@@ -151,11 +151,16 @@ function _check_projkw(kw::NamedTuple, pair)
     _given(:connectivity) && return nothing                    # prebuilt: nothing else is read
     needed = _given(:kernel) ? (:weight, :delay, :seed) : (:p, :weight, :delay, :seed)
     missing_kw = filter(k -> !haskey(kw, k), needed)
-    isempty(missing_kw) || throw(ArgumentError(
-        "project!(:$(pair.first) => :$(pair.second), …) is missing " *
-            join(("`$k`" for k in missing_kw), ", ", " and ") *
-            (_given(:kernel) ? " (a `kernel` projection needs `weight`, `delay` and `seed`)" :
-             " (pass `p` for fixed-probability wiring, `kernel` for distance-dependent, or `connectivity` for a prebuilt connectome)")))
+    isempty(missing_kw) || throw(
+        ArgumentError(
+            "project!(:$(pair.first) => :$(pair.second), …) is missing " *
+                join(("`$k`" for k in missing_kw), ", ", " and ") *
+                (
+                _given(:kernel) ? " (a `kernel` projection needs `weight`, `delay` and `seed`)" :
+                    " (pass `p` for fixed-probability wiring, `kernel` for distance-dependent, or `connectivity` for a prebuilt connectome)"
+            )
+        )
+    )
     return nothing
 end
 project!(nb::NetworkBuilder, src::Symbol, synapse::AbstractSynapseModel; kw...) =

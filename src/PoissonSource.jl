@@ -47,9 +47,12 @@ is_source_synapse(::PoissonSource) = true
 # the same guard in `_check_drive`, against its own sampler's underflow cliff.)
 function _poisson_p(rate, dt, ::Type{T}) where {T}
     p = rate * dt / 1000
-    p <= 1 || throw(ArgumentError(
-        "PoissonSource rate = $rate Hz at dt = $dt ms gives a per-step spike probability of $p > 1: " *
-            "every source would fire every step. Use rate <= $(1000 / dt) Hz, or spread the drive over more sources."))
+    p <= 1 || throw(
+        ArgumentError(
+            "PoissonSource rate = $rate Hz at dt = $dt ms gives a per-step spike probability of $p > 1: " *
+                "every source would fire every step. Use rate <= $(1000 / dt) Hz, or spread the drive over more sources."
+        )
+    )
     return T(p)
 end
 

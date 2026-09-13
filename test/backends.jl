@@ -49,10 +49,14 @@ using Test
         @test sk.state.state.V == fk.state.state.V
 
         # …and with an instantaneous jump alongside it, in both projection orders.
-        first_fz = DewdropNetwork(m, N; input = 30.0, tspan = (0.0, 100.0),
-            projections = (Projection(fz, conn), Projection(DeltaSynapse(), conn2)))
-        first_delta = DewdropNetwork(m, N; input = 30.0, tspan = (0.0, 100.0),
-            projections = (Projection(DeltaSynapse(), conn2), Projection(fz, conn)))
+        first_fz = DewdropNetwork(
+            m, N; input = 30.0, tspan = (0.0, 100.0),
+            projections = (Projection(fz, conn), Projection(DeltaSynapse(), conn2))
+        )
+        first_delta = DewdropNetwork(
+            m, N; input = 30.0, tspan = (0.0, 100.0),
+            projections = (Projection(DeltaSynapse(), conn2), Projection(fz, conn))
+        )
         sa, fa = both(first_fz)
         sb, fb = both(first_delta)
         @test sa.state.state.V == fa.state.state.V
@@ -110,6 +114,8 @@ end
             prob, FixedStep(0.1); backend = Differentiable(), record = (r = spec,)
         )
     end
-    @test solve(prob, FixedStep(0.1); backend = Differentiable(),   # a non-accumulator aggregate is fine
-                record = (r = Aggregate(Trace(:V), :mean),)) isa Any
+    @test solve(
+        prob, FixedStep(0.1); backend = Differentiable(),   # a non-accumulator aggregate is fine
+        record = (r = Aggregate(Trace(:V), :mean),)
+    ) isa Any
 end

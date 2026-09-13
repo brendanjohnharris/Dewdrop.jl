@@ -230,12 +230,18 @@ end
 # same while keeping `sum(record) == sum(spike_count)`.
 function _check_reduction(every::Int, bin::Int, isevent::Bool, what::AbstractString)
     (every ≥ 1 && bin ≥ 1) || throw(ArgumentError("$what: `every` and `bin` must be ≥ 1"))
-    (every > 1 && bin > 1) && throw(ArgumentError(
-        "$what: pass `every` (keep one step in k) OR `bin` (reduce each window of k steps), not both"))
-    (isevent && every > 1) && throw(ArgumentError(
-        "$what: `every = $every` would stride a spike record, keeping the spike bit at one step in " *
-            "$every and discarding roughly $(round(100 * (1 - 1 / every); digits = 1))% of the spikes. " *
-            "Use `bin = $every` instead: same memory, every spike counted."))
+    (every > 1 && bin > 1) && throw(
+        ArgumentError(
+            "$what: pass `every` (keep one step in k) OR `bin` (reduce each window of k steps), not both"
+        )
+    )
+    (isevent && every > 1) && throw(
+        ArgumentError(
+            "$what: `every = $every` would stride a spike record, keeping the spike bit at one step in " *
+                "$every and discarding roughly $(round(100 * (1 - 1 / every); digits = 1))% of the spikes. " *
+                "Use `bin = $every` instead: same memory, every spike counted."
+        )
+    )
     return nothing
 end
 # The inner spec must be a per-unit source to reduce over. `Probe` carries `every`/`bin` too, so a
@@ -323,11 +329,11 @@ end
 # one. The CPU `_finalize` has no method (a MethodError mid-solve); the GPU kernel tests only
 # `R === :mean`, so anything else silently computes a sum.
 _reducer_sym(s::Symbol) = s in (:sum, :mean) ? s : throw(
-    ArgumentError(
-        "Aggregate reducer must be :sum or :mean (or the function `sum`); got :$s. " *
+        ArgumentError(
+            "Aggregate reducer must be :sum or :mean (or the function `sum`); got :$s. " *
             "Arbitrary reductions go through `Probe`."
+        )
     )
-)
 _reducer_sym(::typeof(sum)) = :sum
 _reducer_sym(f) = throw(
     ArgumentError("Aggregate reducer must be :sum, :mean or the function `sum`; got $f. Use `Probe` for anything else.")
@@ -372,8 +378,11 @@ _nsel(N, idx) = length(idx)
 # Columns of the store. A stride keeps `cld` (the first step is always recorded); a bin keeps only
 # complete windows, so the trailing remainder is discarded, matching `coarsegrain`.
 function _ncols(nsteps, every, bin = 1)
-    bin > nsteps && throw(ArgumentError(
-        "bin = $bin exceeds the run length ($nsteps steps): no complete window would close, so the record would be empty"))
+    bin > nsteps && throw(
+        ArgumentError(
+            "bin = $bin exceeds the run length ($nsteps steps): no complete window would close, so the record would be empty"
+        )
+    )
     return bin > 1 ? fld(nsteps, bin) : cld(nsteps, every)
 end
 
@@ -391,8 +400,10 @@ end
 # neuron's count at bin/t_ref).
 function _materialize(spec::Spikes, arch, ::Type{T}, N, nsteps, subpops) where {T}
     idx = _resolve_of(arch, spec.of, subpops)
-    buf = WindowBuffer(arch, spec.bin > 1 ? UInt16 : Bool, _nsel(N, idx),
-                       _ncols(nsteps, spec.every, spec.bin))
+    buf = WindowBuffer(
+        arch, spec.bin > 1 ? UInt16 : Bool, _nsel(N, idx),
+        _ncols(nsteps, spec.every, spec.bin)
+    )
     return PerUnitMonitor(SpikeSrc(), idx, buf, spec.every, spec.bin)
 end
 function _materialize(spec::Aggregate, arch, ::Type{T}, N, nsteps, subpops) where {T}
@@ -401,7 +412,8 @@ function _materialize(spec::Aggregate, arch, ::Type{T}, N, nsteps, subpops) wher
     src = spec.inner isa Spikes ? SpikeSrc() : _srcof(spec.inner)
     acc = fill!(allocate(arch, T, 1), zero(T))
     return AggMonitor{typeof(src), typeof(idx), typeof(buf), spec.reducer, typeof(acc)}(
-        src, idx, buf, spec.every, _nsel(N, idx), spec.bin, acc)
+        src, idx, buf, spec.every, _nsel(N, idx), spec.bin, acc
+    )
 end
 function _materialize(spec::Probe, arch, ::Type{T}, N, nsteps, subpops) where {T}
     buf = WindowBuffer(arch, T, spec.n, _ncols(nsteps, spec.every, spec.bin))

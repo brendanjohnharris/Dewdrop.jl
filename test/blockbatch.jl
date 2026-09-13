@@ -164,8 +164,10 @@ _solve(net) = solve(net, FixedStep(0.1); progress = false)
         @test_throws ErrorException solve(batch([nh(-50.0), nh(-58.0)]), FixedStep(0.1); mode = :fused, progress = false)
 
         # a plain scalar model still takes :fused, and is still correct there
-        ns(vθ) = DewdropNetwork(LIF(; τ = 20.0, EL = -70.0, Vθ = vθ, Vr = -60.0, R = 100.0, tref = 2.0),
-                                6; input = 0.35, tspan = (0.0, 50.0))
+        ns(vθ) = DewdropNetwork(
+            LIF(; τ = 20.0, EL = -70.0, Vθ = vθ, Vr = -60.0, R = 100.0, tref = 2.0),
+            6; input = 0.35, tspan = (0.0, 50.0)
+        )
         solos = [sum(_solve(ns(-50.0)).spike_count), sum(_solve(ns(-58.0)).spike_count)]
         bf = solve(batch([ns(-50.0), ns(-58.0)]), FixedStep(0.1); progress = false)
         @test bf.mode == :fused && [sum(bf[1]), sum(bf[2])] == solos
