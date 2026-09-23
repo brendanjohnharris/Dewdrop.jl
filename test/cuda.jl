@@ -233,12 +233,12 @@ using CUDA
             tbatch = minimum(@elapsed(CUDA.@sync solve(big, FixedStep(0.1); batch = Bb, streams = 0:(Bb - 1))) for _ in 1:2)
             tseq = minimum(
                 @elapsed(
-                        CUDA.@sync (
-                            for k in 1:Bb
-                                solve(big, FixedStep(0.1))
+                    CUDA.@sync (
+                        for k in 1:Bb
+                            solve(big, FixedStep(0.1))
                         end
-                        )
-                    ) for _ in 1:2
+                    )
+                ) for _ in 1:2
             )
             @info "ensemble batching throughput" N = Nb B = Bb batched_s = tbatch sequential_s = tseq speedup = tseq / tbatch
             @test tseq / tbatch ≥ 3.0                                  # measured ~12×; conservative guard

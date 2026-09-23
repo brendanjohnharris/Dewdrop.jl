@@ -164,7 +164,7 @@ function _param_children(m)
     namew = maximum(f -> length(string(f)), fns)
     return Any[
         let u = _unit_for(dims, f)
-                (string(rpad(string(f), namew), " = ", _fmt(getfield(m, f)), u === nothing ? "" : " " * u), Any[])
+            (string(rpad(string(f), namew), " = ", _fmt(getfield(m, f)), u === nothing ? "" : " " * u), Any[])
         end for f in fns
     ]
 end
@@ -360,9 +360,9 @@ function Base.show(io::IO, ::MIME"text/plain", net::DewdropNetwork)
     full = _expand(io)
     popkids = Any[
         (
-                string(rpad(pops[i][1], nw), "  ", rpad(rngs[i], rw), "  ", _pop_model_str(net.model, pops[i][2])),
-                full ? _pop_param_children(net.model, pops[i][2]) : Any[],
-            ) for i in eachindex(pops)
+            string(rpad(pops[i][1], nw), "  ", rpad(rngs[i], rw), "  ", _pop_model_str(net.model, pops[i][2])),
+            full ? _pop_param_children(net.model, pops[i][2]) : Any[],
+        ) for i in eachindex(pops)
     ]
     isempty(popkids) || push!(children, ("populations ($(length(popkids)))", popkids))
     if !isempty(net.projections)
@@ -408,9 +408,9 @@ function _show_builder(io::IO, arch, tspan, names, models, sizes, projspecs, dri
     children = Any[]
     popkids = Any[
         (
-                string(names[i], "  ", sizes[i], "  ", full ? nameof(typeof(models[i])) : typeof(models[i])),
-                full ? _param_children(models[i]) : Any[],
-            ) for i in eachindex(names)
+            string(names[i], "  ", sizes[i], "  ", full ? nameof(typeof(models[i])) : typeof(models[i])),
+            full ? _param_children(models[i]) : Any[],
+        ) for i in eachindex(names)
     ]
     isempty(popkids) || push!(children, ("populations ($(length(popkids)))", popkids))
     projkids = Any[(_builder_proj_head(s), full ? _proj_param_children(s) : Any[]) for s in projspecs]
